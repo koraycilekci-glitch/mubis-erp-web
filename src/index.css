@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+  
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer components {
+  .gradient-text {
+    @apply bg-gradient-to-r from-blue-400 to-yellow-500 bg-clip-text text-transparent;
+  }
+  
+  .card-hover {
+    @apply transition-all duration-300 hover:shadow-2xl hover:-translate-y-1;
+  }
+  
+  .btn-primary {
+    @apply bg-gradient-to-r from-blue-900 to-blue-800 text-white px-8 py-3 rounded-lg font-semibold hover:shadow-lg transition-all duration-300;
+  }
+  
+  .btn-gold {
+    @apply bg-gradient-to-r from-yellow-500 to-yellow-600 text-white px-8 py-3 rounded-lg font-semibold hover:shadow-lg transition-all duration-300;
+  }
+}
+/* Mobil iyileştirmeler */
+@layer utilities {
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+@media (max-width: 768px) {
+  ::-webkit-scrollbar {
+    width: 0px;
+    height: 0px;
+  }
+  
+  button, a, input, select, textarea {
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  .card-hover:active {
+    transform: scale(0.98);
+    transition: transform 0.1s;
+  }
+}

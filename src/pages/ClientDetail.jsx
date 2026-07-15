@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useClients } from '../hooks/useClients'
 import { searchNace, formatNaceCode, getNaceDesc } from '../utils/naceCodes'
 import * as XLSX from 'xlsx'
 import { 
@@ -14,7 +15,8 @@ import {
 export default function ClientDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { getClients, updateClient } = useAuth()
+  const { updateClient } = useAuth()
+  const { clients } = useClients()
   const [client, setClient] = useState(null)
   const [loading, setLoading] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
@@ -138,7 +140,6 @@ export default function ClientDetail() {
   }
 
   useEffect(() => {
-    const clients = getClients()
     const found = clients.find(c => c.id === parseInt(id))
     if (found) {
       setClient(found)
@@ -149,10 +150,10 @@ export default function ClientDetail() {
       try { setHesapKodlari(JSON.parse(stored)) } catch(e) { /* ignore */ }
     }
     setLoading(false)
-  }, [id, getClients])
+  }, [id, clients])
 
-  const saveClient = (data) => {
-    const result = updateClient(parseInt(id), data)
+  const saveClient = async (data) => {
+    const result = await updateClient(parseInt(id), data)
     if (result.success) {
       setClient(data)
       setEditData(data)
@@ -160,8 +161,8 @@ export default function ClientDetail() {
     return result
   }
 
-  const handleSave = () => {
-    const result = saveClient(editData)
+  const handleSave = async () => {
+    const result = await saveClient(editData)
     if (result.success) setIsEditing(false)
   }
 
@@ -194,13 +195,13 @@ export default function ClientDetail() {
   }
 
   // E-hizmet toggle
-  const toggleEService = (key) => {
+  const toggleEService = async (key) => {
     const updated = { ...client, [key]: !client[key] }
-    saveClient(updated)
+    await saveClient(updated)
   }
 
   // Yetkili/Ortak ekle veya guncelle
-  const addOfficial = () => {
+  const addOfficial = async () => {
     if (!newOfficial.name) return
     const officials = [...(client.officials || [])]
     if (editOfficialIndex >= 0) {
@@ -209,7 +210,7 @@ export default function ClientDetail() {
       officials.push({ ...newOfficial })
     }
     const updated = { ...client, officials }
-    saveClient(updated)
+    await saveClient(updated)
     setNewOfficial({ name: '', title: '', phone: '', email: '', tc: '', address: '', hisse: '', sermaye: '' })
     setShowOfficialForm(false)
     setEditOfficialIndex(-1)
@@ -221,14 +222,14 @@ export default function ClientDetail() {
     setShowOfficialForm(true)
   }
 
-  const removeOfficial = (index) => {
+  const removeOfficial = async (index) => {
     const officials = [...(client.officials || [])]
     officials.splice(index, 1)
-    saveClient({ ...client, officials })
+    await saveClient({ ...client, officials })
   }
 
   // Banka ekle veya guncelle
-  const addBank = () => {
+  const addBank = async () => {
     if (!newBank.bank) return
     const banks = [...(client.banks || [])]
     if (editBankIndex >= 0) {
@@ -236,7 +237,7 @@ export default function ClientDetail() {
     } else {
       banks.push({ ...newBank })
     }
-    saveClient({ ...client, banks })
+    await saveClient({ ...client, banks })
     setNewBank({ bank: '', branch: '', iban: '', accountNo: '' })
     setShowBankForm(false)
     setEditBankIndex(-1)
@@ -248,10 +249,10 @@ export default function ClientDetail() {
     setShowBankForm(true)
   }
 
-  const removeBank = (index) => {
+  const removeBank = async (index) => {
     const banks = [...(client.banks || [])]
     banks.splice(index, 1)
-    saveClient({ ...client, banks })
+    await saveClient({ ...client, banks })
   }
 
   // Hesap kodu upload

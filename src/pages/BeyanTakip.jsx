@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useAuth } from '../context/AuthContext'
+import { useClients } from '../hooks/useClients'
 import { 
   FileText, Search, Download,
   ChevronDown, ChevronRight, ListChecks, ChevronLeft
 } from 'lucide-react'
 
 export default function BeyanTakip() {
-  const { getClients } = useAuth()
+  const { clients: allClients } = useClients()
   const [clients, setClients] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [filterType, setFilterType] = useState('all')
@@ -32,13 +32,12 @@ export default function BeyanTakip() {
   ]
 
   useEffect(() => {
-    const allClients = getClients()
     const clientsWithBeyan = allClients.map(client => ({
       ...client,
       beyanlar: generateBeyanlar(client)
     }))
     setClients(clientsWithBeyan)
-  }, [getClients, generateBeyanlar])
+  }, [allClients, generateBeyanlar])
 
   const generateBeyanlar = useCallback((client) => {
     const beyanlar = []

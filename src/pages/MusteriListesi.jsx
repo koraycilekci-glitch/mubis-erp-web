@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useClients } from '../hooks/useClients'
 import { Link, useNavigate } from 'react-router-dom'
 import { 
   Plus, Search, Filter, MapPin,
@@ -8,9 +9,9 @@ import {
 } from 'lucide-react'
 
 export default function MusteriListesi() {
-  const { user, getClients, deleteClient } = useAuth()
+  const { user, deleteClient } = useAuth()
+  const { clients, refresh } = useClients()
   const navigate = useNavigate()
-  const [clients, setClients] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [filterType, setFilterType] = useState('all')
   const [filterStatus, setFilterStatus] = useState('all')
@@ -19,15 +20,10 @@ export default function MusteriListesi() {
   const [sortBy, setSortBy] = useState('name')
   const [sortOrder, setSortOrder] = useState('asc')
 
-  useEffect(() => {
-    const allClients = getClients()
-    setClients(allClients)
-  }, [getClients])
-
-  const handleDelete = (id, name) => {
+  const handleDelete = async (id, name) => {
     if (window.confirm(`"${name}" musterisini silmek istediginize emin misiniz?`)) {
-      deleteClient(id)
-      setClients(getClients())
+      await deleteClient(id)
+      await refresh()
     }
   }
 

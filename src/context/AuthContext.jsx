@@ -1,224 +1,161 @@
 import { createContext, useContext, useState, useEffect } from 'react'
+import { supabase } from '../lib/supabase'
+import * as clientService from '../services/clientService'
 
 const AuthContext = createContext()
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
+  const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    const savedUser = localStorage.getItem('mubis_user')
-    if (savedUser) {
-      try {
-        setUser(JSON.parse(savedUser))
-      } catch(_e) {
-        localStorage.removeItem('mubis_user')
-      }
+  // Profil bilgisini cek
+  const fetchProfile = async (authUser) => {
+    if (!authUser) { setProfile(null); return null }
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', authUser.id)
+        .single()
+      setProfile(data)
+      return data
+    } catch {
+      return null
     }
-    setLoading(false)
+  }
+
+  // Oturum takibi
+  useEffect(() => {
+    // Mevcut oturumu kontrol et
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUser(session.user)
+        fetchProfile(session.user).then(() => setLoading(false))
+      } else {
+        setLoading(false)
+      }
+    })
+
+    // Oturum degisikliklerini dinle
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (session?.user) {
+          setUser(session.user)
+          await fetchProfile(session.user)
+        } else {
+          setUser(null)
+          setProfile(null)
+        }
+        setLoading(false)
+      }
+    )
+
+    return () => subscription.unsubscribe()
   }, [])
 
-  const getClients = () => {
-    const stored = localStorage.getItem('mubis_clients')
-    return stored ? JSON.parse(stored) : []
-  }
-
-  const saveClients = (clients) => {
-    localStorage.setItem('mubis_clients', JSON.stringify(clients))
-  }
-
-  const addClient = (clientData) => {
-    const clients = getClients()
-    const username = clientData.type === 'company' ? clientData.vkn : clientData.tc
-    
-    if (clients.find(c => c.username === username)) {
-      return { success: false, error: 'Bu kullanici zaten kayitli!' }
-    }
-
-    const newClient = {
-      id: Date.now(),
-      username: username,
-      password: '123456',
-      tempPassword: true,
-      type: clientData.type,
-      name: clientData.name,
-      company: clientData.company || '',
-      vkn: clientData.vkn || '',
-      tc: clientData.tc || '',
-      email: clientData.email || '',
-      phone: clientData.phone || '',
-      taxOffice: clientData.taxOffice || '',
-      city: clientData.city || '',
-      address: clientData.address || '',
-      openDate: clientData.openDate || '',
-      closeDate: clientData.closeDate || '',
-      earsiv: clientData.earsiv || false,
-      efatura: clientData.efatura || false,
-      esmm: clientData.esmm || false,
-      edefter: clientData.edefter || false,
-      edefterPeriod: clientData.edefterPeriod || 'aylik',  // ✅ e-Defter Periyot
-      serbestMeslek: clientData.serbestMeslek || false,
-      eimzaStart: clientData.eimzaStart || '',
-      eimzaEnd: clientData.eimzaEnd || '',
-      capital: clientData.capital || '',
-      companyType: clientData.companyType || 'ltd',
-      taxType: clientData.taxType || 'Kurumlar Vergisi',
-      // PORTAL HESAPLARI - SGK 4 ALANLI
-      portalSgk: clientData.portalSgk || false,
-      sgkUsername: clientData.sgkUsername || '',
-      sgkWorkplaceCode: clientData.sgkWorkplaceCode || '',
-      sgkWorkplacePassword: clientData.sgkWorkplacePassword || '',
-      sgkSystemPassword: clientData.sgkSystemPassword || '',
-      portalDvd: clientData.portalDvd || false,
-      dvdUsername: clientData.dvdUsername || '',
-      dvdPassword: clientData.dvdPassword || '',
-      portalTicariSicil: clientData.portalTicariSicil || false,
-      tsgUsername: clientData.tsgUsername || '',
-      tsgPassword: clientData.tsgPassword || '',
-      status: 'active',
-      createdAt: new Date().toISOString()
-    }
-
-    clients.push(newClient)
-    saveClients(clients)
-    return { success: true, client: newClient }
-  }
-
-  const deleteClient = (id) => {
-    const clients = getClients().filter(c => c.id !== id)
-    saveClients(clients)
-  }
-
-  const updateClient = (id, data) => {
-    const clients = getClients()
-    const index = clients.findIndex(c => c.id === id)
-    if (index !== -1) {
-      clients[index] = { ...clients[index], ...data }
-      saveClients(clients)
-      return { success: true }
-    }
-    return { success: false }
-  }
-
-  const changePassword = (username, newPassword) => {
-    const clients = getClients()
-    const index = clients.findIndex(c => c.username === username)
-    if (index !== -1) {
-      clients[index].password = newPassword
-      clients[index].tempPassword = false
-      saveClients(clients)
-      return { success: true }
-    }
-    return { success: false, error: 'Kullanici bulunamadi' }
-  }
-
-  const login = (username, password) => {
-    if (username === 'admin' && password === 'admin123') {
-      const adminUser = { 
-        id: 1, 
-        name: 'Koray Bey', 
-        username: 'admin', 
-        role: 'admin',
-        taxType: null
+  // Giris yap
+  const login = async (email, password) => {
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+      if (error) return { success: false, error: error.message }
+      
+      const prof = await fetchProfile(data.user)
+      return { 
+        success: true, 
+        user: { 
+          ...data.user, 
+          name: prof?.name || email,
+          role: prof?.role || 'personel',
+          permissions: prof?.permissions || {}
+        }
       }
-      setUser(adminUser)
-      localStorage.setItem('mubis_user', JSON.stringify(adminUser))
-      return { success: true, user: adminUser }
+    } catch (err) {
+      return { success: false, error: err.message }
     }
-
-    if (username === 'musteri@firma.com' && password === 'musteri123') {
-      const clientUser = { 
-        id: 2, 
-        name: 'Ahmet Yılmaz', 
-        username: 'musteri@firma.com', 
-        role: 'client', 
-        company: 'Yılmaz Ticaret Ltd. Şti.', 
-        earsiv: true, 
-        efatura: false, 
-        esmm: false,
-        edefter: true,
-        edefterPeriod: 'aylik',
-        serbestMeslek: false, 
-        companyType: 'ltd',
-        taxType: 'Kurumlar Vergisi',
-        portalSgk: true,
-        sgkUsername: '12345678901',
-        sgkWorkplaceCode: '001',
-        sgkWorkplacePassword: 'isyeri123',
-        sgkSystemPassword: 'sistem123',
-        portalDvd: true,
-        dvdUsername: 'demo_dvd',
-        dvdPassword: 'demo123',
-        portalTicariSicil: true,
-        tsgUsername: 'demo_tsg',
-        tsgPassword: 'demo123'
-      }
-      setUser(clientUser)
-      localStorage.setItem('mubis_user', JSON.stringify(clientUser))
-      return { success: true, user: clientUser }
-    }
-
-    const clients = getClients()
-    const client = clients.find(c => c.username === username && c.password === password)
-    
-    if (client) {
-      const clientUser = {
-        id: client.id,
-        name: client.name,
-        username: client.username,
-        role: 'client',
-        company: client.company || client.name,
-        type: client.type,
-        vkn: client.vkn,
-        tc: client.tc,
-        email: client.email,
-        phone: client.phone,
-        city: client.city,
-        taxOffice: client.taxOffice,
-        address: client.address,
-        openDate: client.openDate,
-        closeDate: client.closeDate,
-        earsiv: client.earsiv || false,
-        efatura: client.efatura || false,
-        esmm: client.esmm || false,
-        edefter: client.edefter || false,
-        edefterPeriod: client.edefterPeriod || 'aylik',  // ✅ e-Defter Periyot
-        serbestMeslek: client.serbestMeslek || false,
-        eimzaStart: client.eimzaStart,
-        eimzaEnd: client.eimzaEnd,
-        capital: client.capital,
-        companyType: client.companyType || 'ltd',
-        taxType: client.taxType || 'Kurumlar Vergisi',
-        portalSgk: client.portalSgk || false,
-        sgkUsername: client.sgkUsername || '',
-        sgkWorkplaceCode: client.sgkWorkplaceCode || '',
-        sgkWorkplacePassword: client.sgkWorkplacePassword || '',
-        sgkSystemPassword: client.sgkSystemPassword || '',
-        portalDvd: client.portalDvd || false,
-        dvdUsername: client.dvdUsername || '',
-        dvdPassword: client.dvdPassword || '',
-        portalTicariSicil: client.portalTicariSicil || false,
-        tsgUsername: client.tsgUsername || '',
-        tsgPassword: client.tsgPassword || '',
-        tempPassword: client.tempPassword
-      }
-      setUser(clientUser)
-      localStorage.setItem('mubis_user', JSON.stringify(clientUser))
-      return { success: true, user: clientUser, tempPassword: client.tempPassword }
-    }
-
-    return { success: false, error: 'Geçersiz kullanıcı adı veya şifre' }
   }
 
-  const logout = () => {
+  // Cikis yap
+  const logout = async () => {
+    await supabase.auth.signOut()
     setUser(null)
-    localStorage.removeItem('mubis_user')
+    setProfile(null)
   }
+
+  // Musteri islemleri (Supabase uzerinden)
+  const getClients = async () => {
+    try {
+      const data = await clientService.getClients()
+      return clientService.dbToFrontendList(data)
+    } catch {
+      return []
+    }
+  }
+
+  const addClient = async (clientData) => {
+    try {
+      const data = await clientService.addClient(clientData)
+      return { success: true, client: clientService.dbToFrontend(data) }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  }
+
+  const deleteClient = async (id) => {
+    try {
+      await clientService.deleteClient(id)
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  }
+
+  const updateClient = async (id, data) => {
+    try {
+      const result = await clientService.updateClient(id, data)
+      return { success: true, client: clientService.dbToFrontend(result) }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  }
+
+  const changePassword = async (username, newPassword) => {
+    // Client password degistirme (clients tablosunda)
+    try {
+      const clients = await clientService.getClients()
+      const client = clients.find(c => c.username === username)
+      if (client) {
+        await clientService.updateClient(client.id, { password: newPassword, temp_password: false })
+        return { success: true }
+      }
+      return { success: false, error: 'Kullanici bulunamadi' }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  }
+
+  // Kullanici bilgileri (profil + auth)
+  const currentUser = user ? {
+    id: user.id,
+    email: user.email,
+    name: profile?.name || user.email,
+    role: profile?.role || 'personel',
+    permissions: profile?.permissions || {},
+    username: user.email,
+  } : null
 
   return (
     <AuthContext.Provider value={{ 
-      user, loading, login, logout, 
-      getClients, addClient, deleteClient, updateClient, changePassword 
+      user: currentUser, 
+      loading, 
+      login, 
+      logout, 
+      getClients, 
+      addClient, 
+      deleteClient, 
+      updateClient, 
+      changePassword,
+      profile
     }}>
       {children}
     </AuthContext.Provider>

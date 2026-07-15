@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useAuth } from '../context/AuthContext'
+import { useClients } from '../hooks/useClients'
 import { 
   Upload, FileSpreadsheet, CheckCircle, 
   Database, Save, Trash2, Search
@@ -7,8 +7,7 @@ import {
 import { aiService } from '../services/aiService'
 
 export default function HesapPlaniYukle() {
-  const { getClients } = useAuth()
-  const [clients] = useState(getClients())
+  const { clients } = useClients()
   const [selectedClient, setSelectedClient] = useState(null)
   const [accountPlan, setAccountPlan] = useState([])
   const [loading, setLoading] = useState(false)

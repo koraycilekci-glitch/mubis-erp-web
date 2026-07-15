@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useClients } from '../hooks/useClients'
 import { useNavigate } from 'react-router-dom'
 import { Search, ChevronLeft, BarChart3, ChevronDown, ChevronUp } from 'lucide-react'
 
@@ -18,9 +19,9 @@ const BEYAN_TYPES = [
 ]
 
 export default function AllBeyanReport() {
-  const { getClients, updateClient } = useAuth()
+  const { updateClient } = useAuth()
+  const { clients } = useClients()
   const navigate = useNavigate()
-  const clients = getClients()
 
   const now = new Date()
   const [selectedYear, setSelectedYear] = useState(now.getFullYear())
@@ -95,16 +96,15 @@ export default function AllBeyanReport() {
     }
   }
 
-  const handleStatusChange = (clientId, beyanId, newStatus) => {
-    const allClients = getClients()
-    const client = allClients.find(c => c.id === clientId)
+  const handleStatusChange = async (clientId, beyanId, newStatus) => {
+    const client = clients.find(c => c.id === clientId)
     if (!client) return
 
     const durumlari = { ...(client.beyanDurumlari || {}) }
     const statusKey = `${selectedYear}_${selectedMonth}_${beyanId}`
     durumlari[statusKey] = newStatus
 
-    updateClient(clientId, { ...client, beyanDurumlari: durumlari })
+    await updateClient(clientId, { ...client, beyanDurumlari: durumlari })
     // State'i guncellemek icin sayfayi yenile
     window.location.reload()
   }

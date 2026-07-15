@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useClients } from '../hooks/useClients'
 import { 
   Download, 
   CheckCircle, AlertTriangle, Clock, 
@@ -8,7 +9,8 @@ import {
 } from 'lucide-react'
 
 export default function EInvoiceDownloader() {
-  const { user: _user, getClients } = useAuth()
+  const { user: _user } = useAuth()
+  const { clients: allClients } = useClients()
   const [loading, setLoading] = useState(false)
   const [invoices, setInvoices] = useState([])
   const [selectedClient, setSelectedClient] = useState('all')
@@ -18,10 +20,9 @@ export default function EInvoiceDownloader() {
   const [clients, setClients] = useState([])
 
   useEffect(() => {
-    const allClients = getClients()
     setClients(allClients)
     generateSampleInvoices(allClients)
-  }, [getClients])
+  }, [allClients])
 
   // ✅ SADECE LUCA ve DVS'den fatura indirilir
   const generateSampleInvoices = (clientList) => {

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useClients } from '../hooks/useClients'
 import { ArrowLeft, FileText, CheckCircle, Clock, Send, ThumbsUp } from 'lucide-react'
 
 const MONTHS = ['Ocak', 'Subat', 'Mart', 'Nisan', 'Mayis', 'Haziran', 'Temmuz', 'Agustos', 'Eylul', 'Ekim', 'Kasim', 'Aralik']
@@ -27,17 +28,17 @@ const STATUS_MAP = {
 export default function ClientBeyanTakip() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { getClients, updateClient } = useAuth()
+  const { updateClient } = useAuth()
+  const { clients } = useClients()
   const [client, setClient] = useState(null)
   const [loading, setLoading] = useState(true)
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
 
   useEffect(() => {
-    const clients = getClients()
     const found = clients.find(c => c.id === parseInt(id))
     if (found) setClient(found)
     setLoading(false)
-  }, [id, getClients])
+  }, [id, clients])
 
   const activeBeyanlar = useMemo(() => {
     if (!client) return []
@@ -61,14 +62,14 @@ export default function ClientBeyanTakip() {
     return result
   }, [client, selectedYear])
 
-  const handleStatusChange = (beyanId, month, newStatus) => {
+  const handleStatusChange = async (beyanId, month, newStatus) => {
     if (!client) return
     const durumlari = { ...(client.beyanDurumlari || {}) }
     const statusKey = `${selectedYear}_${month}_${beyanId}`
     durumlari[statusKey] = newStatus
 
     const updated = { ...client, beyanDurumlari: durumlari }
-    updateClient(parseInt(id), updated)
+    await updateClient(parseInt(id), updated)
     setClient(updated)
   }
 

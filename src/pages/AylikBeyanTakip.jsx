@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useAuth } from '../context/AuthContext'
+import { useClients } from '../hooks/useClients'
 import * as XLSX from 'xlsx'
 import {
   Calendar, Search, Eye,
@@ -14,7 +14,7 @@ import {
 } from '../utils/dateUtils'
 
 export default function AylikBeyanTakip() {
-  const { getClients } = useAuth()
+  const { clients: allClients } = useClients()
   const [loading, setLoading] = useState(false)
   const [clients, setClients] = useState([])
   const [filteredData, setFilteredData] = useState([])
@@ -70,7 +70,6 @@ export default function AylikBeyanTakip() {
 
   const loadData = useCallback(() => {
     setLoading(true)
-    const allClients = getClients()
     
     const data = allClients.map(client => {
       const beyanlar = generateMonthlyBeyanlar(client)
@@ -84,7 +83,7 @@ export default function AylikBeyanTakip() {
     setClients(data)
     applyFilters(data)
     setLoading(false)
-  }, [selectedYear, selectedMonth, selectedBeyan, selectedStatus, searchTerm])
+  }, [allClients, selectedYear, selectedMonth, selectedBeyan, selectedStatus, searchTerm])
 
   const generateMonthlyBeyanlar = (client) => {
     const results = []

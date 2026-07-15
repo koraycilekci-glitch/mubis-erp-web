@@ -23,6 +23,7 @@ import ClientBeyanProfile from './pages/ClientBeyanProfile'
 import AylikBeyanTakip from './pages/AylikBeyanTakip'
 import ClientBeyanTakip from './pages/ClientBeyanTakip'
 import MusteriListesi from './pages/MusteriListesi'
+import SetupPage from './pages/SetupPage'
 
 function App() {
   return (
@@ -35,6 +36,7 @@ function App() {
             <Route path="/ozellikler" element={<Features />} />
             <Route path="/iletisim" element={<Contact />} />
             <Route path="/giris" element={<Login />} />
+            <Route path="/setup" element={<SetupPage />} />
             
             {/* Admin Routes */}
             <Route path="/admin" element={<AdminDashboard />} />

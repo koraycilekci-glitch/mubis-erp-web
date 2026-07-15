@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useClients } from '../hooks/useClients'
 import { ArrowLeft, ListChecks, CheckCircle, XCircle } from 'lucide-react'
 
 export default function ClientBeyanProfile() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { getClients, updateClient } = useAuth()
+  const { updateClient } = useAuth()
+  const { clients } = useClients()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [client, setClient] = useState(null)
@@ -89,7 +91,6 @@ export default function ClientBeyanProfile() {
   }, [getBeyanTipleri])
 
   useEffect(() => {
-    const clients = getClients()
     const found = clients.find(c => c.id === parseInt(id))
     if (found) {
       setClient(found)
@@ -97,7 +98,7 @@ export default function ClientBeyanProfile() {
       setBeyanProfile(profile)
     }
     setLoading(false)
-  }, [id, getClients, generateDefaultProfile])
+  }, [id, clients, generateDefaultProfile])
 
   // ✅ Aktif/Pasif değiştirme fonksiyonu
   const toggleActive = (beyanId, month) => {
@@ -134,10 +135,10 @@ export default function ClientBeyanProfile() {
     })
   }
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setSaving(true)
     const updatedClient = { ...client, beyanProfile: beyanProfile }
-    const result = updateClient(parseInt(id), updatedClient)
+    const result = await updateClient(parseInt(id), updatedClient)
     setSaving(false)
     if (result.success) {
       alert('✅ Beyan profili başarıyla kaydedildi!')

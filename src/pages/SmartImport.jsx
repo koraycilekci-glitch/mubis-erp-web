@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useClients } from '../hooks/useClients'
 import { aiService } from '../services/aiService'
 import { 
   Upload, FileText, Loader2, 
@@ -10,8 +11,8 @@ import {
 } from 'lucide-react'
 
 export default function SmartImport() {
-  const { user: _user, getClients } = useAuth()
-  const clients = getClients()
+  const { user: _user } = useAuth()
+  const { clients } = useClients()
   const [files, setFiles] = useState([])
   const [processing, setProcessing] = useState(false)
   const [documents, setDocuments] = useState([])

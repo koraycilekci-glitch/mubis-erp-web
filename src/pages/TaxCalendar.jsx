@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useClients } from '../hooks/useClients'
 import { 
   Search, CheckCircle, Clock, AlertTriangle, ChevronLeft, ChevronRight
 } from 'lucide-react'
@@ -21,9 +22,9 @@ const quarterlyMonths = [2, 5, 8, 11]
 const defaultBeyanSettings = { kdv: 'monthly', muhtasar: 'monthly', sgk: true, gecici: true, damga: false, edefter: 'monthly', kdv2: false, gelir: 'mart' }
 
 export default function TaxCalendar() {
-  const { user, getClients } = useAuth()
+  const { user } = useAuth()
   const _isAdmin = user?.role === 'admin'
-  const clients = getClients()
+  const { clients } = useClients()
   const [selectedYear, setSelectedYear] = useState(2026)
   const [selectedMonth, setSelectedMonth] = useState(6)
   const [selectedBeyan, setSelectedBeyan] = useState('kdv')

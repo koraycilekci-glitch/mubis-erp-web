@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useClients } from '../hooks/useClients'
 import { Link, useNavigate } from 'react-router-dom'
 import { 
   Plus, Search, Filter, MapPin, Trash2, X, Eye, ListChecks, FileText,
@@ -59,16 +60,12 @@ function getUrgencyColor(daysLeft) {
 
 // ── Ana Dashboard Bileşeni ──
 export default function AdminDashboard() {
-  const { user, getClients } = useAuth()
+  const { user } = useAuth()
+  const { clients } = useClients()
   const navigate = useNavigate()
-  const [clients, setClients] = useState([])
   const [currentTime, setCurrentTime] = useState(new Date())
   const [showAllDeadlines, setShowAllDeadlines] = useState(false)
   const [showAllTasks, setShowAllTasks] = useState(false)
-
-  useEffect(() => {
-    setClients(getClients())
-  }, [getClients])
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 60000)

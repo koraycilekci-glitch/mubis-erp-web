@@ -7,11 +7,9 @@ export default function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           <div className="col-span-1 md:col-span-2">
             <div className="flex items-center space-x-3 mb-4">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-yellow-400 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-lg">M</span>
-              </div>
+              <img src="/logo.png" alt="MUBiS ERP" className="w-10 h-10 rounded-lg object-contain" />
               <div>
-                <span className="text-xl font-bold text-white">MUBİS</span>
+                <span className="text-xl font-bold text-white">MUBiS</span>
                 <span className="text-yellow-400 text-sm block -mt-1">ERP</span>
               </div>
             </div>

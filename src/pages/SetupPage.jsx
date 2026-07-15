@@ -147,9 +147,7 @@ export default function SetupPage() {
     <div className="min-h-screen bg-gradient-to-br from-blue-950 via-blue-900 to-blue-950 flex items-center justify-center p-4">
       <div className="w-full max-w-lg">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-yellow-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <span className="text-white font-bold text-2xl">M</span>
-          </div>
+          <img src="/logo.png" alt="MUBiS ERP" className="w-20 h-20 mx-auto mb-4 object-contain" />
           <h2 className="text-2xl font-bold text-white">MUBiS ERP Kurulum</h2>
           <p className="text-gray-400 mt-2">Supabase entegrasyonu</p>
         </div>

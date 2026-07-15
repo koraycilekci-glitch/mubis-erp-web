@@ -62,9 +62,7 @@ export default function Login() {
     <div className="min-h-[80vh] flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-yellow-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <span className="text-white font-bold text-2xl">M</span>
-          </div>
+          <img src="/logo.png" alt="MUBiS ERP" className="w-24 h-24 mx-auto mb-4 object-contain" />
           <h2 className="text-3xl font-bold text-white">MUBiS ERP</h2>
           <p className="text-gray-400 mt-2">Mali Musavirin Dijital Calisma Masasi</p>
         </div>

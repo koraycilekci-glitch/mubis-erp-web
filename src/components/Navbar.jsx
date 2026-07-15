@@ -30,11 +30,9 @@ export default function Navbar() {
         <div className="flex justify-between items-center h-14">
           {/* Logo */}
           <Link to="/" className="flex items-center space-x-2 flex-shrink-0">
-            <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-yellow-400 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20">
-              <span className="text-white font-bold text-sm">M</span>
-            </div>
+            <img src="/logo.png" alt="MUBiS ERP" className="w-8 h-8 rounded-lg object-contain" />
             <div className="hidden sm:block">
-              <span className="text-lg font-bold text-white">MUBİS</span>
+              <span className="text-lg font-bold text-white">MUBiS</span>
               <span className="text-yellow-400 text-[10px] block -mt-0.5">ERP</span>
             </div>
           </Link>

@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { Upload, X, FileText, Image, File, CheckCircle, AlertCircle, Eye, Download, Trash2 } from 'lucide-react'
+import { Upload, X, FileText, Image, File, Eye, Download, Trash2 } from 'lucide-react'
 
 export default function FileUploader({ documents, setDocuments }) {
   const [isDragging, setIsDragging] = useState(false)

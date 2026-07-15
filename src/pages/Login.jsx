@@ -34,7 +34,7 @@ export default function Login() {
   }
 
   const fillAdmin = () => {
-    setEmail('admin@mubis.com')
+    setEmail('admin')
     setPassword('admin123')
     setError('')
   }
@@ -99,7 +99,7 @@ export default function Login() {
               <label className="text-gray-400 text-sm block mb-2">Email</label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
-                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                <input type="text" value={email} onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-3 pl-10 pr-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500 transition-colors"
                   placeholder="ornek@email.com" required />
               </div>

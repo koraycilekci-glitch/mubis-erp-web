@@ -1,187 +1,256 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
+import { searchNace, formatNaceCode, getNaceDesc } from '../utils/naceCodes'
+import * as XLSX from 'xlsx'
 import { 
   ArrowLeft, Building2, User, Phone, Mail, MapPin, 
-  FileText, Calendar, AlertTriangle, CheckCircle, 
-  Clock, Edit3, Save, X, Plus, Trash2, Download,
-  Globe, Shield, CreditCard, Hash, Key, BookOpen
+  FileText, Calendar, Edit3, Plus, Trash2, Save, X,
+  Globe, CreditCard, Hash, ListChecks, Shield,
+  Briefcase, Tag, Upload, Search, Home
 } from 'lucide-react'
-
-const clientsDB = [
-  {
-    id: 1, name: 'ABC Ltd. Sti.', vkn: '1234567890', taxOffice: 'Beyoglu Vergi Dairesi',
-    mersis: '1234-5678-9012-3456', tradeRegistry: 'Istanbul Ticaret Sicil - 123456',
-    capital: '500.000 ₺', establishedDate: '2015-03-15', phone: '+90 212 555 01 01',
-    email: 'info@abcltd.com', website: 'www.abcltd.com', address: 'Beyoglu, Istanbul',
-    officials: [
-      { name: 'Ali Yilmaz', title: 'Genel Mudur', phone: '+90 532 111 22 33', email: 'ali@abcltd.com' },
-      { name: 'Ayse Demir', title: 'Mali Isler Muduru', phone: '+90 533 444 55 66', email: 'ayse@abcltd.com' },
-    ],
-    banks: [
-      { bank: 'Is Bankasi', iban: 'TR12 3456 7890 1234 5678 9012 34', branch: 'Beyoglu Subesi' },
-      { bank: 'Garanti BBVA', iban: 'TR98 7654 3210 9876 5432 1098 76', branch: 'Taksim Subesi' },
-    ],
-    notes: 'Aylik KDV ve Muhtasar beyannameleri duzenli verilir.',
-    status: 'active',
-    tasks: [
-      { id: 1, task: 'Temmuz KDV Beyannamesi', deadline: '2026-07-25', status: 'pending' },
-      { id: 2, task: 'Muhtasar Beyanname', deadline: '2026-07-25', status: 'pending' },
-      { id: 3, task: 'Haziran SGK Bildirgesi', deadline: '2026-07-20', status: 'completed' },
-    ]
-  },
-  {
-    id: 2, name: 'XYZ Ticaret A.S.', vkn: '9876543210', taxOffice: 'Kadikoy Vergi Dairesi',
-    mersis: '9876-5432-1098-7654', tradeRegistry: 'Istanbul Ticaret Sicil - 789012',
-    capital: '1.250.000 ₺', establishedDate: '2018-07-20', phone: '+90 216 555 02 02',
-    email: 'info@xyztcaret.com', website: 'www.xyztcaret.com', address: 'Kadikoy, Istanbul',
-    officials: [
-      { name: 'Mehmet Kaya', title: 'Yonetim Kurulu Baskani', phone: '+90 532 777 88 99', email: 'mehmet@xyztcaret.com' },
-    ],
-    banks: [
-      { bank: 'Yapi Kredi', iban: 'TR11 2233 4455 6677 8899 0011 22', branch: 'Kadikoy Subesi' },
-    ],
-    notes: 'Uc aylik e-defter kullanicisi. Gecici vergi mukellefi.',
-    status: 'active',
-    tasks: [
-      { id: 1, task: 'Gecici Vergi Beyannamesi', deadline: '2026-08-15', status: 'pending' },
-      { id: 2, task: 'e-Defter Yukleme', deadline: '2026-08-20', status: 'pending' },
-    ]
-  },
-  {
-    id: 3, name: '123 Danismanlik', vkn: '4567890123', taxOffice: 'Cankaya Vergi Dairesi',
-    mersis: '4567-8901-2345-6789', tradeRegistry: 'Ankara Ticaret Sicil - 456789',
-    capital: '250.000 ₺', establishedDate: '2020-01-10', phone: '+90 312 555 03 03',
-    email: 'info@123danismanlik.com', website: 'www.123danismanlik.com', address: 'Cankaya, Ankara',
-    officials: [
-      { name: 'Zeynep Demir', title: 'Genel Mudur', phone: '+90 532 333 44 55', email: 'zeynep@123danismanlik.com' },
-    ],
-    banks: [
-      { bank: 'Ziraat Bankasi', iban: 'TR22 3333 4444 5555 6666 7777 88', branch: 'Cankaya Subesi' },
-    ],
-    notes: 'Aylik KDV mukellefi.',
-    status: 'active',
-    tasks: [
-      { id: 1, task: 'Temmuz KDV Beyannamesi', deadline: '2026-07-25', status: 'pending' },
-      { id: 2, task: 'Muhtasar Beyanname', deadline: '2026-07-25', status: 'pending' },
-    ]
-  },
-  {
-    id: 4, name: 'Demo Insaat Ltd.', vkn: '7890123456', taxOffice: 'Konak Vergi Dairesi',
-    mersis: '7890-1234-5678-9012', tradeRegistry: 'Izmir Ticaret Sicil - 789012',
-    capital: '1.000.000 ₺', establishedDate: '2016-05-20', phone: '+90 232 555 04 04',
-    email: 'info@demoinsaat.com', website: 'www.demoinsaat.com', address: 'Konak, Izmir',
-    officials: [
-      { name: 'Can Ozdemir', title: 'Sirket Muduru', phone: '+90 532 666 77 88', email: 'can@demoinsaat.com' },
-    ],
-    banks: [
-      { bank: 'Halkbank', iban: 'TR33 4444 5555 6666 7777 8888 99', branch: 'Konak Subesi' },
-    ],
-    notes: 'Gecici vergi mukellefi. 3 aylik KDV.',
-    status: 'passive',
-    tasks: [
-      { id: 1, task: 'Gecici Vergi Beyannamesi', deadline: '2026-08-15', status: 'pending' },
-    ]
-  },
-  {
-    id: 5, name: 'Mavi Teknoloji A.S.', vkn: '2345678901', taxOffice: 'Sisli Vergi Dairesi',
-    mersis: '2345-6789-0123-4567', tradeRegistry: 'Istanbul Ticaret Sicil - 234567',
-    capital: '750.000 ₺', establishedDate: '2019-09-01', phone: '+90 212 555 05 05',
-    email: 'info@maviteknoloji.com', website: 'www.maviteknoloji.com', address: 'Sisli, Istanbul',
-    officials: [
-      { name: 'Ebru Celik', title: 'CEO', phone: '+90 532 999 00 11', email: 'ebru@maviteknoloji.com' },
-    ],
-    banks: [
-      { bank: 'Akbank', iban: 'TR44 5555 6666 7777 8888 9999 00', branch: 'Sisli Subesi' },
-    ],
-    notes: 'Aylik KDV ve Muhtasar.',
-    status: 'active',
-    tasks: [
-      { id: 1, task: 'Temmuz KDV Beyannamesi', deadline: '2026-07-25', status: 'pending' },
-      { id: 2, task: 'Muhtasar Beyanname', deadline: '2026-07-25', status: 'completed' },
-    ]
-  },
-  {
-    id: 6, name: 'Yesil Enerji A.S.', vkn: '8901234567', taxOffice: 'Ostim Vergi Dairesi',
-    mersis: '8901-2345-6789-0123', tradeRegistry: 'Ankara Ticaret Sicil - 890123',
-    capital: '2.500.000 ₺', establishedDate: '2017-03-10', phone: '+90 312 555 06 06',
-    email: 'info@yesilenerji.com', website: 'www.yesilenerji.com', address: 'Ostim, Ankara',
-    officials: [
-      { name: 'Deniz Arslan', title: 'Genel Mudur', phone: '+90 532 111 22 44', email: 'deniz@yesilenerji.com' },
-    ],
-    banks: [
-      { bank: 'Vakifbank', iban: 'TR55 6666 7777 8888 9999 0000 11', branch: 'Ostim Subesi' },
-    ],
-    notes: 'Buyuk olcekli mukellef. Aylik KDV, Muhtasar, Gecici Vergi.',
-    status: 'active',
-    tasks: [
-      { id: 1, task: 'Temmuz KDV Beyannamesi', deadline: '2026-07-25', status: 'pending' },
-      { id: 2, task: 'Muhtasar Beyanname', deadline: '2026-07-25', status: 'pending' },
-      { id: 3, task: 'Gecici Vergi Beyannamesi', deadline: '2026-08-15', status: 'pending' },
-    ]
-  },
-]
 
 export default function ClientDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const client = clientsDB.find(c => c.id === parseInt(id))
+  const { getClients, updateClient } = useAuth()
+  const [client, setClient] = useState(null)
+  const [loading, setLoading] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
   const [activeTab, setActiveTab] = useState('info')
+  const [editData, setEditData] = useState({})
+  const [hesapKodlari, setHesapKodlari] = useState([])
+  const [hesapSearch, setHesapSearch] = useState('')
+  const [naceResults, setNaceResults] = useState([])
+  const [showNaceDropdown, setShowNaceDropdown] = useState(false)
+  const hesapFileRef = useRef(null)
+
+  // Yeni yetkili/ortak formu
+  const [newOfficial, setNewOfficial] = useState({ name: '', title: '', phone: '', email: '', tc: '', address: '', hisse: '', sermaye: '' })
+  const [showOfficialForm, setShowOfficialForm] = useState(false)
+  const [editOfficialIndex, setEditOfficialIndex] = useState(-1)
+  // Yeni banka formu
+  const [newBank, setNewBank] = useState({ bank: '', branch: '', iban: '', accountNo: '' })
+  const [showBankForm, setShowBankForm] = useState(false)
+  const [editBankIndex, setEditBankIndex] = useState(-1)
+
+  useEffect(() => {
+    const clients = getClients()
+    const found = clients.find(c => c.id === parseInt(id))
+    if (found) {
+      setClient(found)
+      setEditData(found)
+    }
+    const stored = localStorage.getItem(`mubis_hesap_kodlari_${id}`)
+    if (stored) {
+      try { setHesapKodlari(JSON.parse(stored)) } catch(e) { /* ignore */ }
+    }
+    setLoading(false)
+  }, [id, getClients])
+
+  const saveClient = (data) => {
+    const result = updateClient(parseInt(id), data)
+    if (result.success) {
+      setClient(data)
+      setEditData(data)
+    }
+    return result
+  }
+
+  const handleSave = () => {
+    const result = saveClient(editData)
+    if (result.success) setIsEditing(false)
+  }
+
+  const handlePhoneChange = (e) => {
+    const val = e.target.value
+    const newData = { ...editData, phone: val }
+    if (!editData.whatsapp || editData.whatsapp === editData.phone) {
+      newData.whatsapp = val
+    }
+    setEditData(newData)
+  }
+
+  const handleNaceSearch = (query) => {
+    // Sadece rakam ve noktaya izin ver, noktalari sil
+    const raw = query.replace(/[^0-9]/g, '').slice(0, 6)
+    setEditData({ ...editData, faaliyetKodu: raw })
+    if (raw.length >= 2) {
+      const results = searchNace(raw)
+      setNaceResults(results)
+      setShowNaceDropdown(results.length > 0)
+    } else {
+      setNaceResults([])
+      setShowNaceDropdown(false)
+    }
+  }
+
+  const selectNace = (nace) => {
+    setEditData({ ...editData, faaliyetKodu: nace.code, activityField: nace.desc })
+    setShowNaceDropdown(false)
+  }
+
+  // E-hizmet toggle
+  const toggleEService = (key) => {
+    const updated = { ...client, [key]: !client[key] }
+    saveClient(updated)
+  }
+
+  // Yetkili/Ortak ekle veya guncelle
+  const addOfficial = () => {
+    if (!newOfficial.name) return
+    const officials = [...(client.officials || [])]
+    if (editOfficialIndex >= 0) {
+      officials[editOfficialIndex] = { ...newOfficial }
+    } else {
+      officials.push({ ...newOfficial })
+    }
+    const updated = { ...client, officials }
+    saveClient(updated)
+    setNewOfficial({ name: '', title: '', phone: '', email: '', tc: '', address: '', hisse: '', sermaye: '' })
+    setShowOfficialForm(false)
+    setEditOfficialIndex(-1)
+  }
+
+  const startEditOfficial = (index) => {
+    setNewOfficial({ ...client.officials[index] })
+    setEditOfficialIndex(index)
+    setShowOfficialForm(true)
+  }
+
+  const removeOfficial = (index) => {
+    const officials = [...(client.officials || [])]
+    officials.splice(index, 1)
+    saveClient({ ...client, officials })
+  }
+
+  // Banka ekle veya guncelle
+  const addBank = () => {
+    if (!newBank.bank) return
+    const banks = [...(client.banks || [])]
+    if (editBankIndex >= 0) {
+      banks[editBankIndex] = { ...newBank }
+    } else {
+      banks.push({ ...newBank })
+    }
+    saveClient({ ...client, banks })
+    setNewBank({ bank: '', branch: '', iban: '', accountNo: '' })
+    setShowBankForm(false)
+    setEditBankIndex(-1)
+  }
+
+  const startEditBank = (index) => {
+    setNewBank({ ...client.banks[index] })
+    setEditBankIndex(index)
+    setShowBankForm(true)
+  }
+
+  const removeBank = (index) => {
+    const banks = [...(client.banks || [])]
+    banks.splice(index, 1)
+    saveClient({ ...client, banks })
+  }
+
+  // Hesap kodu upload
+  const handleHesapKoduUpload = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      try {
+        const data = new Uint8Array(ev.target.result)
+        const workbook = XLSX.read(data, { type: 'array' })
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
+        const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 })
+        const codes = []
+        jsonData.forEach((row, i) => {
+          if (i === 0) return
+          if (row[0]) codes.push({ kod: String(row[0]).trim(), ad: String(row[1] || '').trim() })
+        })
+        setHesapKodlari(codes)
+        localStorage.setItem(`mubis_hesap_kodlari_${id}`, JSON.stringify(codes))
+        alert(`${codes.length} hesap kodu yuklendi!`)
+      } catch (err) { alert('Excel okunamadi: ' + err.message) }
+    }
+    reader.readAsArrayBuffer(file)
+    e.target.value = ''
+  }
+
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-yellow-400"></div></div>
+  }
 
   if (!client) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-16 text-center">
-        <h2 className="text-2xl text-white">Musteri bulunamadi</h2>
-        <button onClick={() => navigate('/admin')} className="btn-gold mt-4">Geri Don</button>
+        <h2 className="text-2xl text-white mb-4">Musteri bulunamadi</h2>
+        <p className="text-gray-400 mb-6">ID: {id}</p>
+        <button onClick={() => navigate('/admin/musteriler')} className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-6 py-2 rounded-lg font-semibold">Geri Don</button>
       </div>
     )
   }
 
+  const isCompany = client.type === 'company'
+
   const tabs = [
     { id: 'info', label: 'Bilgiler', icon: Building2 },
-    { id: 'officials', label: 'Yetkililer', icon: User },
+    ...(isCompany ? [{ id: 'officials', label: 'Ortaklar / Yetkililer', icon: User }] : []),
     { id: 'banks', label: 'Bankalar', icon: CreditCard },
-    { id: 'tasks', label: 'Gorevler', icon: CheckCircle },
+    { id: 'services', label: 'E-Hizmetler', icon: Shield },
     { id: 'documents', label: 'Evraklar', icon: FileText },
+    ...(client.musteriSinifi === '1. Sinif' ? [{ id: 'hesapkodlari', label: 'Hesap Kodlari', icon: Hash }] : []),
   ]
+
+  const filteredHesapKodlari = hesapKodlari.filter(hk => {
+    if (!hesapSearch) return true
+    return hk.kod.includes(hesapSearch) || hk.ad.toLowerCase().includes(hesapSearch.toLowerCase())
+  })
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="flex items-center justify-between mb-8">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
         <div className="flex items-center space-x-4">
-          <button onClick={() => navigate('/admin')} className="text-gray-400 hover:text-white">
+          <button onClick={() => navigate('/admin/musteriler')} className="text-gray-400 hover:text-white transition-colors">
             <ArrowLeft className="w-6 h-6" />
           </button>
           <div className="flex items-center space-x-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-yellow-500 rounded-xl flex items-center justify-center text-white font-bold text-xl">
-              {client.name.charAt(0)}
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-xl ${isCompany ? 'bg-gradient-to-br from-blue-500 to-blue-700' : 'bg-gradient-to-br from-purple-500 to-purple-700'}`}>
+              {client.name?.charAt(0) || '?'}
             </div>
             <div>
               <h1 className="text-2xl font-bold text-white">{client.name}</h1>
-              <p className="text-gray-400 text-sm">VKN: {client.vkn}</p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-gray-400 text-sm">{isCompany ? `VKN: ${client.vkn || '-'}` : `TC: ${client.tc || '-'}`}</span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${client.status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                  {client.status === 'active' ? 'Aktif' : 'Pasif'}
+                </span>
+                {client.musteriSinifi && <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-yellow-500/20 text-yellow-400">{client.musteriSinifi}</span>}
+              </div>
             </div>
           </div>
         </div>
-        <button onClick={() => setIsEditing(!isEditing)} className="btn-gold text-sm px-4 py-2 flex items-center">
-          <Edit3 className="w-4 h-4 mr-2" />Duzenle
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={() => navigate(`/admin/client/${id}/beyan-profile`)} className="bg-teal-500/20 text-teal-400 px-3 py-2 rounded-lg text-sm font-medium hover:bg-teal-500/30 flex items-center gap-1">
+            <ListChecks className="w-4 h-4" /><span>Beyan Profili</span>
+          </button>
+          <button onClick={() => navigate(`/admin/client/${id}/beyan-takip`)} className="bg-blue-500/20 text-blue-400 px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-500/30 flex items-center gap-1">
+            <FileText className="w-4 h-4" /><span>Beyan Takip</span>
+          </button>
+          {isEditing ? (
+            <>
+              <button onClick={handleSave} className="bg-green-500/20 text-green-400 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1"><Save className="w-4 h-4" /><span>Kaydet</span></button>
+              <button onClick={() => { setIsEditing(false); setEditData(client) }} className="bg-red-500/20 text-red-400 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1"><X className="w-4 h-4" /><span>Iptal</span></button>
+            </>
+          ) : (
+            <button onClick={() => setIsEditing(true)} className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1">
+              <Edit3 className="w-4 h-4" /><span>Duzenle</span>
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        {[
-          { icon: CheckCircle, label: 'Tamamlanan', value: client.tasks.filter(t => t.status === 'completed').length, color: 'text-green-400', bg: 'bg-green-500/10' },
-          { icon: Clock, label: 'Bekleyen', value: client.tasks.filter(t => t.status === 'pending').length, color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
-          { icon: AlertTriangle, label: 'Acil', value: '1', color: 'text-red-400', bg: 'bg-red-500/10' },
-          { icon: FileText, label: 'Evrak', value: '12', color: 'text-blue-400', bg: 'bg-blue-500/10' },
-        ].map((card, i) => (
-          <div key={i} className="bg-blue-950/40 rounded-2xl p-4 border border-blue-800/30 text-center">
-            <div className={`${card.bg} p-2 rounded-xl inline-block mb-2`}><card.icon className={`w-5 h-5 ${card.color}`} /></div>
-            <div className="text-2xl font-bold text-white">{card.value}</div>
-            <div className="text-gray-400 text-xs">{card.label}</div>
-          </div>
-        ))}
-      </div>
-
+      {/* Tabs */}
       <div className="flex space-x-1 bg-blue-950/40 rounded-xl p-1 mb-6 overflow-x-auto">
         {tabs.map((tab) => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === tab.id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>
@@ -190,86 +259,386 @@ export default function ClientDetail() {
         ))}
       </div>
 
+      {/* ==================== INFO TAB ==================== */}
       {activeTab === 'info' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Temel Bilgiler */}
           <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
-            <h3 className="text-lg font-semibold text-white mb-4">Sirket Bilgileri</h3>
+            <h3 className="text-lg font-semibold text-white mb-4">{isCompany ? 'Sirket Bilgileri' : 'Kisisel Bilgiler'}</h3>
             <div className="space-y-3">
-              {[{ icon: Hash, label: 'VKN', value: client.vkn }, { icon: Building2, label: 'Vergi Dairesi', value: client.taxOffice }, { icon: Globe, label: 'MERSIS', value: client.mersis }, { icon: FileText, label: 'Ticaret Sicil', value: client.tradeRegistry }, { icon: CreditCard, label: 'Sermaye', value: client.capital }, { icon: Calendar, label: 'Kurulus Tarihi', value: client.establishedDate }].map((item, i) => (
-                <div key={i} className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl"><div className="flex items-center space-x-3"><item.icon className="w-4 h-4 text-gray-500" /><span className="text-gray-400 text-sm">{item.label}</span></div><span className="text-white text-sm font-medium">{item.value}</span></div>
-              ))}
+              {isCompany ? (
+                <>
+                  <InfoRow label="Sirket Unvani" value={client.name} editKey="name" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                  <InfoRow label="VKN" value={client.vkn} editKey="vkn" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                  <InfoRow label="Sermaye" value={client.capital} editKey="capital" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                  <InfoRow label="Vergi Dairesi" value={client.taxOffice} editKey="taxOffice" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                </>
+              ) : (
+                <>
+                  <InfoRow label="Ad Soyad" value={client.name} editKey="name" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                  <InfoRow label="TC Kimlik No" value={client.tc} editKey="tc" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                  <InfoRow label="Vergi Dairesi" value={client.taxOffice} editKey="taxOffice" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                  {/* Musteri Sinifi - Dropdown */}
+                  <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                    <span className="text-gray-400 text-sm">Musteri Sinifi</span>
+                    {isEditing ? (
+                      <select value={editData.musteriSinifi || ''} onChange={(e) => setEditData({...editData, musteriSinifi: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400">
+                        <option value="">Seciniz</option>
+                        <option value="1. Sinif">1. Sinif (Bilanco)</option>
+                        <option value="2. Sinif">2. Sinif (Isletme)</option>
+                        <option value="Serbest Meslek">Serbest Meslek</option>
+                        <option value="Basit Usul">Basit Usul</option>
+                      </select>
+                    ) : (
+                      <span className="text-white text-sm font-medium">{client.musteriSinifi || '-'}</span>
+                    )}
+                  </div>
+                </>
+              )}
+              {/* Faaliyet Kodu */}
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl relative">
+                <span className="text-gray-400 text-sm">Faaliyet Kodu</span>
+                {isEditing ? (
+                  <div className="relative w-48">
+                    <input
+                      type="text"
+                      value={editData.faaliyetKodu || ''}
+                      onChange={(e) => handleNaceSearch(e.target.value)}
+                      onFocus={() => {
+                        const c = (editData.faaliyetKodu || '')
+                        if (c.length >= 2) {
+                          const results = searchNace(c)
+                          setNaceResults(results)
+                          setShowNaceDropdown(results.length > 0)
+                        }
+                      }}
+                      onBlur={() => setTimeout(() => setShowNaceDropdown(false), 200)}
+                      placeholder="6 haneli kod veya faaliyet ara..."
+                      maxLength={6}
+                      className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-full focus:outline-none focus:border-yellow-400 font-mono tracking-wider"
+                    />
+                    {showNaceDropdown && (
+                      <div className="absolute right-0 top-full mt-1 w-96 bg-blue-950 border border-blue-700/50 rounded-lg shadow-xl z-50 max-h-60 overflow-y-auto">
+                        {naceResults.map((n, i) => (
+                          <button key={i} onClick={() => selectNace(n)} className="w-full text-left px-3 py-2 hover:bg-blue-800/50 text-sm border-b border-blue-800/30 last:border-0">
+                            <span className="text-yellow-400 font-mono font-bold">{formatNaceCode(n.code)}</span>
+                            <span className="text-gray-300 ml-2 text-xs">{n.desc}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-white text-sm font-medium font-mono">{client.faaliyetKodu ? formatNaceCode(client.faaliyetKodu) : '-'}</span>
+                )}
+              </div>
+              {/* Faaliyet Konusu - kod secimine gore otomatik gelir */}
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm">Faaliyet Konusu</span>
+                <span className="text-white text-sm font-medium text-right max-w-[60%]">
+                  {isEditing 
+                    ? (editData.activityField || getNaceDesc(editData.faaliyetKodu) || '-')
+                    : (client.activityField || getNaceDesc(client.faaliyetKodu) || '-')
+                  }
+                </span>
+              </div>
             </div>
           </div>
+
+          {/* Iletisim Bilgileri */}
           <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
             <h3 className="text-lg font-semibold text-white mb-4">Iletisim Bilgileri</h3>
             <div className="space-y-3">
-              {[{ icon: Phone, label: 'Telefon', value: client.phone }, { icon: Mail, label: 'E-Posta', value: client.email }, { icon: Globe, label: 'Web Sitesi', value: client.website }, { icon: MapPin, label: 'Adres', value: client.address }].map((item, i) => (
-                <div key={i} className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl"><div className="flex items-center space-x-3"><item.icon className="w-4 h-4 text-gray-500" /><span className="text-gray-400 text-sm">{item.label}</span></div><span className="text-white text-sm font-medium">{item.value}</span></div>
-              ))}
+              {/* Telefon - ozel handler */}
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm">Telefon</span>
+                {isEditing ? (
+                  <input type="text" value={editData.phone || ''} onChange={handlePhoneChange} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" placeholder="05XX XXX XX XX" />
+                ) : (
+                  <span className="text-white text-sm font-medium">{client.phone || '-'}</span>
+                )}
+              </div>
+              {/* WhatsApp */}
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm">WhatsApp</span>
+                {isEditing ? (
+                  <input type="text" value={editData.whatsapp || ''} onChange={(e) => setEditData({...editData, whatsapp: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" placeholder="Otomatik dolar" />
+                ) : (
+                  <span className="text-white text-sm font-medium">{client.whatsapp || client.phone || '-'}</span>
+                )}
+              </div>
+              <InfoRow label="E-Posta" value={client.email} editKey="email" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+              <InfoRow label="Web Sitesi" value={client.website} editKey="website" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+              {/* Adres - Textarea 2 satir */}
+              <div className="p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm block mb-1">Adres</span>
+                {isEditing ? (
+                  <textarea value={editData.address || ''} onChange={(e) => setEditData({...editData, address: e.target.value})} rows={2} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400 resize-none" placeholder="Tam adres..." />
+                ) : (
+                  <p className="text-white text-sm">{client.address || '-'}</p>
+                )}
+              </div>
             </div>
           </div>
-          <div className="md:col-span-2 bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
-            <h3 className="text-lg font-semibold text-white mb-4">📝 Notlar</h3>
-            <p className="text-gray-300 bg-blue-900/20 rounded-xl p-4">{client.notes}</p>
-          </div>
-        </div>
-      )}
 
-      {activeTab === 'officials' && (
-        <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
-          <div className="flex items-center justify-between mb-6"><h3 className="text-lg font-semibold text-white">👤 Yetkililer</h3><button className="btn-gold text-sm px-3 py-1.5 flex items-center"><Plus className="w-4 h-4 mr-1" />Ekle</button></div>
-          <div className="space-y-4">
-            {client.officials.map((official, i) => (
-              <div key={i} className="bg-blue-900/20 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div><div className="text-white font-medium">{official.name}</div><div className="text-yellow-500 text-sm">{official.title}</div></div>
-                <div className="flex flex-col sm:flex-row gap-3 text-sm text-gray-400"><span className="flex items-center"><Phone className="w-3 h-3 mr-1" />{official.phone}</span><span className="flex items-center"><Mail className="w-3 h-3 mr-1" />{official.email}</span></div>
-                <div className="flex space-x-2"><button className="p-1.5 bg-blue-500/20 rounded-lg text-blue-400"><Edit3 className="w-4 h-4" /></button><button className="p-1.5 bg-red-500/20 rounded-lg text-red-400"><Trash2 className="w-4 h-4" /></button></div>
+          {/* Kira Bilgileri */}
+          <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2"><Home className="w-5 h-5 text-yellow-400" /> Kira Bilgileri</h3>
+            <div className="space-y-3">
+              <InfoRow label="Aylik Kira" value={client.kiraAmount} editKey="kiraAmount" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm">Kontrat Baslangic</span>
+                {isEditing ? (
+                  <input type="date" value={editData.kiraBaslangic || ''} onChange={(e) => setEditData({...editData, kiraBaslangic: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" />
+                ) : (
+                  <span className="text-white text-sm font-medium">{client.kiraBaslangic || '-'}</span>
+                )}
               </div>
-            ))}
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm">Kontrat Bitis</span>
+                {isEditing ? (
+                  <input type="date" value={editData.kiraBitis || ''} onChange={(e) => setEditData({...editData, kiraBitis: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" />
+                ) : (
+                  <span className="text-white text-sm font-medium">{client.kiraBitis || '-'}</span>
+                )}
+              </div>
+              {client.kiraBitis && (() => {
+                const diff = Math.ceil((new Date(client.kiraBitis) - new Date()) / (1000 * 60 * 60 * 24))
+                if (diff <= 60 && diff > 0) return <div className="p-3 bg-yellow-500/10 rounded-xl border border-yellow-500/30"><span className="text-yellow-400 text-sm font-medium">Kontrat bitisine {diff} gun kaldi!</span></div>
+                if (diff <= 0) return <div className="p-3 bg-red-500/10 rounded-xl border border-red-500/30"><span className="text-red-400 text-sm font-medium">Kontrat suresi dolmus!</span></div>
+                return null
+              })()}
+              <InfoRow label="Ev Sahibi" value={client.kiraSahibi} editKey="kiraSahibi" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+            </div>
+          </div>
+
+          {/* Onemli Tarihler */}
+          <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2"><Calendar className="w-5 h-5 text-yellow-400" /> Onemli Tarihler</h3>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm">Is Acilis</span>
+                {isEditing ? <input type="date" value={editData.isAcilisTarihi || editData.openDate || ''} onChange={(e) => setEditData({...editData, isAcilisTarihi: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" /> : <span className="text-white text-sm">{client.isAcilisTarihi || client.openDate || '-'}</span>}
+              </div>
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm">e-Imza Bitis</span>
+                {isEditing ? <input type="date" value={editData.eimzaEnd || ''} onChange={(e) => setEditData({...editData, eimzaEnd: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" /> : <span className="text-white text-sm">{client.eimzaEnd || '-'}</span>}
+              </div>
+            </div>
+          </div>
+
+          {/* Notlar */}
+          <div className="md:col-span-2 bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+            <h3 className="text-lg font-semibold text-white mb-4">Notlar</h3>
+            {isEditing ? (
+              <textarea value={editData.notes || ''} onChange={(e) => setEditData({...editData, notes: e.target.value})} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl p-4 text-white min-h-[80px] focus:outline-none focus:border-yellow-400" placeholder="Notlar..." />
+            ) : (
+              <p className="text-gray-300 bg-blue-900/20 rounded-xl p-4">{client.notes || 'Not yok'}</p>
+            )}
           </div>
         </div>
       )}
 
+      {/* ==================== ORTAKLAR / YETKİLİLER TAB ==================== */}
+      {activeTab === 'officials' && isCompany && (
+        <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-lg font-semibold text-white">Sirket Ortaklari / Yetkililer</h3>
+            <button onClick={() => { setShowOfficialForm(!showOfficialForm); setEditOfficialIndex(-1); setNewOfficial({ name: '', title: '', phone: '', email: '', tc: '', address: '', hisse: '', sermaye: '' }) }} className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1">
+              <Plus className="w-4 h-4" /><span>Ortak Ekle</span>
+            </button>
+          </div>
+
+          {showOfficialForm && (
+            <div className="bg-blue-900/20 rounded-xl p-4 mb-4 border border-blue-700/30">
+              <h4 className="text-white font-medium mb-3 text-sm">{editOfficialIndex >= 0 ? 'Ortak / Yetkili Duzenle' : 'Yeni Ortak / Yetkili'}</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <input type="text" value={newOfficial.name} onChange={(e) => setNewOfficial({...newOfficial, name: e.target.value})} placeholder="Ad Soyad *" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newOfficial.title} onChange={(e) => setNewOfficial({...newOfficial, title: e.target.value})} placeholder="Unvan (Ortak/Mudur)" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newOfficial.tc} onChange={(e) => setNewOfficial({...newOfficial, tc: e.target.value})} placeholder="TC Kimlik No" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newOfficial.phone} onChange={(e) => setNewOfficial({...newOfficial, phone: e.target.value})} placeholder="Telefon" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newOfficial.email} onChange={(e) => setNewOfficial({...newOfficial, email: e.target.value})} placeholder="E-Posta" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newOfficial.hisse} onChange={(e) => setNewOfficial({...newOfficial, hisse: e.target.value})} placeholder="Hisse Orani (%)" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newOfficial.sermaye} onChange={(e) => setNewOfficial({...newOfficial, sermaye: e.target.value})} placeholder="Sermaye Tutari" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <textarea value={newOfficial.address} onChange={(e) => setNewOfficial({...newOfficial, address: e.target.value})} placeholder="Adres" rows={1} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400 resize-none sm:col-span-2" />
+              </div>
+              <div className="flex gap-2 mt-3">
+                <button onClick={addOfficial} className="bg-green-500/20 text-green-400 px-4 py-2 rounded-lg text-sm font-medium">{editOfficialIndex >= 0 ? 'Guncelle' : 'Kaydet'}</button>
+                <button onClick={() => { setShowOfficialForm(false); setEditOfficialIndex(-1); setNewOfficial({ name: '', title: '', phone: '', email: '', tc: '', address: '', hisse: '', sermaye: '' }) }} className="bg-red-500/20 text-red-400 px-4 py-2 rounded-lg text-sm font-medium">Iptal</button>
+              </div>
+            </div>
+          )}
+
+          {client.officials && client.officials.length > 0 ? (
+            <div className="space-y-3">
+              {client.officials.map((official, i) => (
+                <div key={i} className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/20">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-white font-medium">{official.name}</span>
+                        {official.title && <span className="text-yellow-500 text-xs bg-yellow-500/10 px-2 py-0.5 rounded">{official.title}</span>}
+                        {official.hisse && <span className="text-blue-400 text-xs">%{official.hisse}</span>}
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 mt-2 text-sm text-gray-400">
+                        {official.tc && <span>TC: {official.tc}</span>}
+                        {official.phone && <span>Tel: {official.phone}</span>}
+                        {official.email && <span>E-Posta: {official.email}</span>}
+                        {official.sermaye && <span>Sermaye: {official.sermaye}</span>}
+                        {official.address && <span className="sm:col-span-2">Adres: {official.address}</span>}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => startEditOfficial(i)} className="text-gray-500 hover:text-yellow-400 transition-colors p-1" title="Duzenle"><Edit3 className="w-4 h-4" /></button>
+                      <button onClick={() => removeOfficial(i)} className="text-gray-500 hover:text-red-400 transition-colors p-1" title="Sil"><Trash2 className="w-4 h-4" /></button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-gray-500 text-center py-6">Henuz ortak/yetkili eklenmemis</p>
+          )}
+        </div>
+      )}
+
+      {/* ==================== BANKALAR TAB ==================== */}
       {activeTab === 'banks' && (
         <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
-          <div className="flex items-center justify-between mb-6"><h3 className="text-lg font-semibold text-white">🏦 Banka Hesaplari</h3><button className="btn-gold text-sm px-3 py-1.5 flex items-center"><Plus className="w-4 h-4 mr-1" />Ekle</button></div>
-          <div className="space-y-4">
-            {client.banks.map((bank, i) => (
-              <div key={i} className="bg-blue-900/20 rounded-xl p-4">
-                <div className="flex items-center justify-between mb-2"><span className="text-white font-medium">{bank.bank}</span><span className="text-gray-400 text-sm">{bank.branch}</span></div>
-                <div className="text-gray-300 text-sm font-mono bg-blue-950/50 rounded-lg p-2">IBAN: {bank.iban}</div>
-              </div>
-            ))}
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-lg font-semibold text-white">Banka Hesaplari</h3>
+            <button onClick={() => { setShowBankForm(!showBankForm); setEditBankIndex(-1); setNewBank({ bank: '', branch: '', iban: '', accountNo: '' }) }} className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1">
+              <Plus className="w-4 h-4" /><span>Banka Ekle</span>
+            </button>
           </div>
+
+          {showBankForm && (
+            <div className="bg-blue-900/20 rounded-xl p-4 mb-4 border border-blue-700/30">
+              <h4 className="text-white font-medium mb-3 text-sm">{editBankIndex >= 0 ? 'Banka Bilgisi Duzenle' : 'Yeni Banka Hesabi'}</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input type="text" value={newBank.bank} onChange={(e) => setNewBank({...newBank, bank: e.target.value})} placeholder="Banka Adi *" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newBank.branch} onChange={(e) => setNewBank({...newBank, branch: e.target.value})} placeholder="Sube" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newBank.iban} onChange={(e) => setNewBank({...newBank, iban: e.target.value})} placeholder="IBAN" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400 sm:col-span-2" />
+              </div>
+              <div className="flex gap-2 mt-3">
+                <button onClick={addBank} className="bg-green-500/20 text-green-400 px-4 py-2 rounded-lg text-sm font-medium">{editBankIndex >= 0 ? 'Guncelle' : 'Kaydet'}</button>
+                <button onClick={() => { setShowBankForm(false); setEditBankIndex(-1); setNewBank({ bank: '', branch: '', iban: '', accountNo: '' }) }} className="bg-red-500/20 text-red-400 px-4 py-2 rounded-lg text-sm font-medium">Iptal</button>
+              </div>
+            </div>
+          )}
+
+          {client.banks && client.banks.length > 0 ? (
+            <div className="space-y-3">
+              {client.banks.map((bank, i) => (
+                <div key={i} className="bg-blue-900/20 rounded-xl p-4 flex items-center justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2"><span className="text-white font-medium">{bank.bank}</span>{bank.branch && <span className="text-gray-400 text-sm">- {bank.branch}</span>}</div>
+                    <div className="text-gray-300 text-sm font-mono mt-1">IBAN: {bank.iban || '-'}</div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => startEditBank(i)} className="text-gray-500 hover:text-yellow-400 transition-colors p-1" title="Duzenle"><Edit3 className="w-4 h-4" /></button>
+                    <button onClick={() => removeBank(i)} className="text-gray-500 hover:text-red-400 transition-colors p-1" title="Sil"><Trash2 className="w-4 h-4" /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-gray-500 text-center py-6">Henuz banka hesabi eklenmemis</p>
+          )}
         </div>
       )}
 
-      {activeTab === 'tasks' && (
+      {/* ==================== E-HİZMETLER TAB ==================== */}
+      {activeTab === 'services' && (
         <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
-          <h3 className="text-lg font-semibold text-white mb-4">📋 Gorevler</h3>
-          <div className="space-y-3">
-            {client.tasks.map((task) => (
-              <div key={task.id} className="flex items-center justify-between p-4 bg-blue-900/20 rounded-xl">
-                <div className="flex items-center space-x-3"><div className={`w-2 h-2 rounded-full ${task.status === 'completed' ? 'bg-green-400' : 'bg-yellow-400'}`} /><div><div className="text-white">{task.task}</div><div className="text-gray-400 text-sm flex items-center"><Calendar className="w-3 h-3 mr-1" />{task.deadline}</div></div></div>
-                <span className={`px-3 py-1 rounded-full text-xs ${task.status === 'completed' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>{task.status === 'completed' ? '✅ Tamamlandi' : '⏳ Bekliyor'}</span>
-              </div>
+          <h3 className="text-lg font-semibold text-white mb-4">Elektronik Hizmetler</h3>
+          <p className="text-gray-500 text-xs mb-4">Tikla: Aktif/Pasif degistir</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {[
+              { key: 'efatura', label: 'e-Fatura' },
+              { key: 'earsiv', label: 'e-Arsiv' },
+              { key: 'esmm', label: 'e-SMM' },
+              { key: 'edefter', label: 'e-Defter' },
+            ].map((item) => (
+              <button key={item.key} onClick={() => toggleEService(item.key)} className={`flex items-center justify-between p-4 rounded-xl border transition-all cursor-pointer ${client[item.key] ? 'bg-green-500/10 border-green-500/30 hover:bg-green-500/20' : 'bg-blue-900/20 border-blue-700/20 hover:bg-blue-800/30'}`}>
+                <span className="text-white text-sm font-medium">{item.label}</span>
+                <span className={`px-3 py-1 rounded-full text-xs font-medium ${client[item.key] ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-500'}`}>
+                  {client[item.key] ? 'Aktif' : 'Pasif'}
+                </span>
+              </button>
             ))}
           </div>
+          {client.edefter && (
+            <div className="mt-3 p-3 bg-blue-900/20 rounded-xl flex items-center justify-between">
+              <span className="text-gray-400 text-sm">e-Defter Periyodu</span>
+              <select value={client.edefterPeriod || 'aylik'} onChange={(e) => saveClient({...client, edefterPeriod: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm focus:outline-none focus:border-yellow-400">
+                <option value="aylik">Aylik</option>
+                <option value="3aylik">3 Aylik</option>
+              </select>
+            </div>
+          )}
         </div>
       )}
 
+      {/* ==================== EVRAKLAR TAB ==================== */}
       {activeTab === 'documents' && (
         <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
-          <div className="flex items-center justify-between mb-6"><h3 className="text-lg font-semibold text-white">📄 Evraklar</h3><button className="btn-gold text-sm px-3 py-1.5 flex items-center"><Plus className="w-4 h-4 mr-1" />Yukle</button></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[{ name: 'Temmuz 2026 Tahakkuk', type: 'PDF', date: '2026-07-12', size: '245 KB' }, { name: 'Haziran KDV Beyannamesi', type: 'PDF', date: '2026-06-25', size: '180 KB' }, { name: 'Imza Sirkuleri', type: 'PDF', date: '2026-05-10', size: '1.2 MB' }, { name: 'Vergi Levhasi', type: 'JPG', date: '2026-04-15', size: '890 KB' }, { name: 'Ticaret Sicil Gazetesi', type: 'PDF', date: '2026-03-20', size: '2.1 MB' }, { name: 'Faaliyet Belgesi', type: 'PDF', date: '2026-02-10', size: '450 KB' }].map((doc, i) => (
-              <div key={i} className="bg-blue-900/20 rounded-xl p-4 flex items-center justify-between">
-                <div className="flex items-center space-x-3"><FileText className="w-8 h-8 text-yellow-500" /><div><div className="text-white text-sm font-medium truncate max-w-[150px]">{doc.name}</div><div className="text-gray-500 text-xs">{doc.date} • {doc.size}</div></div></div>
-                <button className="text-gray-400 hover:text-white"><Download className="w-4 h-4" /></button>
-              </div>
-            ))}
-          </div>
+          <h3 className="text-lg font-semibold text-white mb-4">Evraklar</h3>
+          <p className="text-gray-500 text-center py-8">Evrak merkezi modulu ile entegre edilecek</p>
         </div>
+      )}
+
+      {/* ==================== HESAP KODLARI TAB ==================== */}
+      {activeTab === 'hesapkodlari' && client.musteriSinifi === '1. Sinif' && (
+        <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+          <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+            <div>
+              <h3 className="text-lg font-semibold text-white">Hesap Kodlari (LUCA)</h3>
+              <p className="text-gray-500 text-xs mt-1">{hesapKodlari.length > 0 ? `${hesapKodlari.length} hesap kodu yuklu` : 'Yuklu degil'}</p>
+            </div>
+            <div className="flex gap-2">
+              {hesapKodlari.length > 0 && (
+                <button onClick={() => { setHesapKodlari([]); localStorage.removeItem(`mubis_hesap_kodlari_${id}`) }} className="bg-red-500/20 text-red-400 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1"><Trash2 className="w-4 h-4" /><span>Temizle</span></button>
+              )}
+              <button onClick={() => hesapFileRef.current?.click()} className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1"><Upload className="w-4 h-4" /><span>Excel Yukle</span></button>
+              <input ref={hesapFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleHesapKoduUpload} className="hidden" />
+            </div>
+          </div>
+          {hesapKodlari.length > 0 ? (
+            <>
+              <div className="relative mb-4">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                <input type="text" value={hesapSearch} onChange={(e) => setHesapSearch(e.target.value)} placeholder="Hesap kodu veya adi ara..." className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 pl-9 pr-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+              </div>
+              <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                <table className="w-full">
+                  <thead className="bg-blue-900/30 sticky top-0"><tr className="text-left text-gray-400 text-sm"><th className="px-4 py-2">#</th><th className="px-4 py-2">Hesap Kodu</th><th className="px-4 py-2">Hesap Adi</th></tr></thead>
+                  <tbody>
+                    {filteredHesapKodlari.map((hk, i) => (
+                      <tr key={i} className="border-t border-blue-700/20 hover:bg-blue-800/20"><td className="px-4 py-2 text-gray-500 text-sm">{i+1}</td><td className="px-4 py-2 text-yellow-400 text-sm font-mono font-medium">{hk.kod}</td><td className="px-4 py-2 text-white text-sm">{hk.ad}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            <div className="text-center py-12"><Hash className="w-12 h-12 text-gray-600 mx-auto mb-3" /><p className="text-gray-400 mb-2">Hesap kodu listesi yuklu degil</p><p className="text-gray-500 text-sm">LUCA Excel hesap kodu listesini yukleyebilirsiniz</p></div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Yeniden kullanilabilir bilgi satiri
+function InfoRow({ label, value, editKey, isEditing, editData, setEditData }) {
+  return (
+    <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+      <span className="text-gray-400 text-sm">{label}</span>
+      {isEditing && editKey ? (
+        <input type="text" value={editData[editKey] || ''} onChange={(e) => setEditData({...editData, [editKey]: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" />
+      ) : (
+        <span className="text-white text-sm font-medium text-right max-w-[200px] truncate">{value || '-'}</span>
       )}
     </div>
   )

@@ -1,14 +1,14 @@
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { 
-  LayoutDashboard, CheckCircle, Users, Bell, 
-  FileText, Menu, Home
+  LayoutDashboard, Users, Bell, 
+  FileText, Home, LogOut
 } from 'lucide-react'
 
 export default function MobileNav() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { user } = useAuth()
+  const { user, logout } = useAuth()
 
   if (!user) return null
 
@@ -17,17 +17,16 @@ export default function MobileNav() {
 
   const adminLinks = [
     { path: '/admin', icon: LayoutDashboard, label: 'Panel' },
-    { path: '/admin', icon: CheckCircle, label: 'Görevler', hash: 'tasks' },
-    { path: '/admin', icon: Users, label: 'Müşteriler', hash: 'clients' },
+    { path: '/admin/musteriler', icon: Users, label: 'Musteriler' },
+    { path: '/admin/aylik-beyan-takip', icon: FileText, label: 'Beyanlar' },
     { path: '/admin/notifications', icon: Bell, label: 'Bildirim' },
-    { path: '/admin', icon: FileText, label: 'Raporlar', hash: 'reports' },
   ]
 
   const clientLinks = [
     { path: '/portal', icon: Home, label: 'Panel' },
+    { path: '/portal/tax-center', icon: FileText, label: 'Beyan' },
     { path: '/portal', icon: FileText, label: 'Evraklar', hash: 'documents' },
     { path: '/portal', icon: Bell, label: 'Bildirim' },
-    { path: '/portal', icon: FileText, label: 'Yükle', hash: 'upload' },
   ]
 
   const links = isAdmin ? adminLinks : clientLinks
@@ -35,6 +34,11 @@ export default function MobileNav() {
   const isActive = (link) => {
     if (link.hash) return currentPath === link.path
     return currentPath.startsWith(link.path)
+  }
+
+  const handleLogout = () => {
+    logout()
+    navigate('/')
   }
 
   return (
@@ -54,6 +58,13 @@ export default function MobileNav() {
             <span className="text-[10px] font-medium">{link.label}</span>
           </button>
         ))}
+        <button
+          onClick={handleLogout}
+          className="flex flex-col items-center justify-center space-y-1 px-3 py-1 rounded-xl transition-all min-w-[60px] text-gray-400 hover:text-red-400"
+        >
+          <LogOut className="w-5 h-5" />
+          <span className="text-[10px] font-medium">Çıkış</span>
+        </button>
       </div>
     </nav>
   )

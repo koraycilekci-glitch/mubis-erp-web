@@ -1,298 +1,155 @@
 import { useState } from 'react'
-import { useAuth } from '../context/AuthContext'
-import { 
-  FileText, Download, Eye, Bell, CheckCircle, 
-  AlertTriangle, Upload, FolderOpen, MessageSquare,
-  User, Settings, Send, Receipt, CreditCard, Calendar,
-  Phone, Mail, MapPin, Building2, Save, X, Plus
-} from 'lucide-react'
-import FileUploader from '../components/FileUploader'
+import { Download, FileText, Search, Calendar, CheckCircle, Clock } from 'lucide-react'
 
-export default function ClientPortal() {
-  const { user } = useAuth()
-  const [activeTab, setActiveTab] = useState('documents')
-  const [showProfileEdit, setShowProfileEdit] = useState(false)
-  const [newMessage, setNewMessage] = useState('')
-  
-  const [profile, setProfile] = useState({
-    name: 'Ahmet Yılmaz',
-    company: 'Yılmaz Ticaret Ltd. Şti.',
-    email: 'musteri@firma.com',
-    phone: '+90 532 111 22 33',
-    address: 'Kadıköy, İstanbul',
-    vkn: '1234567890',
-    taxOffice: 'Kadıköy Vergi Dairesi',
-  })
+export default function AllBeyanReport() {
+  const [filterMonth, setFilterMonth] = useState('2026-07')
+  const [searchTerm, setSearchTerm] = useState('')
 
-  const [messages, setMessages] = useState([
-    { id: 1, from: 'Koray Bey (Mali Müşavir)', text: 'Temmuz ayı tahakkukunuz hazır. Kontrol edip onaylar mısınız?', date: '2026-07-12', time: '10:30', type: 'received' },
-    { id: 2, from: 'Siz', text: 'Tahakkuku kontrol ettim, onaylıyorum. Teşekkürler.', date: '2026-07-12', time: '11:00', type: 'sent' },
-    { id: 3, from: 'Koray Bey (Mali Müşavir)', text: 'Geçici vergi dönemi için evrakları en geç 20 Temmuz\'a kadar iletmeniz gerekiyor.', date: '2026-07-11', time: '15:00', type: 'received' },
-    { id: 4, from: 'Siz', text: 'Tamam, evrakları hazırlayıp yarın gönderiyorum.', date: '2026-07-11', time: '15:30', type: 'sent' },
-  ])
-
-  const [invoices, setInvoices] = useState([
-    { id: 1, number: 'MBS-2026-001', description: 'Temmuz 2026 Mali Müşavirlik Hizmeti', amount: '7.500 ₺', date: '2026-07-01', status: 'paid' },
-    { id: 2, number: 'MBS-2026-002', description: 'Haziran 2026 Mali Müşavirlik Hizmeti', amount: '7.500 ₺', date: '2026-06-01', status: 'paid' },
-    { id: 3, number: 'MBS-2026-003', description: 'Mayıs 2026 Mali Müşavirlik Hizmeti', amount: '7.500 ₺', date: '2026-05-01', status: 'paid' },
-    { id: 4, number: 'MBS-2026-004', description: 'Ağustos 2026 Mali Müşavirlik Hizmeti', amount: '7.500 ₺', date: '2026-08-01', status: 'pending' },
-  ])
-
-  const [clientDocuments, setClientDocuments] = useState([
-    { id: 1, name: 'Temmuz 2026 Tahakkuk', type: 'PDF', date: '2026-07-12', size: '245 KB' },
-    { id: 2, name: 'Haziran 2026 KDV Beyannamesi', type: 'PDF', date: '2026-06-25', size: '180 KB' },
-    { id: 3, name: '2026 2.Dönem Geçici Vergi', type: 'PDF', date: '2026-06-15', size: '320 KB' },
-    { id: 4, name: 'Mayıs 2026 Muhtasar', type: 'PDF', date: '2026-05-28', size: '156 KB' },
-  ])
-
-  const notifications = [
-    { id: 1, message: 'Temmuz ayı tahakkukunuz hazır', date: '2026-07-12', type: 'info' },
-    { id: 2, message: 'e-İmza sertifikanız 45 gün içinde yenilenmeli', date: '2026-07-10', type: 'warning' },
-    { id: 3, message: 'Geçici vergi beyannameniz onaylandı', date: '2026-06-20', type: 'success' },
+  const reports = [
+    { id: 1, client: 'ABC Ltd. Şti.', taxType: 'Kurumlar Vergisi', total: 12, completed: 8, pending: 4, rate: 67 },
+    { id: 2, client: 'XYZ Ticaret A.Ş.', taxType: 'Kurumlar Vergisi', total: 10, completed: 10, pending: 0, rate: 100 },
+    { id: 3, client: '123 Danışmanlık', taxType: 'Gelir Vergisi', total: 8, completed: 5, pending: 3, rate: 63 },
+    { id: 4, client: 'Demo İnşaat Ltd. Şti.', taxType: 'Kurumlar Vergisi', total: 15, completed: 9, pending: 6, rate: 60 },
+    { id: 5, client: 'Mavi Teknoloji A.Ş.', taxType: 'Kurumlar Vergisi', total: 11, completed: 7, pending: 4, rate: 64 },
+    { id: 6, client: 'Yeşil Enerji A.Ş.', taxType: 'Kurumlar Vergisi', total: 9, completed: 6, pending: 3, rate: 67 },
   ]
 
-  const tabs = [
-    { id: 'documents', label: 'Evraklarım', icon: FolderOpen },
-    { id: 'invoices', label: 'Faturalar', icon: Receipt },
-    { id: 'messages', label: 'Mesajlar', icon: MessageSquare },
-    { id: 'notifications', label: 'Bildirimler', icon: Bell },
-    { id: 'upload', label: 'Evrak Yükle', icon: Upload },
-    { id: 'profile', label: 'Profilim', icon: User },
-  ]
+  const filteredReports = reports.filter(r => 
+    r.client.toLowerCase().includes(searchTerm.toLowerCase())
+  )
 
-  const handleSendMessage = () => {
-    if (!newMessage.trim()) return
-    const msg = {
-      id: Date.now(),
-      from: 'Siz',
-      text: newMessage,
-      date: new Date().toISOString().split('T')[0],
-      time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
-      type: 'sent'
-    }
-    setMessages([msg, ...messages])
-    setNewMessage('')
-  }
+  const totalStats = reports.reduce((acc, r) => ({
+    total: acc.total + r.total,
+    completed: acc.completed + r.completed,
+    pending: acc.pending + r.pending
+  }), { total: 0, completed: 0, pending: 0 })
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header */}
-      <div className="bg-gradient-to-r from-blue-900/50 to-blue-800/30 rounded-2xl p-8 mb-8 border border-blue-800/30">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-white">Hoş Geldin, {profile.name} 👋</h1>
-            <p className="text-gray-400 mt-1">{profile.company}</p>
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-8">
+        <div>
+          <h1 className="text-3xl font-bold text-white flex items-center space-x-3">
+            <FileText className="w-8 h-8 text-yellow-400" />
+            <span>Tüm Beyan Raporu</span>
+          </h1>
+          <p className="text-gray-400 mt-1">Tüm müşterilerin beyan durumlarını toplu görüntüleyin</p>
+        </div>
+        <button className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-6 py-2 rounded-lg font-semibold hover:shadow-lg hover:shadow-yellow-500/30 transition-all duration-300 flex items-center space-x-2 mt-4 md:mt-0">
+          <Download className="w-5 h-5" />
+          <span>Rapor İndir</span>
+        </button>
+      </div>
+
+      {/* İstatistikler */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
+        <div className="bg-blue-800/20 rounded-xl p-6 border border-blue-700/30">
+          <div className="flex items-center justify-between">
+            <FileText className="w-8 h-8 text-blue-400" />
+            <span className="text-blue-400 text-sm">Toplam</span>
           </div>
-          <div className="flex items-center space-x-4 mt-4 md:mt-0">
-            {/* e-Arsiv ve e-Fatura Butonlari */}
-            <div className="flex space-x-2 mr-4">
-              <button onClick={() => {
-                alert('Vergi Dairesi sifreleri panoya kopyalanacak ve e-Arsiv Portal acilacak.\n\nSiteye gidince Ctrl+V ile yapistirin.')
-                window.open('https://earsivportal.efatura.gov.tr/intragiris.html', '_blank')
-              }} className="bg-gradient-to-r from-orange-600 to-red-600 text-white text-xs px-3 py-2 rounded-lg flex items-center hover:from-orange-500 hover:to-red-500 transition-all whitespace-nowrap">
-                📄 e-Arşiv
-              </button>
-              <button onClick={() => {
-                if (window.confirm('⚠️ e-Fatura için e-İmza/Mali Mühür bilgisayara takılı olmalıdır!\n\nDevam etmek istiyor musunuz?')) {
-                  window.open('https://portal.efatura.gov.tr/efatura/wsctgirisSSL.jsp', '_blank')
-                }
-              }} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-xs px-3 py-2 rounded-lg flex items-center hover:from-blue-500 hover:to-indigo-500 transition-all whitespace-nowrap">
-                📋 e-Fatura
-              </button>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-yellow-500">{clientDocuments.length}</div>
-              <div className="text-gray-400 text-sm">Evrak</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-green-400">{invoices.filter(i => i.status === 'paid').length}</div>
-              <div className="text-gray-400 text-sm">Ödenen</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-yellow-400">{invoices.filter(i => i.status === 'pending').length}</div>
-              <div className="text-gray-400 text-sm">Bekleyen</div>
-            </div>
+          <div className="text-3xl font-bold text-white mt-2">{totalStats.total}</div>
+          <div className="text-gray-400 text-sm">Toplam Beyan</div>
+        </div>
+        <div className="bg-blue-800/20 rounded-xl p-6 border border-blue-700/30">
+          <div className="flex items-center justify-between">
+            <CheckCircle className="w-8 h-8 text-green-400" />
+            <span className="text-green-400 text-sm">Tamamlanan</span>
+          </div>
+          <div className="text-3xl font-bold text-white mt-2">{totalStats.completed}</div>
+          <div className="text-gray-400 text-sm">Tamamlanan Beyan</div>
+        </div>
+        <div className="bg-blue-800/20 rounded-xl p-6 border border-blue-700/30">
+          <div className="flex items-center justify-between">
+            <Clock className="w-8 h-8 text-yellow-400" />
+            <span className="text-yellow-400 text-sm">Bekleyen</span>
+          </div>
+          <div className="text-3xl font-bold text-white mt-2">{totalStats.pending}</div>
+          <div className="text-gray-400 text-sm">Bekleyen Beyan</div>
+        </div>
+      </div>
+
+      {/* Filtreler */}
+      <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 mb-6">
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+            <input
+              type="text"
+              placeholder="Müşteri ara..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 transition-colors"
+            />
+          </div>
+          <div className="flex items-center space-x-2">
+            <Calendar className="w-5 h-5 text-gray-400" />
+            <select 
+              value={filterMonth}
+              onChange={(e) => setFilterMonth(e.target.value)}
+              className="bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400 transition-colors"
+            >
+              <option value="2026-07">Temmuz 2026</option>
+              <option value="2026-06">Haziran 2026</option>
+              <option value="2026-05">Mayıs 2026</option>
+            </select>
           </div>
         </div>
       </div>
 
-      {/* Tab Navigation */}
-      <div className="flex space-x-1 bg-blue-950/40 rounded-xl p-1 mb-8 overflow-x-auto">
-        {tabs.map((tab) => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
-              activeTab === tab.id ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'
-            }`}>
-            <tab.icon className="w-4 h-4" />
-            <span>{tab.label}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* Evraklarım */}
-      {activeTab === 'documents' && (
-        <div className="bg-blue-950/40 backdrop-blur-sm rounded-2xl p-6 border border-blue-800/30">
-          <h3 className="text-xl font-semibold text-white mb-6">📄 Evraklarım</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="text-left text-gray-400 text-sm border-b border-blue-800/30">
-                  <th className="pb-3">Evrak Adı</th><th className="pb-3">Tür</th>
-                  <th className="pb-3">Tarih</th><th className="pb-3">Boyut</th><th className="pb-3">İşlem</th>
-                </tr>
-              </thead>
-              <tbody>
-                {clientDocuments.map((doc) => (
-                  <tr key={doc.id} className="border-b border-blue-800/20 text-gray-300 hover:bg-blue-900/20">
-                    <td className="py-4 flex items-center space-x-3">
-                      <FileText className="w-5 h-5 text-yellow-500" /><span>{doc.name}</span>
-                    </td>
-                    <td className="py-4"><span className="bg-blue-500/20 text-blue-400 px-2 py-1 rounded text-xs">{doc.type}</span></td>
-                    <td className="py-4">{doc.date}</td><td className="py-4">{doc.size}</td>
-                    <td className="py-4">
-                      <div className="flex space-x-2">
-                        <button className="p-1.5 bg-blue-500/20 rounded-lg text-blue-400 hover:bg-blue-500/30"><Eye className="w-4 h-4" /></button>
-                        <button className="p-1.5 bg-green-500/20 rounded-lg text-green-400 hover:bg-green-500/30"><Download className="w-4 h-4" /></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Faturalar */}
-      {activeTab === 'invoices' && (
-        <div className="bg-blue-950/40 backdrop-blur-sm rounded-2xl p-6 border border-blue-800/30">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-xl font-semibold text-white">🧾 Faturalarım</h3>
-            <div className="flex space-x-2 text-sm">
-              <span className="text-green-400 flex items-center"><CheckCircle className="w-4 h-4 mr-1" />Ödenen: {invoices.filter(i => i.status === 'paid').length}</span>
-              <span className="text-yellow-400 flex items-center ml-3"><AlertTriangle className="w-4 h-4 mr-1" />Bekleyen: {invoices.filter(i => i.status === 'pending').length}</span>
-            </div>
-          </div>
-          <div className="space-y-3">
-            {invoices.map((invoice) => (
-              <div key={invoice.id} className="bg-blue-900/20 rounded-xl p-5 hover:bg-blue-900/30 transition-colors">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center space-x-4">
-                    <div className={`p-3 rounded-xl ${invoice.status === 'paid' ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
-                      <Receipt className={`w-6 h-6 ${invoice.status === 'paid' ? 'text-green-400' : 'text-yellow-400'}`} />
-                    </div>
-                    <div>
-                      <div className="text-white font-medium">{invoice.number}</div>
-                      <div className="text-gray-400 text-sm">{invoice.description}</div>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-6">
-                    <div className="text-right">
-                      <div className="text-white font-bold text-lg">{invoice.amount}</div>
-                      <div className="text-gray-500 text-xs flex items-center justify-end">
-                        <Calendar className="w-3 h-3 mr-1" />{invoice.date}
-                      </div>
-                    </div>
-                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                      invoice.status === 'paid' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
+      {/* Rapor Tablosu */}
+      <div className="bg-blue-800/20 rounded-xl border border-blue-700/30 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-blue-900/30">
+              <tr className="text-left text-gray-400 text-sm">
+                <th className="px-6 py-4">#</th>
+                <th className="px-6 py-4">Müşteri</th>
+                <th className="px-6 py-4">Vergi Türü</th>
+                <th className="px-6 py-4">Toplam</th>
+                <th className="px-6 py-4">Tamamlanan</th>
+                <th className="px-6 py-4">Bekleyen</th>
+                <th className="px-6 py-4">Tamamlanma</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredReports.map((r, index) => (
+                <tr key={r.id} className="border-t border-blue-700/30 hover:bg-blue-800/20 transition-colors">
+                  <td className="px-6 py-4 text-gray-400">{index + 1}</td>
+                  <td className="px-6 py-4 text-white font-medium">{r.client}</td>
+                  <td className="px-6 py-4">
+                    <span className={`px-2 py-1 rounded text-xs font-medium ${
+                      r.taxType === 'Kurumlar Vergisi' 
+                        ? 'bg-blue-500/20 text-blue-400' 
+                        : 'bg-yellow-500/20 text-yellow-400'
                     }`}>
-                      {invoice.status === 'paid' ? '✅ Ödendi' : '⏳ Bekliyor'}
+                      {r.taxType}
                     </span>
-                    <button className="p-2 bg-blue-500/20 rounded-lg text-blue-400 hover:bg-blue-500/30">
-                      <Download className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+                  </td>
+                  <td className="px-6 py-4 text-gray-300">{r.total}</td>
+                  <td className="px-6 py-4 text-green-400">{r.completed}</td>
+                  <td className="px-6 py-4 text-yellow-400">{r.pending}</td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-20 h-2 bg-blue-900/50 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full rounded-full ${r.rate >= 80 ? 'bg-green-400' : r.rate >= 50 ? 'bg-yellow-400' : 'bg-red-400'}`} 
+                          style={{ width: `${r.rate}%` }}
+                        ></div>
+                      </div>
+                      <span className={`text-xs font-medium ${
+                        r.rate >= 80 ? 'text-green-400' : r.rate >= 50 ? 'text-yellow-400' : 'text-red-400'
+                      }`}>
+                        {r.rate}%
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      )}
-
-      {/* Mesajlar */}
-      {activeTab === 'messages' && (
-        <div className="bg-blue-950/40 backdrop-blur-sm rounded-2xl p-6 border border-blue-800/30">
-          <h3 className="text-xl font-semibold text-white mb-6">💬 Mesajlar</h3>
-          <div className="flex space-x-3 mb-6">
-            <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} placeholder="Mesajınızı yazın..."
-              className="flex-1 bg-blue-900/40 border border-blue-700/50 rounded-xl py-3 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500" />
-            <button onClick={handleSendMessage} className="btn-gold px-4 py-2 flex items-center"><Send className="w-5 h-5" /></button>
-          </div>
-          <div className="space-y-4 max-h-96 overflow-y-auto">
-            {messages.map((msg) => (
-              <div key={msg.id} className={`flex ${msg.type === 'sent' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[80%] sm:max-w-[60%] rounded-2xl p-4 ${
-                  msg.type === 'sent' ? 'bg-yellow-500/20 border border-yellow-500/30 ml-12' : 'bg-blue-900/40 border border-blue-700/30 mr-12'
-                }`}>
-                  <div className="flex items-center justify-between mb-1"><span className="text-xs text-gray-400">{msg.from}</span><span className="text-xs text-gray-500">{msg.date} {msg.time}</span></div>
-                  <p className="text-gray-200 text-sm">{msg.text}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Bildirimler */}
-      {activeTab === 'notifications' && (
-        <div className="bg-blue-950/40 backdrop-blur-sm rounded-2xl p-6 border border-blue-800/30">
-          <h3 className="text-xl font-semibold text-white mb-6">🔔 Bildirimlerim</h3>
-          <div className="space-y-4">
-            {notifications.map((notif) => (
-              <div key={notif.id} className="flex items-start space-x-4 p-4 bg-blue-900/20 rounded-xl">
-                <div className={`p-2 rounded-lg ${
-                  notif.type === 'warning' ? 'bg-yellow-500/20' : notif.type === 'success' ? 'bg-green-500/20' : 'bg-blue-500/20'
-                }`}>
-                  {notif.type === 'warning' ? <AlertTriangle className="w-5 h-5 text-yellow-400" /> : 
-                   notif.type === 'success' ? <CheckCircle className="w-5 h-5 text-green-400" /> : 
-                   <Bell className="w-5 h-5 text-blue-400" />}
-                </div>
-                <div className="flex-1"><p className="text-gray-300">{notif.message}</p><span className="text-gray-500 text-sm">{notif.date}</span></div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Evrak Yükle */}
-      {activeTab === 'upload' && (
-        <div className="bg-blue-950/30 backdrop-blur-sm rounded-2xl p-6 border border-blue-800/30">
-          <h3 className="text-xl font-semibold text-white mb-6">📤 Evrak Yükle</h3>
-          <FileUploader documents={clientDocuments} setDocuments={setClientDocuments} />
-        </div>
-      )}
-
-      {/* Profilim */}
-      {activeTab === 'profile' && (
-        <div className="bg-blue-950/40 backdrop-blur-sm rounded-2xl p-6 border border-blue-800/30">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-xl font-semibold text-white">👤 Profilim</h3>
-            <button onClick={() => setShowProfileEdit(!showProfileEdit)} className={`text-sm px-4 py-2 rounded-lg flex items-center space-x-2 ${showProfileEdit ? 'btn-primary' : 'btn-gold'}`}>
-              {showProfileEdit ? <><Save className="w-4 h-4" /><span>Kaydet</span></> : <><Settings className="w-4 h-4" /><span>Düzenle</span></>}
-            </button>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {[
-              { icon: User, label: 'Ad Soyad', value: profile.name, key: 'name' },
-              { icon: Building2, label: 'Şirket', value: profile.company, key: 'company' },
-              { icon: Mail, label: 'E-Posta', value: profile.email, key: 'email' },
-              { icon: Phone, label: 'Telefon', value: profile.phone, key: 'phone' },
-              { icon: MapPin, label: 'Adres', value: profile.address, key: 'address' },
-              { icon: CreditCard, label: 'VKN', value: profile.vkn, key: 'vkn' },
-              { icon: Building2, label: 'Vergi Dairesi', value: profile.taxOffice, key: 'taxOffice' },
-            ].map((item, i) => (
-              <div key={i} className="bg-blue-900/20 rounded-xl p-4">
-                <div className="flex items-center space-x-3 mb-2"><item.icon className="w-4 h-4 text-gray-500" /><span className="text-gray-400 text-sm">{item.label}</span></div>
-                {showProfileEdit ? (
-                  <input type="text" value={profile[item.key]} onChange={(e) => setProfile({ ...profile, [item.key]: e.target.value })} className="w-full bg-blue-800/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-500" />
-                ) : (
-                  <p className="text-white font-medium">{item.value}</p>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   )
 }

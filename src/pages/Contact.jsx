@@ -21,9 +21,9 @@ export default function Contact() {
         <div>
           <div className="space-y-6">
             {[
-              { icon: Mail, label: 'Email', value: 'info@mubiserp.com' },
-              { icon: Phone, label: 'Telefon', value: '+90 (212) 555 66 77' },
-              { icon: MapPin, label: 'Adres', value: 'İstanbul, Türkiye' },
+              { icon: Mail, label: 'Email', value: 'koraycilekci@gmail.com' },
+              { icon: Phone, label: 'Telefon', value: '+90 542 422 22 56' },
+              { icon: MapPin, label: 'Yetkili', value: 'Smmm Aziz Koray Cilekci' },
             ].map((item, index) => (
               <div key={index} className="flex items-center space-x-4 bg-blue-950/30 rounded-xl p-4 border border-blue-800/30">
                 <div className="bg-gradient-to-br from-blue-500/20 to-yellow-500/20 p-3 rounded-xl">

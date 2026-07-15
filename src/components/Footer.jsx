@@ -34,9 +34,9 @@ export default function Footer() {
           <div>
             <h4 className="text-white font-semibold mb-4">İletişim</h4>
             <div className="space-y-2 text-sm text-gray-400">
-              <p>📧 info@mubiserp.com</p>
-              <p>📱 +90 (212) 555 66 77</p>
-              <p>📍 İstanbul, Türkiye</p>
+              <p>Smmm Aziz Koray Cilekci</p>
+              <p>koraycilekci@gmail.com</p>
+              <p>+90 542 422 22 56</p>
             </div>
           </div>
         </div>

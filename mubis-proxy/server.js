@@ -198,20 +198,13 @@ async function loginSGKBorc(page, cred, clientName) {
   await page.goto('https://ebildirge.sgk.gov.tr/WPEB/amp/loginldap', { waitUntil: 'networkidle2', timeout: 30000 });
 
   await page.waitForSelector('input[type="text"]', { timeout: 10000 });
-  const userInput = await page.$('input[type="text"]');
-  if (userInput) {
-    await userInput.click({ clickCount: 3 });
-    await userInput.type(cred.username, { delay: 50 });
-  }
-
-  const passInput = await page.$('input[type="password"]');
-  if (passInput) {
-    await passInput.click({ clickCount: 3 });
-    await passInput.type(cred.sistemSifre || cred.password, { delay: 50 });
-  }
+  await delay(1500);
+  
+  await fillInput(page, 'input[type="text"]', cred.username);
+  await fillInput(page, 'input[type="password"]', cred.sistemSifre);
 
   await delay(500);
-  const loginBtn = await page.$('button[type="submit"]') || await page.$('input[type="submit"]');
+  const loginBtn = await page.$('button[type="submit"]') || await page.$('input[type="submit"]') || await page.$('input[type="button"]');
   if (loginBtn) {
     await loginBtn.click();
   }
@@ -225,20 +218,13 @@ async function loginSGKIsveren(page, cred, clientName) {
   await page.goto('https://uyg.sgk.gov.tr/IsverenSistemi', { waitUntil: 'networkidle2', timeout: 30000 });
 
   await page.waitForSelector('input[type="text"]', { timeout: 10000 });
-  const userInput = await page.$('input[type="text"]');
-  if (userInput) {
-    await userInput.click({ clickCount: 3 });
-    await userInput.type(cred.username, { delay: 50 });
-  }
-
-  const passInput = await page.$('input[type="password"]');
-  if (passInput) {
-    await passInput.click({ clickCount: 3 });
-    await passInput.type(cred.sistemSifre || cred.password, { delay: 50 });
-  }
+  await delay(1500);
+  
+  await fillInput(page, 'input[type="text"]', cred.username);
+  await fillInput(page, 'input[type="password"]', cred.sistemSifre);
 
   await delay(500);
-  const loginBtn = await page.$('button[type="submit"]') || await page.$('input[type="submit"]');
+  const loginBtn = await page.$('button[type="submit"]') || await page.$('input[type="submit"]') || await page.$('input[type="button"]');
   if (loginBtn) {
     await loginBtn.click();
   }
@@ -333,6 +319,27 @@ async function loginEDevlet(page, cred, clientName) {
 // ============ YARDIMCI ============
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Input alanini guvenli sekilde temizleyip yaz
+async function fillInput(page, selector, value) {
+  if (!value) return;
+  const el = await page.$(selector);
+  if (!el) return;
+  await el.click({ clickCount: 3 });
+  await delay(100);
+  // Oncelikle alani tamamen temizle
+  await page.evaluate(e => { e.value = ''; e.dispatchEvent(new Event('input', {bubbles: true})); }, el);
+  await delay(100);
+  // Sonra yaz
+  await el.type(value, { delay: 20 });
+  await delay(100);
+  // Degerinin dogru yazilip yazilmadigini kontrol et, degilse evaluate ile set et
+  const written = await page.evaluate(e => e.value, el);
+  if (written !== value) {
+    console.log(`  [fillInput] type() eksik yazdi: "${written}" vs "${value}", evaluate ile duzeltiliyor`);
+    await page.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', {bubbles: true})); e.dispatchEvent(new Event('change', {bubbles: true})); }, el, value);
+  }
 }
 
 // ============ SUNUCU BASLAT ============

@@ -754,7 +754,7 @@ export default function ClientDetail() {
                 { label: 'SGK Borc Sorgula', url: 'https://ebildirge.sgk.gov.tr/WPEB/amp/loginldap', icon: '💰', color: 'from-red-500/20 to-red-600/20 border-red-500/30' },
                 { label: 'Isyeri Sicil', url: 'https://ebildirge.sgk.gov.tr/EBildirgeV2', icon: '🏢', color: 'from-purple-500/20 to-purple-600/20 border-purple-500/30' },
                 { label: 'Isci Listesi', url: 'https://ebildirge.sgk.gov.tr/EBildirgeV2', icon: '👷', color: 'from-teal-500/20 to-teal-600/20 border-teal-500/30' },
-                { label: 'Borc Yoktur Yazisi', url: 'https://ebildirge.sgk.gov.tr/WPEB/amp/loginldap', icon: '📋', color: 'from-indigo-500/20 to-indigo-600/20 border-indigo-500/30' },
+                { label: 'Borc Yoktur Yazisi', url: 'https://uyg.sgk.gov.tr/IsverenSistemi', icon: '📋', color: 'from-indigo-500/20 to-indigo-600/20 border-indigo-500/30' },
                 { label: 'APHB Sorgula', url: 'https://ebildirge.sgk.gov.tr/EBildirgeV2', icon: '🔍', color: 'from-cyan-500/20 to-cyan-600/20 border-cyan-500/30' },
               ].map((item, i) => (
                 <a key={i} href={item.url} target="_blank" rel="noopener noreferrer" className={`flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br ${item.color} hover:scale-105 transition-all cursor-pointer text-center group`}>

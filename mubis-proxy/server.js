@@ -100,6 +100,96 @@ async function portalLogin(portal, credentials, clientName) {
   }
 }
 
+// ============ DVS DEBUG - Sayfa yapisini incele ============
+app.post('/api/dvs-debug', async (req, res) => {
+  const { credentials } = req.body;
+  try {
+    const browser = await puppeteer.launch({ headless: false, defaultViewport: null, args: ['--start-maximized'] });
+    const page = await browser.newPage();
+    
+    await page.goto('https://dijital.gib.gov.tr/portal/login', { waitUntil: 'networkidle2', timeout: 30000 });
+    await page.waitForSelector('input[type="text"], input[type="password"]', { timeout: 10000 });
+    await delay(1000);
+    await fillInput(page, 'input[type="text"]', credentials.username);
+    await fillInput(page, 'input[type="password"]', credentials.password);
+    await delay(500);
+    const loginBtn = await page.$('button[type="submit"]') || await page.$('input[type="submit"]');
+    if (loginBtn) await loginBtn.click();
+    
+    // Uzun bekle - DVS yavaş olabilir
+    await delay(8000);
+    
+    // Sayfadaki tum bilgileri topla
+    const info = await page.evaluate(() => {
+      const data = {
+        url: window.location.href,
+        title: document.title,
+        inputs: [],
+        buttons: [],
+        links: [],
+        menus: [],
+        allText: ''
+      };
+      
+      // Tum input'lar
+      document.querySelectorAll('input').forEach(el => {
+        data.inputs.push({
+          type: el.type, name: el.name, id: el.id,
+          placeholder: el.placeholder, class: el.className.substring(0, 80),
+          visible: el.offsetParent !== null
+        });
+      });
+      
+      // Tum butonlar
+      document.querySelectorAll('button, [role="button"]').forEach(el => {
+        if (el.textContent.trim()) {
+          data.buttons.push({ text: el.textContent.trim().substring(0, 60), class: el.className.substring(0, 60) });
+        }
+      });
+      
+      // Menu / nav linkleri
+      document.querySelectorAll('nav a, [class*="menu"] a, [class*="nav"] a, [class*="sidebar"] a, .mat-list-item, [role="menuitem"]').forEach(el => {
+        if (el.textContent.trim()) {
+          data.menus.push({ text: el.textContent.trim().substring(0, 60), href: el.href || '' });
+        }
+      });
+      
+      // Sayfadaki tum linkler (ilk 50)
+      let linkCount = 0;
+      document.querySelectorAll('a').forEach(el => {
+        if (el.textContent.trim() && linkCount < 50) {
+          data.links.push({ text: el.textContent.trim().substring(0, 60), href: el.href || '' });
+          linkCount++;
+        }
+      });
+      
+      // Sayfadaki ana metin (ilk 2000 karakter)
+      data.allText = document.body.innerText.substring(0, 2000);
+      
+      return data;
+    });
+    
+    console.log('\n====== DVS SAYFA ANALIZI ======');
+    console.log('URL:', info.url);
+    console.log('Title:', info.title);
+    console.log('\n--- INPUT\'LAR ---');
+    info.inputs.forEach(i => console.log(`  [${i.type}] name="${i.name}" id="${i.id}" placeholder="${i.placeholder}" visible=${i.visible}`));
+    console.log('\n--- BUTONLAR ---');
+    info.buttons.forEach(b => console.log(`  "${b.text}"`));
+    console.log('\n--- MENU ---');
+    info.menus.forEach(m => console.log(`  "${m.text}" -> ${m.href}`));
+    console.log('\n--- LINKLER ---');
+    info.links.forEach(l => console.log(`  "${l.text}" -> ${l.href}`));
+    console.log('\n--- SAYFA METNI ---');
+    console.log(info.allText);
+    console.log('============================\n');
+    
+    res.json({ success: true, info });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ============ DVS - ORTAK GIRIS + ISLEM NAVIGASYONU ============
 async function loginDVS(page, cred, clientName, islem) {
   console.log(`[DVS] ${clientName || ''} icin giris yapiliyor... islem: ${islem || 'sadece giris'}`);
@@ -118,104 +208,177 @@ async function loginDVS(page, cred, clientName, islem) {
     await loginBtn.click();
   }
 
-  // Giris sonrasi sayfa yuklemesini bekle
-  await delay(4000);
-  
   // Islem yoksa sadece giris yap
   if (!islem) {
     return `DVS giris yapildi: ${clientName || cred.username}`;
   }
 
-  // Islem icin arama kutusunu kullan
+  // Giris sonrasi sayfanin degismesini bekle (login URL'den cikana kadar)
+  console.log('[DVS] Giris sonrasi sayfa yuklenmesi bekleniyor...');
+  try {
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
+  } catch (e) {
+    console.log('[DVS] Navigation timeout, devam ediliyor...');
+  }
+  
+  // Ekstra bekleme - SPA yuklenmesi icin
+  await delay(5000);
+  
+  const currentUrl = await page.url();
+  console.log('[DVS] Giris sonrasi URL:', currentUrl);
+  
+  // Sayfadaki tum elementleri logla
+  const pageInfo = await page.evaluate(() => {
+    const inputs = [];
+    document.querySelectorAll('input').forEach(el => {
+      if (el.offsetParent !== null) {
+        inputs.push({ type: el.type, placeholder: el.placeholder, id: el.id, name: el.name, class: el.className.substring(0,60) });
+      }
+    });
+    
+    const links = [];
+    document.querySelectorAll('a').forEach(el => {
+      const t = el.textContent.trim();
+      if (t && t.length > 1 && t.length < 80) {
+        links.push({ text: t, href: el.href });
+      }
+    });
+    
+    return { 
+      url: window.location.href, 
+      title: document.title,
+      bodyText: document.body.innerText.substring(0, 3000),
+      inputCount: inputs.length,
+      inputs: inputs.slice(0, 20),
+      linkCount: links.length,
+      links: links.slice(0, 40)
+    };
+  });
+  
+  console.log('[DVS] Sayfa:', pageInfo.url);
+  console.log('[DVS] Input sayisi:', pageInfo.inputCount);
+  pageInfo.inputs.forEach(i => console.log(`  INPUT: type=${i.type} placeholder="${i.placeholder}" id="${i.id}" name="${i.name}"`));
+  console.log('[DVS] Link sayisi:', pageInfo.linkCount);
+  pageInfo.links.forEach(l => console.log(`  LINK: "${l.text}" -> ${l.href}`));
+  console.log('[DVS] Sayfa metni (ilk 500):', pageInfo.bodyText.substring(0, 500));
+
+  // Arama metinleri
   const aramaMetinleri = {
     'borc-sorgula': 'Borç Sorgulama',
-    'borc-durum': 'Mükellefiyet Borç Durum Yazısı',
+    'borc-durum': 'Borç Durum Yazısı',
     'mukellefiyet': 'Mükellefiyet Belgesi',
     'beyanname': 'Beyanname',
     'tahakkuk': 'Tahakkuk',
     'etebligat': 'e-Tebligat'
   };
-
   const aramaText = aramaMetinleri[islem] || islem;
-  console.log(`[DVS] Arama yapiliyor: "${aramaText}"`);
+  console.log(`[DVS] Aranan islem: "${aramaText}"`);
 
-  try {
-    // Arama kutusunu bul - DVS'de ust bar da arama kutusu var
-    const searchSelectors = [
-      'input[placeholder*="Ara"]',
-      'input[placeholder*="ara"]',
-      'input[placeholder*="search"]',
-      'input[placeholder*="Search"]',
-      'input[type="search"]',
-      '.search-input input',
-      '[class*="search"] input',
-      'input[class*="search"]'
-    ];
-    
-    let searchInput = null;
-    for (const sel of searchSelectors) {
-      searchInput = await page.$(sel);
-      if (searchInput) break;
-    }
-    
-    if (searchInput) {
-      await searchInput.click();
-      await delay(500);
-      await page.evaluate(el => { el.value = ''; }, searchInput);
-      await searchInput.type(aramaText, { delay: 60 });
-      await delay(2000);
-      
-      // Arama sonuclarindan ilgili linke tikla
-      const resultSelectors = [
-        `a[title*="${aramaText}"]`,
-        `[class*="result"] a`,
-        `[class*="search-result"] a`,
-        `.dropdown-menu a`,
-        `.autocomplete-result a`,
-        `li a`
-      ];
-      
-      let clicked = false;
-      for (const sel of resultSelectors) {
-        const items = await page.$$(sel);
-        for (const item of items) {
-          const text = await page.evaluate(el => el.textContent, item);
-          if (text && text.toLowerCase().includes(aramaText.toLowerCase().substring(0, 8))) {
-            await item.click();
-            clicked = true;
-            console.log(`[DVS] Sonuc tiklandi: "${text.trim().substring(0, 60)}"`);
-            break;
+  // YONTEM 1: Sayfadaki linklerde ara
+  let found = false;
+  for (const link of pageInfo.links) {
+    if (link.text.includes(aramaText) || link.text.toLowerCase().includes(aramaText.toLowerCase())) {
+      console.log(`[DVS] Link bulundu: "${link.text}" -> ${link.href}`);
+      try {
+        const el = await page.evaluateHandle((text) => {
+          const links = document.querySelectorAll('a');
+          for (const a of links) {
+            if (a.textContent.trim().includes(text)) return a;
           }
-        }
-        if (clicked) break;
-      }
-      
-      if (!clicked) {
-        // Arama sonucu bulunamadiysa Enter ile gonder
-        await page.keyboard.press('Enter');
-        console.log('[DVS] Arama sonucu bulunamadi, Enter ile gonderildi');
-      }
-    } else {
-      console.log('[DVS] Arama kutusu bulunamadi, sayfa icindeki linkleri taraniyor...');
-      
-      // Arama kutusu bulunamazsa, sayfadaki linkleri tara
-      const allLinks = await page.$$('a');
-      for (const link of allLinks) {
-        const text = await page.evaluate(el => el.textContent, link);
-        if (text && text.includes(aramaText.substring(0, 8))) {
-          await link.click();
-          console.log(`[DVS] Link tiklandi: "${text.trim().substring(0, 60)}"`);
+          return null;
+        }, link.text);
+        if (el) {
+          await el.asElement()?.click();
+          found = true;
+          console.log('[DVS] Link tiklandi!');
           break;
         }
+      } catch (e) {
+        console.log('[DVS] Link tiklama hatasi:', e.message);
       }
     }
-    
-    await delay(2000);
-  } catch (e) {
-    console.log('[DVS] Navigasyon hatasi:', e.message);
   }
 
-  return `DVS ${aramaText} acildi: ${clientName || cred.username}`;
+  // YONTEM 2: Arama kutusu bul ve kullan
+  if (!found) {
+    console.log('[DVS] Link bulunamadi, arama kutusu araniyor...');
+    
+    // Tum input'lari dene
+    for (const inp of pageInfo.inputs) {
+      if (inp.type === 'text' || inp.type === 'search' || inp.placeholder.toLowerCase().includes('ara') || inp.placeholder.toLowerCase().includes('search')) {
+        console.log(`[DVS] Arama kutusu bulundu: placeholder="${inp.placeholder}" id="${inp.id}"`);
+        
+        let selector = inp.id ? `#${inp.id}` : (inp.name ? `input[name="${inp.name}"]` : `input[placeholder="${inp.placeholder}"]`);
+        try {
+          const searchEl = await page.$(selector);
+          if (searchEl) {
+            await searchEl.click();
+            await delay(300);
+            await page.evaluate(el => { el.value = ''; }, searchEl);
+            await searchEl.type(aramaText, { delay: 60 });
+            await delay(2000);
+            
+            // Arama sonuclari - dropdown / liste / link
+            const results = await page.$$('[class*="result"] a, [class*="dropdown"] a, [class*="suggest"] a, [class*="autocomplete"] a, [class*="search"] li, [class*="mat-option"], .cdk-overlay-pane *');
+            console.log(`[DVS] Arama sonucu sayisi: ${results.length}`);
+            
+            for (const r of results) {
+              const text = await page.evaluate(el => el.textContent, r);
+              if (text && text.trim().length > 0) {
+                console.log(`[DVS] Sonuc: "${text.trim().substring(0, 60)}"`);
+                await r.click();
+                found = true;
+                console.log('[DVS] Sonuc tiklandi!');
+                break;
+              }
+            }
+            
+            if (!found) {
+              // Enter ile gonder
+              await page.keyboard.press('Enter');
+              console.log('[DVS] Enter ile gonderildi');
+              found = true;
+            }
+          }
+        } catch (e) {
+          console.log('[DVS] Arama hatasi:', e.message);
+        }
+        break;
+      }
+    }
+  }
+
+  // YONTEM 3: Sayfadaki tum tiklabilir elementlerde ara
+  if (!found) {
+    console.log('[DVS] Arama kutusu bulunamadi, tum tiklabilir elementler taraniyor...');
+    try {
+      const clicked = await page.evaluate((searchText) => {
+        const all = document.querySelectorAll('a, button, [role="button"], [role="menuitem"], [role="link"], span[class*="click"], div[class*="click"]');
+        for (const el of all) {
+          const t = el.textContent.trim();
+          if (t.includes(searchText) || t.toLowerCase().includes(searchText.toLowerCase())) {
+            el.click();
+            return t;
+          }
+        }
+        return null;
+      }, aramaText);
+      
+      if (clicked) {
+        console.log(`[DVS] Element tiklandi: "${clicked}"`);
+        found = true;
+      }
+    } catch (e) {
+      console.log('[DVS] Element arama hatasi:', e.message);
+    }
+  }
+
+  if (!found) {
+    console.log('[DVS] Hicbir islem bulunamadi! Sayfa icerigini kontrol edin.');
+  }
+
+  await delay(2000);
+  return `DVS ${aramaText} ${found ? 'acildi' : 'bulunamadi'}: ${clientName || cred.username}`;
 }
 
 // ---- e-Arsiv Portal ----

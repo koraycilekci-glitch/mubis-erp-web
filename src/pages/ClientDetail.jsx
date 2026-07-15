@@ -36,6 +36,94 @@ export default function ClientDetail() {
   const [editBankIndex, setEditBankIndex] = useState(-1)
   // Sifre gorunurluk
   const [showPasswords, setShowPasswords] = useState({})
+  // MUBiS Proxy durumu
+  const [proxyReady, setProxyReady] = useState(false)
+  const [proxyLoading, setProxyLoading] = useState(false)
+
+  // MUBiS Proxy baglanti kontrolu
+  useEffect(() => {
+    const checkProxy = async () => {
+      try {
+        const resp = await fetch('http://localhost:4789/api/health', { signal: AbortSignal.timeout(2000) })
+        const data = await resp.json()
+        if (data.status === 'ok') setProxyReady(true)
+      } catch (e) {
+        setProxyReady(false)
+      }
+    }
+    checkProxy()
+    const interval = setInterval(checkProxy, 15000)
+    return () => clearInterval(interval)
+  }, [])
+
+  // Proxy ile otomatik giris
+  const proxyLogin = async (portal, credentials) => {
+    if (!proxyReady) return false
+    setProxyLoading(true)
+    try {
+      const resp = await fetch('http://localhost:4789/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ portal, credentials, clientName: client?.name })
+      })
+      const data = await resp.json()
+      setProxyLoading(false)
+      return data.success
+    } catch (e) {
+      setProxyLoading(false)
+      return false
+    }
+  }
+
+  // DVS otomatik giris
+  const handleDVSLogin = async () => {
+    if (proxyReady && client?.vergiUser && client?.vergiPass) {
+      await proxyLogin('dvs', { username: client.vergiUser, password: client.vergiPass })
+    } else {
+      // Eski yontem: kopyala + ac
+      if (client?.vergiPass) {
+        navigator.clipboard.writeText(client.vergiPass)
+        alert(`Kullanici: ${client.vergiUser}\nSifre panoya kopyalandi!`)
+      }
+      window.open('https://dijital.gib.gov.tr/portal/login', '_blank')
+    }
+  }
+
+  // e-Arsiv otomatik giris
+  const handleEArsivLogin = async () => {
+    if (proxyReady && client?.vergiUser && client?.vergiPass) {
+      await proxyLogin('earsiv', { username: client.vergiUser, password: client.vergiPass })
+    } else {
+      if (client?.vergiPass) {
+        navigator.clipboard.writeText(client.vergiPass)
+        alert(`Kullanici: ${client.vergiUser}\nSifre panoya kopyalandi!`)
+      }
+      window.open('https://earsivportal.efatura.gov.tr/intragiris.html', '_blank')
+    }
+  }
+
+  // SGK otomatik giris
+  const handleSGKLogin = async (portalType = 'sgk') => {
+    if (proxyReady && client?.sgkUser) {
+      await proxyLogin(portalType, {
+        username: client.sgkUser,
+        isyeriKodu: client.sgkIsyeriKodu,
+        sistemSifre: client.sgkSistemSifre,
+        isyeriSifre: client.sgkIsyeriSifre
+      })
+    } else {
+      if (client?.sgkSistemSifre) {
+        navigator.clipboard.writeText(client.sgkSistemSifre)
+        alert(`Kullanici: ${client.sgkUser}\nIsyeri Kodu: ${client.sgkIsyeriKodu || '-'}\nSistem sifresi panoya kopyalandi!`)
+      }
+      const urls = {
+        'sgk': 'https://ebildirge.sgk.gov.tr/EBildirgeV2',
+        'sgk-borc': 'https://ebildirge.sgk.gov.tr/WPEB/amp/loginldap',
+        'sgk-isveren': 'https://uyg.sgk.gov.tr/IsverenSistemi'
+      }
+      window.open(urls[portalType] || urls.sgk, '_blank')
+    }
+  }
 
   useEffect(() => {
     const clients = getClients()
@@ -702,23 +790,29 @@ export default function ClientDetail() {
 
           {/* Vergi Dairesi Islemleri */}
           <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+            {/* Proxy durum gostergesi */}
+            <div className={`mb-3 px-3 py-2 rounded-lg text-xs flex items-center gap-2 ${proxyReady ? 'bg-green-900/30 border border-green-700/40 text-green-400' : 'bg-yellow-900/30 border border-yellow-700/40 text-yellow-400'}`}>
+              <span className={`w-2 h-2 rounded-full ${proxyReady ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`}></span>
+              {proxyReady ? 'MUBiS Baglanti Merkezi aktif - Otomatik giris hazir' : 'MUBiS Baglanti Merkezi calismiyor - Sifre kopyala modu'}
+            </div>
+
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
               <span className="text-lg">🏛️</span> Dijital Vergi Dairesi
             </h3>
             {/* Otomatik giris butonu */}
             {client.vergiUser && client.vergiPass && (
               <button
-                onClick={() => {
-                  const w = window.open('https://dijital.gib.gov.tr/portal/login', '_blank')
-                  if (w) {
-                    const script = `javascript:void(setTimeout(function(){try{var i=document.querySelectorAll('input');if(i.length>=2){i[0].value='${client.vergiUser}';i[0].dispatchEvent(new Event('input',{bubbles:true}));i[1].value='${client.vergiPass}';i[1].dispatchEvent(new Event('input',{bubbles:true}))}}catch(e){}},2000))`
-                    navigator.clipboard.writeText(client.vergiPass).catch(() => {})
-                    alert('DVS portal aciliyor.\\nSifre panoya kopyalandi.\\nKullanici: ' + client.vergiUser)
-                  }
-                }}
-                className="w-full mb-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-xl font-medium hover:from-blue-500 hover:to-blue-600 transition-all flex items-center justify-center gap-2"
+                onClick={handleDVSLogin}
+                disabled={proxyLoading}
+                className={`w-full mb-4 ${proxyReady ? 'bg-gradient-to-r from-green-600 to-green-700 hover:from-green-500 hover:to-green-600' : 'bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600'} text-white py-3 rounded-xl font-medium transition-all flex items-center justify-center gap-2 disabled:opacity-50`}
               >
-                <ExternalLink className="w-4 h-4" /> DVS Otomatik Giris (Sifre Kopyala + Ac)
+                {proxyLoading ? (
+                  <><span className="animate-spin">⏳</span> Giris yapiliyor...</>
+                ) : proxyReady ? (
+                  <><ExternalLink className="w-4 h-4" /> DVS Otomatik Giris</>
+                ) : (
+                  <><ExternalLink className="w-4 h-4" /> DVS Giris (Sifre Kopyala + Ac)</>
+                )}
               </button>
             )}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -746,6 +840,23 @@ export default function ClientDetail() {
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
               <span className="text-lg">🏥</span> SGK / Sigorta Islemleri
             </h3>
+            {/* SGK Otomatik giris butonlari */}
+            {client.sgkUser && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
+                <button onClick={() => handleSGKLogin('sgk')} disabled={proxyLoading}
+                  className={`${proxyReady ? 'bg-gradient-to-r from-green-600 to-green-700' : 'bg-gradient-to-r from-blue-600 to-blue-700'} text-white py-2.5 rounded-xl text-sm font-medium hover:opacity-90 transition-all flex items-center justify-center gap-1 disabled:opacity-50`}>
+                  {proxyLoading ? '⏳' : '🔑'} e-Bildirge {proxyReady ? 'Otomatik' : ''} Giris
+                </button>
+                <button onClick={() => handleSGKLogin('sgk-borc')} disabled={proxyLoading}
+                  className={`${proxyReady ? 'bg-gradient-to-r from-green-600 to-green-700' : 'bg-gradient-to-r from-red-600 to-red-700'} text-white py-2.5 rounded-xl text-sm font-medium hover:opacity-90 transition-all flex items-center justify-center gap-1 disabled:opacity-50`}>
+                  {proxyLoading ? '⏳' : '💰'} Borc Sorgula {proxyReady ? 'Otomatik' : ''} Giris
+                </button>
+                <button onClick={() => handleSGKLogin('sgk-isveren')} disabled={proxyLoading}
+                  className={`${proxyReady ? 'bg-gradient-to-r from-green-600 to-green-700' : 'bg-gradient-to-r from-indigo-600 to-indigo-700'} text-white py-2.5 rounded-xl text-sm font-medium hover:opacity-90 transition-all flex items-center justify-center gap-1 disabled:opacity-50`}>
+                  {proxyLoading ? '⏳' : '📋'} Borc Yoktur {proxyReady ? 'Otomatik' : ''} Giris
+                </button>
+              </div>
+            )}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {[
                 { label: 'e-Bildirge Giris', url: 'https://ebildirge.sgk.gov.tr/EBildirgeV2', icon: '🔑', color: 'from-blue-500/20 to-blue-600/20 border-blue-500/30' },
@@ -848,14 +959,17 @@ export default function ClientDetail() {
                 {/* Otomatik e-Arsiv giris */}
                 {client.vergiUser && client.vergiPass && (
                   <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(client.vergiPass).catch(() => {})
-                      window.open('https://earsivportal.efatura.gov.tr/intragiris.html', '_blank')
-                      alert('e-Arsiv Portal aciliyor.\\nSifre panoya kopyalandi.\\nKullanici: ' + client.vergiUser)
-                    }}
-                    className="w-full mb-3 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white py-2.5 rounded-xl text-sm font-medium hover:from-emerald-500 hover:to-emerald-600 transition-all flex items-center justify-center gap-2"
+                    onClick={handleEArsivLogin}
+                    disabled={proxyLoading}
+                    className={`w-full mb-3 ${proxyReady ? 'bg-gradient-to-r from-green-600 to-green-700' : 'bg-gradient-to-r from-emerald-600 to-emerald-700'} text-white py-2.5 rounded-xl text-sm font-medium hover:opacity-90 transition-all flex items-center justify-center gap-2 disabled:opacity-50`}
                   >
-                    <ExternalLink className="w-4 h-4" /> e-Arsiv Otomatik Giris (Sifre Kopyala + Ac)
+                    {proxyLoading ? (
+                      <><span className="animate-spin">⏳</span> Giris yapiliyor...</>
+                    ) : proxyReady ? (
+                      <><ExternalLink className="w-4 h-4" /> e-Arsiv Otomatik Giris</>
+                    ) : (
+                      <><ExternalLink className="w-4 h-4" /> e-Arsiv Giris (Sifre Kopyala + Ac)</>
+                    )}
                   </button>
                 )}
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">

@@ -945,10 +945,12 @@ export default function ClientDetail() {
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                   {[
-                    { label: 'e-Fatura Portal Giris', url: 'https://ebelge.gib.gov.tr/efabortalgiris.html', icon: '📄', color: 'from-blue-500/20 to-blue-600/20 border-blue-500/30' },
-                    { label: 'Gelen Faturalar', url: 'https://ebelge.gib.gov.tr/efabortalgiris.html', icon: '📥', color: 'from-green-500/20 to-green-600/20 border-green-500/30' },
-                    { label: 'Giden Faturalar', url: 'https://ebelge.gib.gov.tr/efabortalgiris.html', icon: '📤', color: 'from-orange-500/20 to-orange-600/20 border-orange-500/30' },
-                    { label: 'e-Arsiv Portal', url: 'https://earsivportal.efatura.gov.tr/intragiris.html', icon: '📂', color: 'from-purple-500/20 to-purple-600/20 border-purple-500/30' },
+                    { label: 'e-Fatura', url: 'https://portal.efatura.gov.tr/efatura/wsctgirisSSL.jsp', icon: '📄', color: 'from-blue-500/20 to-blue-600/20 border-blue-500/30' },
+                    { label: 'e-Arsiv', url: 'https://earsivportal.efatura.gov.tr/', icon: '📂', color: 'from-purple-500/20 to-purple-600/20 border-purple-500/30' },
+                    { label: 'e-Irsaliye', url: 'https://earsivportal.efatura.gov.tr/', icon: '🚚', color: 'from-amber-500/20 to-amber-600/20 border-amber-500/30' },
+                    { label: 'e-Mustahsil Makbuzu', url: 'https://earsivportal.efatura.gov.tr/', icon: '🧾', color: 'from-teal-500/20 to-teal-600/20 border-teal-500/30' },
+                    { label: 'e-Fatura Iptal/Itiraz', url: 'https://ebelgebasvuru.gib.gov.tr/iptal-itiraz/sertifika-giris', icon: '❌', color: 'from-red-500/20 to-red-600/20 border-red-500/30' },
+                    { label: 'e-Defter', url: 'https://edefter.gib.gov.tr/global/login', icon: '📚', color: 'from-indigo-500/20 to-indigo-600/20 border-indigo-500/30' },
                   ].map((item, i) => (
                     <a key={i} href={item.url} target="_blank" rel="noopener noreferrer" className={`flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br ${item.color} hover:scale-105 transition-all cursor-pointer text-center group`}>
                       <span className="text-2xl">{item.icon}</span>
@@ -970,7 +972,7 @@ export default function ClientDetail() {
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                   <button onClick={handleEArsivLogin} disabled={proxyLoading}
-                    className="flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br from-green-500/20 to-green-600/20 border-green-500/30 hover:scale-105 transition-all cursor-pointer text-center group disabled:opacity-50 col-span-2 sm:col-span-1">
+                    className="flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br from-green-500/20 to-green-600/20 border-green-500/30 hover:scale-105 transition-all cursor-pointer text-center group disabled:opacity-50">
                     <span className="text-2xl">📂</span>
                     <span className="text-white text-xs font-medium leading-tight">e-Arsiv Portal Giris</span>
                     {proxyLoading ? <span className="text-xs animate-spin">⏳</span> : <ExternalLink className="w-3 h-3 text-gray-500 group-hover:text-yellow-400 transition-colors" />}
@@ -988,33 +990,9 @@ export default function ClientDetail() {
                   <span className="text-gray-500 text-[10px]">e-Imza / Mali Muhur ile giris</span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                  {[
-                    { label: 'e-SMM Portal Giris', url: 'https://esmm.gib.gov.tr/', icon: '📝', color: 'from-cyan-500/20 to-cyan-600/20 border-cyan-500/30' },
-                    { label: 'Makbuz Kes', url: 'https://esmm.gib.gov.tr/', icon: '🧾', color: 'from-teal-500/20 to-teal-600/20 border-teal-500/30' },
-                    { label: 'Makbuz Sorgula', url: 'https://esmm.gib.gov.tr/', icon: '🔍', color: 'from-indigo-500/20 to-indigo-600/20 border-indigo-500/30' },
-                  ].map((item, i) => (
-                    <a key={i} href={item.url} target="_blank" rel="noopener noreferrer" className={`flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br ${item.color} hover:scale-105 transition-all cursor-pointer text-center group`}>
-                      <span className="text-2xl">{item.icon}</span>
-                      <span className="text-white text-xs font-medium leading-tight">{item.label}</span>
-                      <ExternalLink className="w-3 h-3 text-gray-500 group-hover:text-yellow-400 transition-colors" />
-                    </a>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* e-Irsaliye - e-Fatura mukelleflerinde otomatik */}
-            {client.efatura && (
-              <div className="mb-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="w-2 h-2 bg-amber-400 rounded-full"></span>
-                  <span className="text-amber-400 text-sm font-medium">e-Irsaliye</span>
-                  <span className="text-gray-500 text-[10px]">e-Imza / Mali Muhur ile giris</span>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                  <a href="https://ebelge.gib.gov.tr/eiabortalgiris.html" target="_blank" rel="noopener noreferrer" className="flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br from-amber-500/20 to-amber-600/20 border-amber-500/30 hover:scale-105 transition-all cursor-pointer text-center group">
-                    <span className="text-2xl">🚚</span>
-                    <span className="text-white text-xs font-medium leading-tight">e-Irsaliye Portal</span>
+                  <a href="https://earsivportal.efatura.gov.tr/" target="_blank" rel="noopener noreferrer" className="flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br from-cyan-500/20 to-cyan-600/20 border-cyan-500/30 hover:scale-105 transition-all cursor-pointer text-center group">
+                    <span className="text-2xl">📝</span>
+                    <span className="text-white text-xs font-medium leading-tight">e-SMM Portal Giris</span>
                     <ExternalLink className="w-3 h-3 text-gray-500 group-hover:text-yellow-400 transition-colors" />
                   </a>
                 </div>

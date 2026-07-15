@@ -451,14 +451,14 @@ async function loginSGKIsveren(page, cred, clientName) {
 }
 
 // SGK ortak form doldurma (Borc Sorgula + Isveren ayni form yapisi)
-// Alanlar: Kullanici Adi (text), Sistem Sifresi (password), Isyeri Sifresi (password)
+// Alanlar: 1.Kullanici Adi (text), 2.Isyeri Kodu (text), 3.Sistem Sifresi (password), 4.Isyeri Sifresi (password)
 async function fillSGKForm(page, cred) {
   // Tum gorunur input alanlari tespit et
   const formInfo = await page.evaluate(() => {
     const textInputs = [];
     const passInputs = [];
     document.querySelectorAll('input').forEach((el, idx) => {
-      if (el.offsetParent === null && el.type !== 'hidden') return; // gorunmez
+      if (el.offsetParent === null && el.type !== 'hidden') return;
       if (el.type === 'text') textInputs.push(idx);
       if (el.type === 'password') passInputs.push(idx);
     });
@@ -467,71 +467,47 @@ async function fillSGKForm(page, cred) {
   
   console.log(`[SGK Form] Text input: ${formInfo.textInputs.length}, Password input: ${formInfo.passInputs.length}, Toplam: ${formInfo.total}`);
 
-  // Tum input elementlerini al
   const allInputs = await page.$$('input');
   
+  // Yardimci: input alanina guvenli yaz + kontrol et
+  async function writeField(input, value, label) {
+    if (!input || !value) return;
+    await input.click({ clickCount: 3 });
+    await delay(100);
+    await page.evaluate(el => { el.value = ''; el.dispatchEvent(new Event('input', {bubbles:true})); }, input);
+    await delay(100);
+    await input.type(value, { delay: 30 });
+    await delay(200);
+    const written = await page.evaluate(el => el.value, input);
+    if (written !== value) {
+      console.log(`[SGK Form] ${label} eksik yazildi: "${written}" vs "${value}", duzeltiliyor`);
+      await page.evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); }, input, value);
+    }
+    console.log(`[SGK Form] ${label} yazildi`);
+  }
+
   // 1. Kullanici Adi - ilk text input
-  if (formInfo.textInputs.length > 0 && cred.username) {
-    const userInput = allInputs[formInfo.textInputs[0]];
-    if (userInput) {
-      await userInput.click({ clickCount: 3 });
-      await delay(100);
-      await page.evaluate(el => { el.value = ''; el.dispatchEvent(new Event('input', {bubbles:true})); }, userInput);
-      await delay(100);
-      await userInput.type(cred.username, { delay: 30 });
-      await delay(200);
-      // Kontrol et
-      const val = await page.evaluate(el => el.value, userInput);
-      if (val !== cred.username) {
-        console.log(`[SGK Form] Kullanici adi eksik: "${val}" vs "${cred.username}", duzeltiliyor`);
-        await page.evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); }, userInput, cred.username);
-      }
-      console.log(`[SGK Form] Kullanici Adi yazildi: ${cred.username}`);
-    }
+  if (formInfo.textInputs.length > 0) {
+    await writeField(allInputs[formInfo.textInputs[0]], cred.username, 'Kullanici Adi');
   }
   
-  // 2. Sistem Sifresi - ilk password input
-  if (formInfo.passInputs.length > 0 && cred.sistemSifre) {
-    const sysPassInput = allInputs[formInfo.passInputs[0]];
-    if (sysPassInput) {
-      await sysPassInput.click({ clickCount: 3 });
-      await delay(100);
-      await page.evaluate(el => { el.value = ''; el.dispatchEvent(new Event('input', {bubbles:true})); }, sysPassInput);
-      await delay(100);
-      await sysPassInput.type(cred.sistemSifre, { delay: 30 });
-      await delay(200);
-      const val = await page.evaluate(el => el.value, sysPassInput);
-      if (val !== cred.sistemSifre) {
-        console.log(`[SGK Form] Sistem sifresi eksik: "${val.length}" vs "${cred.sistemSifre.length}" karakter, duzeltiliyor`);
-        await page.evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); }, sysPassInput, cred.sistemSifre);
-      }
-      console.log(`[SGK Form] Sistem Sifresi yazildi (${cred.sistemSifre.length} karakter)`);
-    }
+  // 2. Isyeri Kodu - ikinci text input (Kullanici Adi yanindaki "-" den sonraki alan)
+  if (formInfo.textInputs.length > 1 && cred.isyeriKodu) {
+    await writeField(allInputs[formInfo.textInputs[1]], cred.isyeriKodu, 'Isyeri Kodu');
   }
   
-  // 3. Isyeri Sifresi - ikinci password input
+  // 3. Sistem Sifresi - ilk password input
+  if (formInfo.passInputs.length > 0) {
+    await writeField(allInputs[formInfo.passInputs[0]], cred.sistemSifre, 'Sistem Sifresi');
+  }
+  
+  // 4. Isyeri Sifresi - ikinci password input
   if (formInfo.passInputs.length > 1 && cred.isyeriSifre) {
-    const isyPassInput = allInputs[formInfo.passInputs[1]];
-    if (isyPassInput) {
-      await isyPassInput.click({ clickCount: 3 });
-      await delay(100);
-      await page.evaluate(el => { el.value = ''; el.dispatchEvent(new Event('input', {bubbles:true})); }, isyPassInput);
-      await delay(100);
-      await isyPassInput.type(cred.isyeriSifre, { delay: 30 });
-      await delay(200);
-      const val = await page.evaluate(el => el.value, isyPassInput);
-      if (val !== cred.isyeriSifre) {
-        console.log(`[SGK Form] Isyeri sifresi eksik: "${val.length}" vs "${cred.isyeriSifre.length}" karakter, duzeltiliyor`);
-        await page.evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); }, isyPassInput, cred.isyeriSifre);
-      }
-      console.log(`[SGK Form] Isyeri Sifresi yazildi (${cred.isyeriSifre.length} karakter)`);
-    }
-  } else if (formInfo.passInputs.length <= 1) {
-    console.log('[SGK Form] Ikinci password alani bulunamadi (isyeri sifresi alani yok)');
+    await writeField(allInputs[formInfo.passInputs[1]], cred.isyeriSifre, 'Isyeri Sifresi');
   }
   
   await delay(500);
-  console.log('[SGK Form] Tum alanlar dolduruldu. Guvenlik anahtari (captcha) bekleniyor...');
+  console.log('[SGK Form] 4 alan dolduruldu. Guvenlik anahtari (captcha) bekleniyor...');
 }
 
 // ---- e-Devlet Giris ----

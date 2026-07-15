@@ -842,12 +842,12 @@ export default function ClientDetail() {
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {[
                 { label: 'DVS Giris', portal: 'dvs', icon: '🔑', color: 'from-blue-500/20 to-blue-600/20 border-blue-500/30' },
-                { label: 'Vergi Borcu Sorgula', portal: 'dvs', icon: '💰', color: 'from-red-500/20 to-red-600/20 border-red-500/30' },
+                { label: 'Vergi Borcu Sorgula', portal: 'dvs-borc-sorgula', icon: '💰', color: 'from-red-500/20 to-red-600/20 border-red-500/30' },
                 { label: 'Borcu Yok Kagidi', portal: 'dvs-borc-durum', icon: '📋', color: 'from-green-500/20 to-green-600/20 border-green-500/30' },
-                { label: 'Mukellefiyet Belgesi', portal: 'dvs-borc-durum', icon: '📑', color: 'from-teal-500/20 to-teal-600/20 border-teal-500/30' },
-                { label: 'Beyanname Sorgula', portal: 'dvs', icon: '🔍', color: 'from-indigo-500/20 to-indigo-600/20 border-indigo-500/30' },
-                { label: 'Tahakkuk Fisi', portal: 'dvs', icon: '🧾', color: 'from-orange-500/20 to-orange-600/20 border-orange-500/30' },
-                { label: 'e-Tebligat', portal: 'dvs', icon: '📨', color: 'from-cyan-500/20 to-cyan-600/20 border-cyan-500/30' },
+                { label: 'Mukellefiyet Belgesi', portal: 'dvs-mukellefiyet', icon: '📑', color: 'from-teal-500/20 to-teal-600/20 border-teal-500/30' },
+                { label: 'Beyanname Sorgula', portal: 'dvs-beyanname', icon: '🔍', color: 'from-indigo-500/20 to-indigo-600/20 border-indigo-500/30' },
+                { label: 'Tahakkuk Fisi', portal: 'dvs-tahakkuk', icon: '🧾', color: 'from-orange-500/20 to-orange-600/20 border-orange-500/30' },
+                { label: 'e-Tebligat', portal: 'dvs-etebligat', icon: '📨', color: 'from-cyan-500/20 to-cyan-600/20 border-cyan-500/30' },
               ].map((item, i) => (
                 <button key={i} onClick={() => handleDVSLogin(item.portal)} disabled={proxyLoading}
                   className={`flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br ${item.color} hover:scale-105 transition-all cursor-pointer text-center group disabled:opacity-50`}>
@@ -903,7 +903,7 @@ export default function ClientDetail() {
                 { label: 'Borc Odeme', url: 'https://online.ito.org.tr/', icon: '💳', color: 'from-purple-500/20 to-purple-600/20 border-purple-500/30' },
                 { label: 'Ticaret Sicil', url: 'https://online.ito.org.tr/', icon: '📑', color: 'from-orange-500/20 to-orange-600/20 border-orange-500/30' },
                 { label: 'Oda Kayit Belgesi', url: 'https://online.ito.org.tr/', icon: '📋', color: 'from-teal-500/20 to-teal-600/20 border-teal-500/30' },
-                { label: 'MERSIS (e-Devlet)', url: 'https://mersis.gtb.gov.tr/', icon: '🌐', color: 'from-indigo-500/20 to-indigo-600/20 border-indigo-500/30' },
+                { label: 'MERSIS (e-Devlet)', url: 'https://mersis.ticaret.gov.tr/Portal/KullaniciIslemleri/GirisIslemleri', icon: '🌐', color: 'from-indigo-500/20 to-indigo-600/20 border-indigo-500/30' },
               ].map((item, i) => (
                 <a key={i} href={item.url} target="_blank" rel="noopener noreferrer" className={`flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br ${item.color} hover:scale-105 transition-all cursor-pointer text-center group`}>
                   <span className="text-2xl">{item.icon}</span>

@@ -70,9 +70,19 @@ async function portalLogin(portal, credentials, clientName) {
 
   switch (portal) {
     case 'dvs':
-      return await loginDVS(page, credentials, clientName);
+      return await loginDVS(page, credentials, clientName, null);
+    case 'dvs-borc-sorgula':
+      return await loginDVS(page, credentials, clientName, 'borc-sorgula');
     case 'dvs-borc-durum':
-      return await loginDVSBorcDurum(page, credentials, clientName);
+      return await loginDVS(page, credentials, clientName, 'borc-durum');
+    case 'dvs-mukellefiyet':
+      return await loginDVS(page, credentials, clientName, 'mukellefiyet');
+    case 'dvs-beyanname':
+      return await loginDVS(page, credentials, clientName, 'beyanname');
+    case 'dvs-tahakkuk':
+      return await loginDVS(page, credentials, clientName, 'tahakkuk');
+    case 'dvs-etebligat':
+      return await loginDVS(page, credentials, clientName, 'etebligat');
     case 'earsiv':
       return await loginEArsiv(page, credentials, clientName);
     case 'sgk':
@@ -90,34 +100,122 @@ async function portalLogin(portal, credentials, clientName) {
   }
 }
 
-// ---- Dijital Vergi Dairesi ----
-async function loginDVS(page, cred, clientName) {
-  console.log(`[DVS] ${clientName || ''} icin giris yapiliyor...`);
+// ============ DVS - ORTAK GIRIS + ISLEM NAVIGASYONU ============
+async function loginDVS(page, cred, clientName, islem) {
+  console.log(`[DVS] ${clientName || ''} icin giris yapiliyor... islem: ${islem || 'sadece giris'}`);
   await page.goto('https://dijital.gib.gov.tr/portal/login', { waitUntil: 'networkidle2', timeout: 30000 });
   
-  // Kullanici adi alani
-  await page.waitForSelector('input[name="username"], input[type="text"], #username', { timeout: 10000 });
-  const userInput = await page.$('input[name="username"]') || await page.$('#username') || await page.$('input[type="text"]');
-  if (userInput) {
-    await userInput.click({ clickCount: 3 });
-    await userInput.type(cred.username, { delay: 50 });
-  }
+  // Giris yap
+  await page.waitForSelector('input[type="text"], input[type="password"]', { timeout: 10000 });
+  await delay(1000);
+  
+  await fillInput(page, 'input[type="text"]', cred.username);
+  await fillInput(page, 'input[type="password"]', cred.password);
 
-  // Sifre alani
-  const passInput = await page.$('input[name="password"]') || await page.$('#password') || await page.$('input[type="password"]');
-  if (passInput) {
-    await passInput.click({ clickCount: 3 });
-    await passInput.type(cred.password, { delay: 50 });
-  }
-
-  // Giris butonu
   await delay(500);
   const loginBtn = await page.$('button[type="submit"]') || await page.$('.login-btn') || await page.$('input[type="submit"]');
   if (loginBtn) {
     await loginBtn.click();
   }
 
-  return `DVS giris yapildi: ${clientName || cred.username}`;
+  // Giris sonrasi sayfa yuklemesini bekle
+  await delay(4000);
+  
+  // Islem yoksa sadece giris yap
+  if (!islem) {
+    return `DVS giris yapildi: ${clientName || cred.username}`;
+  }
+
+  // Islem icin arama kutusunu kullan
+  const aramaMetinleri = {
+    'borc-sorgula': 'Borç Sorgulama',
+    'borc-durum': 'Mükellefiyet Borç Durum Yazısı',
+    'mukellefiyet': 'Mükellefiyet Belgesi',
+    'beyanname': 'Beyanname',
+    'tahakkuk': 'Tahakkuk',
+    'etebligat': 'e-Tebligat'
+  };
+
+  const aramaText = aramaMetinleri[islem] || islem;
+  console.log(`[DVS] Arama yapiliyor: "${aramaText}"`);
+
+  try {
+    // Arama kutusunu bul - DVS'de ust bar da arama kutusu var
+    const searchSelectors = [
+      'input[placeholder*="Ara"]',
+      'input[placeholder*="ara"]',
+      'input[placeholder*="search"]',
+      'input[placeholder*="Search"]',
+      'input[type="search"]',
+      '.search-input input',
+      '[class*="search"] input',
+      'input[class*="search"]'
+    ];
+    
+    let searchInput = null;
+    for (const sel of searchSelectors) {
+      searchInput = await page.$(sel);
+      if (searchInput) break;
+    }
+    
+    if (searchInput) {
+      await searchInput.click();
+      await delay(500);
+      await page.evaluate(el => { el.value = ''; }, searchInput);
+      await searchInput.type(aramaText, { delay: 60 });
+      await delay(2000);
+      
+      // Arama sonuclarindan ilgili linke tikla
+      const resultSelectors = [
+        `a[title*="${aramaText}"]`,
+        `[class*="result"] a`,
+        `[class*="search-result"] a`,
+        `.dropdown-menu a`,
+        `.autocomplete-result a`,
+        `li a`
+      ];
+      
+      let clicked = false;
+      for (const sel of resultSelectors) {
+        const items = await page.$$(sel);
+        for (const item of items) {
+          const text = await page.evaluate(el => el.textContent, item);
+          if (text && text.toLowerCase().includes(aramaText.toLowerCase().substring(0, 8))) {
+            await item.click();
+            clicked = true;
+            console.log(`[DVS] Sonuc tiklandi: "${text.trim().substring(0, 60)}"`);
+            break;
+          }
+        }
+        if (clicked) break;
+      }
+      
+      if (!clicked) {
+        // Arama sonucu bulunamadiysa Enter ile gonder
+        await page.keyboard.press('Enter');
+        console.log('[DVS] Arama sonucu bulunamadi, Enter ile gonderildi');
+      }
+    } else {
+      console.log('[DVS] Arama kutusu bulunamadi, sayfa icindeki linkleri taraniyor...');
+      
+      // Arama kutusu bulunamazsa, sayfadaki linkleri tara
+      const allLinks = await page.$$('a');
+      for (const link of allLinks) {
+        const text = await page.evaluate(el => el.textContent, link);
+        if (text && text.includes(aramaText.substring(0, 8))) {
+          await link.click();
+          console.log(`[DVS] Link tiklandi: "${text.trim().substring(0, 60)}"`);
+          break;
+        }
+      }
+    }
+    
+    await delay(2000);
+  } catch (e) {
+    console.log('[DVS] Navigasyon hatasi:', e.message);
+  }
+
+  return `DVS ${aramaText} acildi: ${clientName || cred.username}`;
 }
 
 // ---- e-Arsiv Portal ----
@@ -230,60 +328,6 @@ async function loginSGKIsveren(page, cred, clientName) {
   }
 
   return `SGK Isveren Sistemi giris yapildi: ${clientName || cred.username}`;
-}
-
-// ---- DVS Borc Durum / Mukellefiyet Belgesi ----
-async function loginDVSBorcDurum(page, cred, clientName) {
-  console.log(`[DVS Borc Durum] ${clientName || ''} icin giris + navigasyon yapiliyor...`);
-  
-  // Oncelikle DVS'ye giris yap
-  await page.goto('https://dijital.gib.gov.tr/portal/login', { waitUntil: 'networkidle2', timeout: 30000 });
-  
-  await page.waitForSelector('input[name="username"], input[type="text"], #username', { timeout: 10000 });
-  const userInput = await page.$('input[name="username"]') || await page.$('#username') || await page.$('input[type="text"]');
-  if (userInput) {
-    await userInput.click({ clickCount: 3 });
-    await userInput.type(cred.username, { delay: 50 });
-  }
-
-  const passInput = await page.$('input[name="password"]') || await page.$('#password') || await page.$('input[type="password"]');
-  if (passInput) {
-    await passInput.click({ clickCount: 3 });
-    await passInput.type(cred.password, { delay: 50 });
-  }
-
-  await delay(500);
-  const loginBtn = await page.$('button[type="submit"]') || await page.$('.login-btn') || await page.$('input[type="submit"]');
-  if (loginBtn) {
-    await loginBtn.click();
-  }
-
-  // Giris sonrasi sayfa yuklenmesini bekle
-  await delay(3000);
-  
-  try {
-    // Arama kutusunu bul ve "mukellef borc durum" yaz
-    await page.waitForSelector('input[type="search"], input[placeholder*="Ara"], input[type="text"]', { timeout: 10000 });
-    const searchInputs = await page.$$('input[type="search"], input[placeholder*="Ara"], input[placeholder*="ara"]');
-    const searchInput = searchInputs[0] || await page.$('input[type="search"]');
-    if (searchInput) {
-      await searchInput.click();
-      await delay(300);
-      await searchInput.type('mukellef borc durum', { delay: 80 });
-      await delay(1500);
-      
-      // Arama sonuclarindan ilkini tikla
-      const resultItem = await page.$('[class*="search-result"] a, [class*="result"] a, .dropdown-item, li a[href*="borc"], li a[href*="Borc"]');
-      if (resultItem) {
-        await resultItem.click();
-        console.log('[DVS] Mukellef borc durum sayfasina yonlendirildi');
-      }
-    }
-  } catch (e) {
-    console.log('[DVS] Arama navigasyonu basarisiz, ana sayfada kaliniyor:', e.message);
-  }
-
-  return `DVS giris + borc durum navigasyonu yapildi: ${clientName || cred.username}`;
 }
 
 // ---- e-Devlet Giris ----

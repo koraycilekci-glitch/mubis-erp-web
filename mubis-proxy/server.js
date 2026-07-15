@@ -433,28 +433,11 @@ async function loginSGKBorc(page, cred, clientName) {
   // Sayfadaki tum input alanlari bul ve sirala
   await fillSGKForm(page, cred);
   
-  // Guvenlik anahtarini kullanici girecek, giris yapilmasini bekle (max 120sn)
-  console.log('[SGK Borc] Guvenlik anahtari girip giris yapilmasini bekleniyor (max 120sn)...');
-  let loggedIn = false;
-  for (let i = 0; i < 120; i++) {
-    await delay(1000);
-    const url = await page.url();
-    if (!url.includes('loginldap') && !url.includes('login')) {
-      loggedIn = true;
-      console.log(`[SGK Borc] Giris basarili! URL: ${url}`);
-      break;
-    }
-  }
-  
-  if (loggedIn) {
-    // Giris sonrasi borc sorgulama sayfasina yonlendir
-    await delay(1500);
-    console.log('[SGK Borc] Borc sorgulama sayfasina yonlendiriliyor...');
-    await page.goto('https://uyg.sgk.gov.tr/IsverenBorcSorgu/borc/donemselBorc.action', { waitUntil: 'networkidle2', timeout: 30000 });
-    return `SGK Borc Sorgulama acildi: ${clientName || cred.username}`;
-  }
+  // Arka planda giris kontrolu yap - API hemen donus yapar
+  // Kullanici captcha girip giris yapinca otomatik borc sayfasina yonlendir
+  watchSGKLogin(page, 'https://uyg.sgk.gov.tr/IsverenBorcSorgu/borc/donemselBorc.action', 'SGK Borc');
 
-  return `SGK Borc Sorgulama giris yapildi: ${clientName || cred.username}`;
+  return `SGK Borc Sorgulama formu dolduruldu. Guvenlik anahtarini girip giris yapin - otomatik borc sayfasina yonlendirileceksiniz.`;
 }
 
 // ---- SGK Isveren Sistemi (Borc Yoktur) ----
@@ -469,6 +452,36 @@ async function loginSGKIsveren(page, cred, clientName) {
   await fillSGKForm(page, cred);
 
   return `SGK Isveren Sistemi giris yapildi: ${clientName || cred.username}`;
+}
+
+// Arka planda SGK giris kontrolu - API'yi bloklamadan calisir
+function watchSGKLogin(page, targetUrl, label) {
+  (async () => {
+    try {
+      console.log(`[${label}] Arka planda giris bekleniyor (max 120sn)...`);
+      for (let i = 0; i < 120; i++) {
+        await delay(1000);
+        try {
+          const url = await page.url();
+          if (!url.includes('loginldap') && !url.includes('login') && !url.includes('Login')) {
+            console.log(`[${label}] Giris basarili! URL: ${url}`);
+            await delay(2000);
+            console.log(`[${label}] Hedef sayfaya yonlendiriliyor: ${targetUrl}`);
+            await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+            console.log(`[${label}] Hedef sayfa acildi!`);
+            return;
+          }
+        } catch (e) {
+          // Sayfa kapanmis olabilir
+          console.log(`[${label}] Sayfa kontrolu hatasi: ${e.message}`);
+          return;
+        }
+      }
+      console.log(`[${label}] 120sn icerisinde giris yapilmadi.`);
+    } catch (e) {
+      console.log(`[${label}] Watch hatasi: ${e.message}`);
+    }
+  })();
 }
 
 // SGK ortak form doldurma (Borc Sorgula + Isveren ayni form yapisi)

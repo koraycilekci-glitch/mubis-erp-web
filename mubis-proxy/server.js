@@ -71,6 +71,8 @@ async function portalLogin(portal, credentials, clientName) {
   switch (portal) {
     case 'dvs':
       return await loginDVS(page, credentials, clientName);
+    case 'dvs-borc-durum':
+      return await loginDVSBorcDurum(page, credentials, clientName);
     case 'earsiv':
       return await loginEArsiv(page, credentials, clientName);
     case 'sgk':
@@ -79,6 +81,8 @@ async function portalLogin(portal, credentials, clientName) {
       return await loginSGKBorc(page, credentials, clientName);
     case 'sgk-isveren':
       return await loginSGKIsveren(page, credentials, clientName);
+    case 'edevlet':
+      return await loginEDevlet(page, credentials, clientName);
     default:
       await browser.close();
       delete sessions[sessionId];
@@ -242,6 +246,90 @@ async function loginSGKIsveren(page, cred, clientName) {
   return `SGK Isveren Sistemi giris yapildi: ${clientName || cred.username}`;
 }
 
+// ---- DVS Borc Durum / Mukellefiyet Belgesi ----
+async function loginDVSBorcDurum(page, cred, clientName) {
+  console.log(`[DVS Borc Durum] ${clientName || ''} icin giris + navigasyon yapiliyor...`);
+  
+  // Oncelikle DVS'ye giris yap
+  await page.goto('https://dijital.gib.gov.tr/portal/login', { waitUntil: 'networkidle2', timeout: 30000 });
+  
+  await page.waitForSelector('input[name="username"], input[type="text"], #username', { timeout: 10000 });
+  const userInput = await page.$('input[name="username"]') || await page.$('#username') || await page.$('input[type="text"]');
+  if (userInput) {
+    await userInput.click({ clickCount: 3 });
+    await userInput.type(cred.username, { delay: 50 });
+  }
+
+  const passInput = await page.$('input[name="password"]') || await page.$('#password') || await page.$('input[type="password"]');
+  if (passInput) {
+    await passInput.click({ clickCount: 3 });
+    await passInput.type(cred.password, { delay: 50 });
+  }
+
+  await delay(500);
+  const loginBtn = await page.$('button[type="submit"]') || await page.$('.login-btn') || await page.$('input[type="submit"]');
+  if (loginBtn) {
+    await loginBtn.click();
+  }
+
+  // Giris sonrasi sayfa yuklenmesini bekle
+  await delay(3000);
+  
+  try {
+    // Arama kutusunu bul ve "mukellef borc durum" yaz
+    await page.waitForSelector('input[type="search"], input[placeholder*="Ara"], input[type="text"]', { timeout: 10000 });
+    const searchInputs = await page.$$('input[type="search"], input[placeholder*="Ara"], input[placeholder*="ara"]');
+    const searchInput = searchInputs[0] || await page.$('input[type="search"]');
+    if (searchInput) {
+      await searchInput.click();
+      await delay(300);
+      await searchInput.type('mukellef borc durum', { delay: 80 });
+      await delay(1500);
+      
+      // Arama sonuclarindan ilkini tikla
+      const resultItem = await page.$('[class*="search-result"] a, [class*="result"] a, .dropdown-item, li a[href*="borc"], li a[href*="Borc"]');
+      if (resultItem) {
+        await resultItem.click();
+        console.log('[DVS] Mukellef borc durum sayfasina yonlendirildi');
+      }
+    }
+  } catch (e) {
+    console.log('[DVS] Arama navigasyonu basarisiz, ana sayfada kaliniyor:', e.message);
+  }
+
+  return `DVS giris + borc durum navigasyonu yapildi: ${clientName || cred.username}`;
+}
+
+// ---- e-Devlet Giris ----
+async function loginEDevlet(page, cred, clientName) {
+  console.log(`[e-Devlet] ${clientName || ''} icin giris yapiliyor...`);
+  await page.goto('https://giris.turkiye.gov.tr/Giris/', { waitUntil: 'networkidle2', timeout: 30000 });
+
+  // TC Kimlik No
+  await page.waitForSelector('input[id="tridField"], input[name="tridField"], input[type="text"]', { timeout: 10000 });
+  const tcInput = await page.$('#tridField') || await page.$('input[name="tridField"]') || await page.$('input[type="text"]');
+  if (tcInput) {
+    await tcInput.click({ clickCount: 3 });
+    await tcInput.type(cred.username, { delay: 50 });
+  }
+
+  // Sifre
+  const passInput = await page.$('#egpiField') || await page.$('input[name="egpiField"]') || await page.$('input[type="password"]');
+  if (passInput) {
+    await passInput.click({ clickCount: 3 });
+    await passInput.type(cred.password, { delay: 50 });
+  }
+
+  // Giris butonu
+  await delay(500);
+  const loginBtn = await page.$('#girisButton') || await page.$('button[type="submit"]') || await page.$('input[type="submit"]');
+  if (loginBtn) {
+    await loginBtn.click();
+  }
+
+  return `e-Devlet giris yapildi: ${clientName || cred.username}`;
+}
+
 // ============ YARDIMCI ============
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -258,10 +346,12 @@ app.listen(PORT, () => {
   console.log('');
   console.log('  Desteklenen portallar:');
   console.log('    - DVS (Dijital Vergi Dairesi)');
+  console.log('    - DVS Borc Durum / Mukellefiyet');
   console.log('    - e-Arsiv Portal');
   console.log('    - SGK e-Bildirge');
   console.log('    - SGK Borc Sorgulama');
   console.log('    - SGK Isveren Sistemi');
+  console.log('    - e-Devlet');
   console.log('');
   console.log('  Bu pencereyi kapatmayin!');
   console.log('');

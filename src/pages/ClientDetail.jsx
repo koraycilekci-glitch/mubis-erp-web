@@ -760,50 +760,142 @@ export default function ClientDetail() {
             </div>
           </div>
 
-          {/* e-Fatura / e-Arsiv / e-Irsaliye - e-Imza ile giris */}
+          {/* e-Belge Portallari - Musterinin aktif hizmetlerine gore */}
           <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <span className="text-lg">📄</span> e-Fatura / e-Arsiv / e-Irsaliye
+              <span className="text-lg">📄</span> e-Belge Portallari
             </h3>
-            {/* e-Imza Uyarisi */}
-            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 mb-4">
-              <div className="flex items-start gap-3">
-                <Lock className="w-5 h-5 text-yellow-400 mt-0.5 shrink-0" />
-                <div>
-                  <p className="text-yellow-300 text-sm font-medium mb-1">e-Imza / Mali Muhur ile Giris</p>
-                  <p className="text-gray-400 text-xs">Bu portallara giris icin e-Imza veya Mali Muhur gereklidir. Giris yapmadan once <strong className="text-yellow-400">EFaturaWebSocket</strong> programini calistirmaniz gerekmektedir.</p>
-                  <button
-                    onClick={() => {
-                      const link = document.createElement('a')
-                      link.href = 'https://ebelge.gib.gov.tr/EFaturaWebSocket/EFaturaWebSocket.jnlp'
-                      link.download = 'EFaturaWebSocket.jnlp'
-                      link.click()
-                    }}
-                    className="mt-2 bg-yellow-500/20 text-yellow-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-yellow-500/30 transition-colors inline-flex items-center gap-1"
-                  >
-                    <Globe className="w-3.5 h-3.5" /> EFaturaWebSocket Indir
-                  </button>
+
+            {/* Musteri bilgileri - admin giris icin */}
+            <div className="bg-blue-900/30 rounded-xl p-3 mb-4 flex flex-wrap items-center gap-3 text-xs">
+              <span className="text-gray-400">Musteri:</span>
+              <span className="text-white font-medium">{client.companyName || client.name || '-'}</span>
+              {client.vkn && <><span className="text-gray-500">|</span><span className="text-gray-400">VKN:</span><span className="text-yellow-400 font-mono">{client.vkn}</span></>}
+              {client.tcKimlik && <><span className="text-gray-500">|</span><span className="text-gray-400">TC:</span><span className="text-yellow-400 font-mono">{client.tcKimlik}</span></>}
+            </div>
+
+            {/* Aktif hizmet yoksa uyari */}
+            {!client.efatura && !client.earsiv && !client.esmm && (
+              <div className="bg-gray-500/10 border border-gray-500/20 rounded-xl p-4 text-center">
+                <p className="text-gray-400 text-sm">Bu musterinin aktif e-Belge hizmeti bulunmuyor.</p>
+                <p className="text-gray-500 text-xs mt-1">E-Hizmetler sekmesinden aktif ediniz.</p>
+              </div>
+            )}
+
+            {/* e-Fatura Mukellefiyse */}
+            {client.efatura && (
+              <div className="mb-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="w-2 h-2 bg-green-400 rounded-full"></span>
+                  <span className="text-green-400 text-sm font-medium">e-Fatura Mukellef</span>
+                  <span className="text-gray-500 text-[10px]">e-Imza / Mali Muhur ile giris</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {[
+                    { label: 'e-Fatura Portal Giris', url: 'https://ebelge.gib.gov.tr/efabortalgiris.html', icon: '📄', color: 'from-blue-500/20 to-blue-600/20 border-blue-500/30' },
+                    { label: 'Gelen Faturalar', url: 'https://ebelge.gib.gov.tr/efabortalgiris.html', icon: '📥', color: 'from-green-500/20 to-green-600/20 border-green-500/30' },
+                    { label: 'Giden Faturalar', url: 'https://ebelge.gib.gov.tr/efabortalgiris.html', icon: '📤', color: 'from-orange-500/20 to-orange-600/20 border-orange-500/30' },
+                    { label: 'e-Arsiv Portal', url: 'https://earsivportal.efatura.gov.tr/', icon: '📂', color: 'from-purple-500/20 to-purple-600/20 border-purple-500/30' },
+                  ].map((item, i) => (
+                    <a key={i} href={item.url} target="_blank" rel="noopener noreferrer" className={`flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br ${item.color} hover:scale-105 transition-all cursor-pointer text-center group`}>
+                      <span className="text-2xl">{item.icon}</span>
+                      <span className="text-white text-xs font-medium leading-tight">{item.label}</span>
+                      <ExternalLink className="w-3 h-3 text-gray-500 group-hover:text-yellow-400 transition-colors" />
+                    </a>
+                  ))}
                 </div>
               </div>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {[
-                { label: 'e-Fatura Portal', url: 'https://ebelge.gib.gov.tr/efabortalgiris.html', icon: '📄', color: 'from-blue-500/20 to-blue-600/20 border-blue-500/30', note: 'e-Imza / Mali Muhur' },
-                { label: 'e-Arsiv Portal', url: 'https://earsivportal.efatura.gov.tr/', icon: '📂', color: 'from-green-500/20 to-green-600/20 border-green-500/30', note: 'e-Fatura mukellefleri' },
-                { label: 'e-Arsiv Fatura Kes', url: 'https://earsivportal.efatura.gov.tr/', icon: '✂️', color: 'from-orange-500/20 to-orange-600/20 border-orange-500/30', note: 'e-Imza / Mali Muhur' },
-                { label: 'e-Irsaliye Portal', url: 'https://ebelge.gib.gov.tr/eiabortalgiris.html', icon: '🚚', color: 'from-teal-500/20 to-teal-600/20 border-teal-500/30', note: 'e-Imza / Mali Muhur' },
-                { label: 'e-SMM Portal', url: 'https://esmm.gib.gov.tr/', icon: '📝', color: 'from-cyan-500/20 to-cyan-600/20 border-cyan-500/30', note: 'Serbest meslek' },
-                { label: 'e-Fatura Sorgula', url: 'https://ebelge.gib.gov.tr/efabortalgiris.html', icon: '🔍', color: 'from-purple-500/20 to-purple-600/20 border-purple-500/30', note: 'Gelen/Giden faturalar' },
-                { label: 'GIB e-Belge', url: 'https://ebelge.gib.gov.tr/', icon: '🌐', color: 'from-indigo-500/20 to-indigo-600/20 border-indigo-500/30', note: 'Ana portal' },
-              ].map((item, i) => (
-                <a key={i} href={item.url} target="_blank" rel="noopener noreferrer" className={`flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br ${item.color} hover:scale-105 transition-all cursor-pointer text-center group`}>
-                  <span className="text-2xl">{item.icon}</span>
-                  <span className="text-white text-xs font-medium leading-tight">{item.label}</span>
-                  <span className="text-gray-500 text-[9px] leading-tight">{item.note}</span>
-                  <ExternalLink className="w-3 h-3 text-gray-500 group-hover:text-yellow-400 transition-colors" />
-                </a>
-              ))}
-            </div>
+            )}
+
+            {/* e-Arsiv Mukellefiyse (e-Fatura degil) */}
+            {client.earsiv && !client.efatura && (
+              <div className="mb-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="w-2 h-2 bg-emerald-400 rounded-full"></span>
+                  <span className="text-emerald-400 text-sm font-medium">e-Arsiv Mukellef</span>
+                  <span className="text-gray-500 text-[10px]">GIB portal uzerinden giris</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {[
+                    { label: 'e-Arsiv Portal Giris', url: 'https://earsivportal.efatura.gov.tr/', icon: '📂', color: 'from-green-500/20 to-green-600/20 border-green-500/30' },
+                    { label: 'e-Arsiv Fatura Kes', url: 'https://earsivportal.efatura.gov.tr/', icon: '✂️', color: 'from-orange-500/20 to-orange-600/20 border-orange-500/30' },
+                    { label: 'Fatura Sorgula', url: 'https://earsivportal.efatura.gov.tr/', icon: '🔍', color: 'from-purple-500/20 to-purple-600/20 border-purple-500/30' },
+                  ].map((item, i) => (
+                    <a key={i} href={item.url} target="_blank" rel="noopener noreferrer" className={`flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br ${item.color} hover:scale-105 transition-all cursor-pointer text-center group`}>
+                      <span className="text-2xl">{item.icon}</span>
+                      <span className="text-white text-xs font-medium leading-tight">{item.label}</span>
+                      <ExternalLink className="w-3 h-3 text-gray-500 group-hover:text-yellow-400 transition-colors" />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* e-SMM Mukellefiyse */}
+            {client.esmm && (
+              <div className="mb-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="w-2 h-2 bg-cyan-400 rounded-full"></span>
+                  <span className="text-cyan-400 text-sm font-medium">e-SMM Mukellef</span>
+                  <span className="text-gray-500 text-[10px]">e-Imza / Mali Muhur ile giris</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {[
+                    { label: 'e-SMM Portal Giris', url: 'https://esmm.gib.gov.tr/', icon: '📝', color: 'from-cyan-500/20 to-cyan-600/20 border-cyan-500/30' },
+                    { label: 'Makbuz Kes', url: 'https://esmm.gib.gov.tr/', icon: '🧾', color: 'from-teal-500/20 to-teal-600/20 border-teal-500/30' },
+                    { label: 'Makbuz Sorgula', url: 'https://esmm.gib.gov.tr/', icon: '🔍', color: 'from-indigo-500/20 to-indigo-600/20 border-indigo-500/30' },
+                  ].map((item, i) => (
+                    <a key={i} href={item.url} target="_blank" rel="noopener noreferrer" className={`flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br ${item.color} hover:scale-105 transition-all cursor-pointer text-center group`}>
+                      <span className="text-2xl">{item.icon}</span>
+                      <span className="text-white text-xs font-medium leading-tight">{item.label}</span>
+                      <ExternalLink className="w-3 h-3 text-gray-500 group-hover:text-yellow-400 transition-colors" />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* e-Irsaliye - e-Fatura mukelleflerinde otomatik */}
+            {client.efatura && (
+              <div className="mb-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="w-2 h-2 bg-amber-400 rounded-full"></span>
+                  <span className="text-amber-400 text-sm font-medium">e-Irsaliye</span>
+                  <span className="text-gray-500 text-[10px]">e-Imza / Mali Muhur ile giris</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                  <a href="https://ebelge.gib.gov.tr/eiabortalgiris.html" target="_blank" rel="noopener noreferrer" className="flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br from-amber-500/20 to-amber-600/20 border-amber-500/30 hover:scale-105 transition-all cursor-pointer text-center group">
+                    <span className="text-2xl">🚚</span>
+                    <span className="text-white text-xs font-medium leading-tight">e-Irsaliye Portal</span>
+                    <ExternalLink className="w-3 h-3 text-gray-500 group-hover:text-yellow-400 transition-colors" />
+                  </a>
+                </div>
+              </div>
+            )}
+
+            {/* EFaturaWebSocket - e-Imza gerektiren hizmet varsa goster */}
+            {(client.efatura || client.esmm) && (
+              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 mt-4">
+                <div className="flex items-start gap-3">
+                  <Lock className="w-5 h-5 text-yellow-400 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-yellow-300 text-sm font-medium mb-1">e-Imza / Mali Muhur Gerektiren Giris</p>
+                    <p className="text-gray-400 text-xs">Portal girisinden once <strong className="text-yellow-400">EFaturaWebSocket</strong> programini calistirin, ardindan portal linkine tiklayin.</p>
+                    <button
+                      onClick={() => {
+                        const link = document.createElement('a')
+                        link.href = 'https://ebelge.gib.gov.tr/EFaturaWebSocket/EFaturaWebSocket.jnlp'
+                        link.download = 'EFaturaWebSocket.jnlp'
+                        link.click()
+                      }}
+                      className="mt-2 bg-yellow-500/20 text-yellow-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-yellow-500/30 transition-colors inline-flex items-center gap-1"
+                    >
+                      <Globe className="w-3.5 h-3.5" /> EFaturaWebSocket Indir
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

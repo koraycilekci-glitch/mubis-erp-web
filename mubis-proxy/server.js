@@ -428,16 +428,10 @@ async function loginSGKBorc(page, cred, clientName) {
   await page.goto('https://ebildirge.sgk.gov.tr/WPEB/amp/loginldap', { waitUntil: 'networkidle2', timeout: 30000 });
 
   await page.waitForSelector('input[type="text"]', { timeout: 10000 });
-  await delay(1500);
+  await delay(2000);
   
-  await fillInput(page, 'input[type="text"]', cred.username);
-  await fillInput(page, 'input[type="password"]', cred.sistemSifre);
-
-  await delay(500);
-  const loginBtn = await page.$('button[type="submit"]') || await page.$('input[type="submit"]') || await page.$('input[type="button"]');
-  if (loginBtn) {
-    await loginBtn.click();
-  }
+  // Sayfadaki tum input alanlari bul ve sirala
+  await fillSGKForm(page, cred);
 
   return `SGK Borc Sorgulama giris yapildi: ${clientName || cred.username}`;
 }
@@ -448,18 +442,96 @@ async function loginSGKIsveren(page, cred, clientName) {
   await page.goto('https://uyg.sgk.gov.tr/IsverenSistemi', { waitUntil: 'networkidle2', timeout: 30000 });
 
   await page.waitForSelector('input[type="text"]', { timeout: 10000 });
-  await delay(1500);
+  await delay(2000);
   
-  await fillInput(page, 'input[type="text"]', cred.username);
-  await fillInput(page, 'input[type="password"]', cred.sistemSifre);
-
-  await delay(500);
-  const loginBtn = await page.$('button[type="submit"]') || await page.$('input[type="submit"]') || await page.$('input[type="button"]');
-  if (loginBtn) {
-    await loginBtn.click();
-  }
+  // Sayfadaki tum input alanlari bul ve sirala
+  await fillSGKForm(page, cred);
 
   return `SGK Isveren Sistemi giris yapildi: ${clientName || cred.username}`;
+}
+
+// SGK ortak form doldurma (Borc Sorgula + Isveren ayni form yapisi)
+// Alanlar: Kullanici Adi (text), Sistem Sifresi (password), Isyeri Sifresi (password)
+async function fillSGKForm(page, cred) {
+  // Tum gorunur input alanlari tespit et
+  const formInfo = await page.evaluate(() => {
+    const textInputs = [];
+    const passInputs = [];
+    document.querySelectorAll('input').forEach((el, idx) => {
+      if (el.offsetParent === null && el.type !== 'hidden') return; // gorunmez
+      if (el.type === 'text') textInputs.push(idx);
+      if (el.type === 'password') passInputs.push(idx);
+    });
+    return { textInputs, passInputs, total: document.querySelectorAll('input').length };
+  });
+  
+  console.log(`[SGK Form] Text input: ${formInfo.textInputs.length}, Password input: ${formInfo.passInputs.length}, Toplam: ${formInfo.total}`);
+
+  // Tum input elementlerini al
+  const allInputs = await page.$$('input');
+  
+  // 1. Kullanici Adi - ilk text input
+  if (formInfo.textInputs.length > 0 && cred.username) {
+    const userInput = allInputs[formInfo.textInputs[0]];
+    if (userInput) {
+      await userInput.click({ clickCount: 3 });
+      await delay(100);
+      await page.evaluate(el => { el.value = ''; el.dispatchEvent(new Event('input', {bubbles:true})); }, userInput);
+      await delay(100);
+      await userInput.type(cred.username, { delay: 30 });
+      await delay(200);
+      // Kontrol et
+      const val = await page.evaluate(el => el.value, userInput);
+      if (val !== cred.username) {
+        console.log(`[SGK Form] Kullanici adi eksik: "${val}" vs "${cred.username}", duzeltiliyor`);
+        await page.evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); }, userInput, cred.username);
+      }
+      console.log(`[SGK Form] Kullanici Adi yazildi: ${cred.username}`);
+    }
+  }
+  
+  // 2. Sistem Sifresi - ilk password input
+  if (formInfo.passInputs.length > 0 && cred.sistemSifre) {
+    const sysPassInput = allInputs[formInfo.passInputs[0]];
+    if (sysPassInput) {
+      await sysPassInput.click({ clickCount: 3 });
+      await delay(100);
+      await page.evaluate(el => { el.value = ''; el.dispatchEvent(new Event('input', {bubbles:true})); }, sysPassInput);
+      await delay(100);
+      await sysPassInput.type(cred.sistemSifre, { delay: 30 });
+      await delay(200);
+      const val = await page.evaluate(el => el.value, sysPassInput);
+      if (val !== cred.sistemSifre) {
+        console.log(`[SGK Form] Sistem sifresi eksik: "${val.length}" vs "${cred.sistemSifre.length}" karakter, duzeltiliyor`);
+        await page.evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); }, sysPassInput, cred.sistemSifre);
+      }
+      console.log(`[SGK Form] Sistem Sifresi yazildi (${cred.sistemSifre.length} karakter)`);
+    }
+  }
+  
+  // 3. Isyeri Sifresi - ikinci password input
+  if (formInfo.passInputs.length > 1 && cred.isyeriSifre) {
+    const isyPassInput = allInputs[formInfo.passInputs[1]];
+    if (isyPassInput) {
+      await isyPassInput.click({ clickCount: 3 });
+      await delay(100);
+      await page.evaluate(el => { el.value = ''; el.dispatchEvent(new Event('input', {bubbles:true})); }, isyPassInput);
+      await delay(100);
+      await isyPassInput.type(cred.isyeriSifre, { delay: 30 });
+      await delay(200);
+      const val = await page.evaluate(el => el.value, isyPassInput);
+      if (val !== cred.isyeriSifre) {
+        console.log(`[SGK Form] Isyeri sifresi eksik: "${val.length}" vs "${cred.isyeriSifre.length}" karakter, duzeltiliyor`);
+        await page.evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); }, isyPassInput, cred.isyeriSifre);
+      }
+      console.log(`[SGK Form] Isyeri Sifresi yazildi (${cred.isyeriSifre.length} karakter)`);
+    }
+  } else if (formInfo.passInputs.length <= 1) {
+    console.log('[SGK Form] Ikinci password alani bulunamadi (isyeri sifresi alani yok)');
+  }
+  
+  await delay(500);
+  console.log('[SGK Form] Tum alanlar dolduruldu. Guvenlik anahtari (captcha) bekleniyor...');
 }
 
 // ---- e-Devlet Giris ----

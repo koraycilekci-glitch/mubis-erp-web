@@ -845,8 +845,7 @@ export default function ClientDetail() {
                 { label: 'Vergi Borcu Sorgula', portal: 'dvs-borc-sorgula', icon: '💰', color: 'from-red-500/20 to-red-600/20 border-red-500/30' },
                 { label: 'Borcu Yok Kagidi', portal: 'dvs-borc-durum', icon: '📋', color: 'from-green-500/20 to-green-600/20 border-green-500/30' },
                 { label: 'Mukellefiyet Belgesi', portal: 'dvs-mukellefiyet', icon: '📑', color: 'from-teal-500/20 to-teal-600/20 border-teal-500/30' },
-                { label: 'Beyanname Sorgula', portal: 'dvs-beyanname', icon: '🔍', color: 'from-indigo-500/20 to-indigo-600/20 border-indigo-500/30' },
-                { label: 'Tahakkuk Fisi', portal: 'dvs-tahakkuk', icon: '🧾', color: 'from-orange-500/20 to-orange-600/20 border-orange-500/30' },
+
                 { label: 'e-Tebligat', portal: 'dvs-etebligat', icon: '📨', color: 'from-cyan-500/20 to-cyan-600/20 border-cyan-500/30' },
               ].map((item, i) => (
                 <button key={i} onClick={() => handleDVSLogin(item.portal)} disabled={proxyLoading}

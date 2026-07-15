@@ -432,6 +432,27 @@ async function loginSGKBorc(page, cred, clientName) {
   
   // Sayfadaki tum input alanlari bul ve sirala
   await fillSGKForm(page, cred);
+  
+  // Guvenlik anahtarini kullanici girecek, giris yapilmasini bekle (max 120sn)
+  console.log('[SGK Borc] Guvenlik anahtari girip giris yapilmasini bekleniyor (max 120sn)...');
+  let loggedIn = false;
+  for (let i = 0; i < 120; i++) {
+    await delay(1000);
+    const url = await page.url();
+    if (!url.includes('loginldap') && !url.includes('login')) {
+      loggedIn = true;
+      console.log(`[SGK Borc] Giris basarili! URL: ${url}`);
+      break;
+    }
+  }
+  
+  if (loggedIn) {
+    // Giris sonrasi borc sorgulama sayfasina yonlendir
+    await delay(1500);
+    console.log('[SGK Borc] Borc sorgulama sayfasina yonlendiriliyor...');
+    await page.goto('https://uyg.sgk.gov.tr/IsverenBorcSorgu/borc/donemselBorc.action', { waitUntil: 'networkidle2', timeout: 30000 });
+    return `SGK Borc Sorgulama acildi: ${clientName || cred.username}`;
+  }
 
   return `SGK Borc Sorgulama giris yapildi: ${clientName || cred.username}`;
 }

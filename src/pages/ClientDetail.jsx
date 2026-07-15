@@ -865,19 +865,19 @@ export default function ClientDetail() {
             </h3>
             {/* SGK Otomatik giris butonlari */}
             {client.sgkUser && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <button onClick={() => handleSGKLogin('sgk')} disabled={proxyLoading}
-                  className={`${proxyReady ? 'bg-gradient-to-r from-green-600 to-green-700' : 'bg-gradient-to-r from-blue-600 to-blue-700'} text-white py-2.5 rounded-xl text-sm font-medium hover:opacity-90 transition-all flex items-center justify-center gap-1 disabled:opacity-50`}>
-                  {proxyLoading ? '⏳' : '🔑'} e-Bildirge Giris
-                </button>
-                <button onClick={() => handleSGKLogin('sgk-borc')} disabled={proxyLoading}
-                  className={`${proxyReady ? 'bg-gradient-to-r from-green-600 to-green-700' : 'bg-gradient-to-r from-red-600 to-red-700'} text-white py-2.5 rounded-xl text-sm font-medium hover:opacity-90 transition-all flex items-center justify-center gap-1 disabled:opacity-50`}>
-                  {proxyLoading ? '⏳' : '💰'} Borc Sorgula Giris
-                </button>
-                <button onClick={() => handleSGKLogin('sgk-isveren')} disabled={proxyLoading}
-                  className={`${proxyReady ? 'bg-gradient-to-r from-green-600 to-green-700' : 'bg-gradient-to-r from-indigo-600 to-indigo-700'} text-white py-2.5 rounded-xl text-sm font-medium hover:opacity-90 transition-all flex items-center justify-center gap-1 disabled:opacity-50`}>
-                  {proxyLoading ? '⏳' : '📋'} Borc Yoktur Giris
-                </button>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                {[
+                  { label: 'e-Bildirge Giris', portal: 'sgk', icon: '🔑', color: 'from-blue-500/20 to-blue-600/20 border-blue-500/30' },
+                  { label: 'Borc Sorgula', portal: 'sgk-borc', icon: '💰', color: 'from-red-500/20 to-red-600/20 border-red-500/30' },
+                  { label: 'Borc Yoktur', portal: 'sgk-isveren', icon: '📋', color: 'from-green-500/20 to-green-600/20 border-green-500/30' },
+                ].map((item, i) => (
+                  <button key={i} onClick={() => handleSGKLogin(item.portal)} disabled={proxyLoading}
+                    className={`flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br ${item.color} hover:scale-105 transition-all cursor-pointer text-center group disabled:opacity-50`}>
+                    <span className="text-2xl">{item.icon}</span>
+                    <span className="text-white text-xs font-medium leading-tight">{item.label}</span>
+                    {proxyLoading ? <span className="text-xs animate-spin">⏳</span> : <ExternalLink className="w-3 h-3 text-gray-500 group-hover:text-yellow-400 transition-colors" />}
+                  </button>
+                ))}
               </div>
             )}
           </div>

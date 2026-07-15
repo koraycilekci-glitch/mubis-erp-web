@@ -1,9 +1,41 @@
 -- ============================================================
--- MUBiS ERP - Supabase Veritabani Yapisi
+-- MUBiS ERP - TEMIZ KURULUM (once sil, sonra olustur)
 -- ============================================================
 
--- 1. PROFILES (Kullanici profilleri - auth.users ile bagli)
-CREATE TABLE IF NOT EXISTS profiles (
+-- 1. MEVCUT POLICY'LERI SIL
+DO $$ 
+DECLARE r RECORD;
+BEGIN
+  FOR r IN (SELECT policyname, tablename FROM pg_policies WHERE schemaname = 'public') LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I', r.policyname, r.tablename);
+  END LOOP;
+END $$;
+
+-- 2. MEVCUT TRIGGER'LARI SIL
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+DROP TRIGGER IF EXISTS clients_updated_at ON clients;
+DROP TRIGGER IF EXISTS profiles_updated_at ON profiles;
+DROP TRIGGER IF EXISTS beyan_status_updated_at ON beyan_status;
+
+-- 3. MEVCUT TABLOLARI SIL (sirali - foreign key bagimliliklari)
+DROP TABLE IF EXISTS ai_data CASCADE;
+DROP TABLE IF EXISTS client_notes CASCADE;
+DROP TABLE IF EXISTS documents CASCADE;
+DROP TABLE IF EXISTS banks CASCADE;
+DROP TABLE IF EXISTS partners CASCADE;
+DROP TABLE IF EXISTS beyan_status CASCADE;
+DROP TABLE IF EXISTS clients CASCADE;
+DROP TABLE IF EXISTS profiles CASCADE;
+
+-- 4. FONKSIYONLARI SIL
+DROP FUNCTION IF EXISTS public.handle_new_user() CASCADE;
+DROP FUNCTION IF EXISTS update_updated_at() CASCADE;
+
+-- ============================================================
+-- TABLOLAR
+-- ============================================================
+
+CREATE TABLE profiles (
   id UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
   name TEXT NOT NULL DEFAULT '',
   email TEXT,
@@ -14,8 +46,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 2. CLIENTS (Musteriler)
-CREATE TABLE IF NOT EXISTS clients (
+CREATE TABLE clients (
   id BIGSERIAL PRIMARY KEY,
   owner_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
   type TEXT DEFAULT 'personal' CHECK (type IN ('personal', 'company')),
@@ -29,8 +60,6 @@ CREATE TABLE IF NOT EXISTS clients (
   tax_office TEXT DEFAULT '',
   address TEXT DEFAULT '',
   city TEXT DEFAULT '',
-  
-  -- Sirket bilgileri
   company_type TEXT DEFAULT 'ltd',
   tax_type TEXT DEFAULT 'Kurumlar Vergisi',
   capital TEXT DEFAULT '',
@@ -39,26 +68,18 @@ CREATE TABLE IF NOT EXISTS clients (
   musteri_sinifi TEXT DEFAULT '',
   nace_code TEXT DEFAULT '',
   nace_desc TEXT DEFAULT '',
-  
-  -- Elektronik hizmetler
   efatura BOOLEAN DEFAULT false,
   earsiv BOOLEAN DEFAULT false,
   esmm BOOLEAN DEFAULT false,
   edefter BOOLEAN DEFAULT false,
   edefter_period TEXT DEFAULT 'aylik',
   serbest_meslek BOOLEAN DEFAULT false,
-  
-  -- e-Imza / Mali Muhur
   eimza_start TEXT DEFAULT '',
   eimza_end TEXT DEFAULT '',
   kart_tipi TEXT DEFAULT '',
   kart_sifre TEXT DEFAULT '',
-  
-  -- Kira bilgileri
   kira_bilgisi TEXT DEFAULT '',
   kira_kontrat_bitis TEXT DEFAULT '',
-  
-  -- Portal sifreleri (sifrelenmis JSON)
   dvs_username TEXT DEFAULT '',
   dvs_password TEXT DEFAULT '',
   sgk_user TEXT DEFAULT '',
@@ -70,22 +91,16 @@ CREATE TABLE IF NOT EXISTS clients (
   edevlet_user TEXT DEFAULT '',
   edevlet_pass TEXT DEFAULT '',
   ticaret_sicil_no TEXT DEFAULT '',
-  
-  -- Beyan profili (JSON - hangi beyanlar hangi periyotta)
   beyan_profile JSONB DEFAULT '{}',
-  
-  -- Durum
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'passive', 'closed')),
   username TEXT DEFAULT '',
   password TEXT DEFAULT '123456',
   temp_password BOOLEAN DEFAULT true,
-  
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 3. BEYAN_STATUS (Beyanname durumlari - ay bazinda)
-CREATE TABLE IF NOT EXISTS beyan_status (
+CREATE TABLE beyan_status (
   id BIGSERIAL PRIMARY KEY,
   client_id BIGINT REFERENCES clients(id) ON DELETE CASCADE,
   year INT NOT NULL,
@@ -99,8 +114,7 @@ CREATE TABLE IF NOT EXISTS beyan_status (
   UNIQUE(client_id, year, month, beyan_type)
 );
 
--- 4. PARTNERS (Sirket ortaklari)
-CREATE TABLE IF NOT EXISTS partners (
+CREATE TABLE partners (
   id BIGSERIAL PRIMARY KEY,
   client_id BIGINT REFERENCES clients(id) ON DELETE CASCADE,
   name TEXT NOT NULL DEFAULT '',
@@ -113,8 +127,7 @@ CREATE TABLE IF NOT EXISTS partners (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 5. BANKS (Banka hesaplari)
-CREATE TABLE IF NOT EXISTS banks (
+CREATE TABLE banks (
   id BIGSERIAL PRIMARY KEY,
   client_id BIGINT REFERENCES clients(id) ON DELETE CASCADE,
   bank_name TEXT NOT NULL DEFAULT '',
@@ -124,8 +137,7 @@ CREATE TABLE IF NOT EXISTS banks (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 6. DOCUMENTS (Evraklar)
-CREATE TABLE IF NOT EXISTS documents (
+CREATE TABLE documents (
   id BIGSERIAL PRIMARY KEY,
   client_id BIGINT REFERENCES clients(id) ON DELETE CASCADE,
   doc_type TEXT DEFAULT '',
@@ -137,8 +149,7 @@ CREATE TABLE IF NOT EXISTS documents (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 7. CLIENT_NOTES (Musteri notlari)
-CREATE TABLE IF NOT EXISTS client_notes (
+CREATE TABLE client_notes (
   id BIGSERIAL PRIMARY KEY,
   client_id BIGINT REFERENCES clients(id) ON DELETE CASCADE,
   note TEXT NOT NULL DEFAULT '',
@@ -146,11 +157,10 @@ CREATE TABLE IF NOT EXISTS client_notes (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 8. AI_DATA (Yapay zeka verileri - ogrenilmis eslesmeler, hesap planlari)
-CREATE TABLE IF NOT EXISTS ai_data (
+CREATE TABLE ai_data (
   id BIGSERIAL PRIMARY KEY,
   client_id BIGINT REFERENCES clients(id) ON DELETE CASCADE,
-  data_type TEXT NOT NULL, -- 'learned_matches', 'account_plan', 'vendor_list'
+  data_type TEXT NOT NULL,
   data JSONB DEFAULT '{}',
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -158,17 +168,17 @@ CREATE TABLE IF NOT EXISTS ai_data (
 -- ============================================================
 -- INDEXLER
 -- ============================================================
-CREATE INDEX IF NOT EXISTS idx_clients_owner ON clients(owner_id);
-CREATE INDEX IF NOT EXISTS idx_clients_status ON clients(status);
-CREATE INDEX IF NOT EXISTS idx_clients_vkn ON clients(vkn);
-CREATE INDEX IF NOT EXISTS idx_clients_tc ON clients(tc);
-CREATE INDEX IF NOT EXISTS idx_beyan_status_client ON beyan_status(client_id, year, month);
-CREATE INDEX IF NOT EXISTS idx_partners_client ON partners(client_id);
-CREATE INDEX IF NOT EXISTS idx_banks_client ON banks(client_id);
-CREATE INDEX IF NOT EXISTS idx_documents_client ON documents(client_id);
+CREATE INDEX idx_clients_owner ON clients(owner_id);
+CREATE INDEX idx_clients_status ON clients(status);
+CREATE INDEX idx_clients_vkn ON clients(vkn);
+CREATE INDEX idx_clients_tc ON clients(tc);
+CREATE INDEX idx_beyan_status_client ON beyan_status(client_id, year, month);
+CREATE INDEX idx_partners_client ON partners(client_id);
+CREATE INDEX idx_banks_client ON banks(client_id);
+CREATE INDEX idx_documents_client ON documents(client_id);
 
 -- ============================================================
--- ROW LEVEL SECURITY (RLS)
+-- RLS
 -- ============================================================
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE clients ENABLE ROW LEVEL SECURITY;
@@ -179,86 +189,83 @@ ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE client_notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_data ENABLE ROW LEVEL SECURITY;
 
--- Profiles: Herkes kendi profilini gorebilir, admin hepsini gorebilir
 CREATE POLICY "profiles_select" ON profiles FOR SELECT USING (
   auth.uid() = id OR 
-  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+  EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role = 'admin')
 );
 CREATE POLICY "profiles_update" ON profiles FOR UPDATE USING (
   auth.uid() = id OR 
-  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+  EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role = 'admin')
 );
 CREATE POLICY "profiles_insert" ON profiles FOR INSERT WITH CHECK (true);
 
--- Clients: Admin herseyi gorebilir, personel sadece atanmis musterileri
 CREATE POLICY "clients_select" ON clients FOR SELECT USING (
-  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') OR
-  owner_id = auth.uid() OR
-  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'personel' AND permissions->'assigned_clients' ? clients.id::text)
+  EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role = 'admin') OR
+  owner_id = auth.uid()
 );
 CREATE POLICY "clients_insert" ON clients FOR INSERT WITH CHECK (
-  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'personel'))
+  EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role IN ('admin', 'personel'))
 );
 CREATE POLICY "clients_update" ON clients FOR UPDATE USING (
-  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') OR
+  EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role = 'admin') OR
   owner_id = auth.uid()
 );
 CREATE POLICY "clients_delete" ON clients FOR DELETE USING (
-  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+  EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role = 'admin')
 );
 
--- Beyan Status: Clients tablosuyla ayni yetki
 CREATE POLICY "beyan_status_all" ON beyan_status FOR ALL USING (
-  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') OR
-  EXISTS (SELECT 1 FROM clients WHERE clients.id = beyan_status.client_id AND clients.owner_id = auth.uid())
+  EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role = 'admin') OR
+  EXISTS (SELECT 1 FROM clients c WHERE c.id = beyan_status.client_id AND c.owner_id = auth.uid())
 );
 
--- Partners, Banks, Documents, Notes, AI Data: Clients tablosuyla ayni yetki
 CREATE POLICY "partners_all" ON partners FOR ALL USING (
-  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') OR
-  EXISTS (SELECT 1 FROM clients WHERE clients.id = partners.client_id AND clients.owner_id = auth.uid())
+  EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role = 'admin') OR
+  EXISTS (SELECT 1 FROM clients c WHERE c.id = partners.client_id AND c.owner_id = auth.uid())
 );
 
 CREATE POLICY "banks_all" ON banks FOR ALL USING (
-  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') OR
-  EXISTS (SELECT 1 FROM clients WHERE clients.id = banks.client_id AND clients.owner_id = auth.uid())
+  EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role = 'admin') OR
+  EXISTS (SELECT 1 FROM clients c WHERE c.id = banks.client_id AND c.owner_id = auth.uid())
 );
 
 CREATE POLICY "documents_all" ON documents FOR ALL USING (
-  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') OR
-  EXISTS (SELECT 1 FROM clients WHERE clients.id = documents.client_id AND clients.owner_id = auth.uid())
+  EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role = 'admin') OR
+  EXISTS (SELECT 1 FROM clients c WHERE c.id = documents.client_id AND c.owner_id = auth.uid())
 );
 
 CREATE POLICY "notes_all" ON client_notes FOR ALL USING (
-  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') OR
-  EXISTS (SELECT 1 FROM clients WHERE clients.id = client_notes.client_id AND clients.owner_id = auth.uid())
+  EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role = 'admin') OR
+  EXISTS (SELECT 1 FROM clients c WHERE c.id = client_notes.client_id AND c.owner_id = auth.uid())
 );
 
 CREATE POLICY "ai_data_all" ON ai_data FOR ALL USING (
-  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') OR
-  EXISTS (SELECT 1 FROM clients WHERE clients.id = ai_data.client_id AND clients.owner_id = auth.uid())
+  EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role = 'admin') OR
+  EXISTS (SELECT 1 FROM clients c WHERE c.id = ai_data.client_id AND c.owner_id = auth.uid())
 );
 
 -- ============================================================
--- TRIGGER: Profil otomatik olustur (auth.users insert)
+-- TRIGGERS
 -- ============================================================
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger AS $$
 BEGIN
-  INSERT INTO public.profiles (id, email, name, role)
-  VALUES (new.id, new.email, COALESCE(new.raw_user_meta_data->>'name', ''), COALESCE(new.raw_user_meta_data->>'role', 'personel'));
+  INSERT INTO public.profiles (id, email, name, role, temp_password)
+  VALUES (
+    new.id, 
+    new.email, 
+    COALESCE(new.raw_user_meta_data->>'name', ''), 
+    COALESCE(new.raw_user_meta_data->>'role', 'personel'),
+    CASE WHEN new.raw_user_meta_data->>'role' = 'client' THEN true ELSE false END
+  );
   RETURN new;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- ============================================================
--- TRIGGER: updated_at otomatik guncelle
--- ============================================================
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS trigger AS $$
 BEGIN

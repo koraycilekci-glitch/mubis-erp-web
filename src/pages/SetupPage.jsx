@@ -3,7 +3,8 @@ import { supabase } from '../lib/supabase'
 import { Upload, CheckCircle, AlertCircle, UserPlus, Database, Loader2 } from 'lucide-react'
 
 export default function SetupPage() {
-  const [step, setStep] = useState(1)
+  const params = new URLSearchParams(window.location.search)
+  const [step, setStep] = useState(Number(params.get('step')) || 1)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')

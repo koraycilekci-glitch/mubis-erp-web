@@ -622,7 +622,7 @@ export default function ClientDetail() {
                 )}
               </div>
 
-              {/* SGK - Kullanici + Sifre */}
+              {/* SGK - Kullanici Adi, Isyeri Kodu, Sistem Sifresi, Isyeri Sifresi */}
               <div className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/20">
                 <div className="flex items-center gap-2 mb-3">
                   <span className="text-lg">🏥</span>
@@ -630,21 +630,35 @@ export default function ClientDetail() {
                 </div>
                 {isEditing ? (
                   <div className="space-y-2">
-                    <input type="text" value={editData.sgkUser || ''} onChange={(e) => setEditData({...editData, sgkUser: e.target.value})} placeholder="Kullanici Adi / Isyeri Sicil No" className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                    <input type="text" value={editData.sgkUser || ''} onChange={(e) => setEditData({...editData, sgkUser: e.target.value})} placeholder="Kullanici Adi" className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                    <input type="text" value={editData.sgkIsyeriKodu || ''} onChange={(e) => setEditData({...editData, sgkIsyeriKodu: e.target.value})} placeholder="Isyeri Kodu" className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
                     <div className="relative">
-                      <input type={showPasswords.sgkPass ? 'text' : 'password'} value={editData.sgkPass || ''} onChange={(e) => setEditData({...editData, sgkPass: e.target.value})} placeholder="Sifre" className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 pr-10 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                      <button type="button" onClick={() => setShowPasswords({...showPasswords, sgkPass: !showPasswords.sgkPass})} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
-                        {showPasswords.sgkPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      <input type={showPasswords.sgkSistemSifre ? 'text' : 'password'} value={editData.sgkSistemSifre || ''} onChange={(e) => setEditData({...editData, sgkSistemSifre: e.target.value})} placeholder="Sistem Sifresi" className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 pr-10 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                      <button type="button" onClick={() => setShowPasswords({...showPasswords, sgkSistemSifre: !showPasswords.sgkSistemSifre})} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                        {showPasswords.sgkSistemSifre ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <input type={showPasswords.sgkIsyeriSifre ? 'text' : 'password'} value={editData.sgkIsyeriSifre || ''} onChange={(e) => setEditData({...editData, sgkIsyeriSifre: e.target.value})} placeholder="Isyeri Sifresi" className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 pr-10 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                      <button type="button" onClick={() => setShowPasswords({...showPasswords, sgkIsyeriSifre: !showPasswords.sgkIsyeriSifre})} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                        {showPasswords.sgkIsyeriSifre ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
                     </div>
                   </div>
                 ) : (
                   <div className="space-y-1">
                     <div className="flex items-center justify-between"><span className="text-gray-400 text-xs">Kullanici:</span><span className="text-gray-200 text-sm font-mono">{client.sgkUser || '-'}</span></div>
-                    <div className="flex items-center justify-between"><span className="text-gray-400 text-xs">Sifre:</span>
+                    <div className="flex items-center justify-between"><span className="text-gray-400 text-xs">Isyeri Kodu:</span><span className="text-gray-200 text-sm font-mono">{client.sgkIsyeriKodu || '-'}</span></div>
+                    <div className="flex items-center justify-between"><span className="text-gray-400 text-xs">Sistem Sifresi:</span>
                       <div className="flex items-center gap-1">
-                        <span className="text-gray-200 text-sm font-mono">{client.sgkPass ? (showPasswords.sgkPass ? client.sgkPass : '••••••••') : '-'}</span>
-                        {client.sgkPass && <button onClick={() => setShowPasswords({...showPasswords, sgkPass: !showPasswords.sgkPass})} className="text-gray-500 hover:text-yellow-400 transition-colors">{showPasswords.sgkPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}</button>}
+                        <span className="text-gray-200 text-sm font-mono">{client.sgkSistemSifre ? (showPasswords.sgkSistemSifre ? client.sgkSistemSifre : '••••••') : '-'}</span>
+                        {client.sgkSistemSifre && <button onClick={() => setShowPasswords({...showPasswords, sgkSistemSifre: !showPasswords.sgkSistemSifre})} className="text-gray-500 hover:text-yellow-400 transition-colors">{showPasswords.sgkSistemSifre ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}</button>}
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between"><span className="text-gray-400 text-xs">Isyeri Sifresi:</span>
+                      <div className="flex items-center gap-1">
+                        <span className="text-gray-200 text-sm font-mono">{client.sgkIsyeriSifre ? (showPasswords.sgkIsyeriSifre ? client.sgkIsyeriSifre : '••••••') : '-'}</span>
+                        {client.sgkIsyeriSifre && <button onClick={() => setShowPasswords({...showPasswords, sgkIsyeriSifre: !showPasswords.sgkIsyeriSifre})} className="text-gray-500 hover:text-yellow-400 transition-colors">{showPasswords.sgkIsyeriSifre ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}</button>}
                       </div>
                     </div>
                   </div>
@@ -691,16 +705,32 @@ export default function ClientDetail() {
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
               <span className="text-lg">🏛️</span> Dijital Vergi Dairesi
             </h3>
+            {/* Otomatik giris butonu */}
+            {client.vergiUser && client.vergiPass && (
+              <button
+                onClick={() => {
+                  const w = window.open('https://dijital.gib.gov.tr/portal/login', '_blank')
+                  if (w) {
+                    const script = `javascript:void(setTimeout(function(){try{var i=document.querySelectorAll('input');if(i.length>=2){i[0].value='${client.vergiUser}';i[0].dispatchEvent(new Event('input',{bubbles:true}));i[1].value='${client.vergiPass}';i[1].dispatchEvent(new Event('input',{bubbles:true}))}}catch(e){}},2000))`
+                    navigator.clipboard.writeText(client.vergiPass).catch(() => {})
+                    alert('DVS portal aciliyor.\\nSifre panoya kopyalandi.\\nKullanici: ' + client.vergiUser)
+                  }
+                }}
+                className="w-full mb-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-xl font-medium hover:from-blue-500 hover:to-blue-600 transition-all flex items-center justify-center gap-2"
+              >
+                <ExternalLink className="w-4 h-4" /> DVS Otomatik Giris (Sifre Kopyala + Ac)
+              </button>
+            )}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {[
-                { label: 'DVS Giris', url: 'https://dijital.gib.gov.tr/', icon: '🔑', color: 'from-blue-500/20 to-blue-600/20 border-blue-500/30' },
+                { label: 'DVS Giris', url: 'https://dijital.gib.gov.tr/portal/login', icon: '🔑', color: 'from-blue-500/20 to-blue-600/20 border-blue-500/30' },
                 { label: 'Vergi Borcu Sorgula', url: 'https://dijital.gib.gov.tr/sayfalar/GenelBorcSorgulama', icon: '💰', color: 'from-red-500/20 to-red-600/20 border-red-500/30' },
-                { label: 'Borcu Yok Kagidi', url: 'https://dijital.gib.gov.tr/', icon: '📋', color: 'from-green-500/20 to-green-600/20 border-green-500/30' },
-                { label: 'Vergi Odeme', url: 'https://dijital.gib.gov.tr/', icon: '💳', color: 'from-purple-500/20 to-purple-600/20 border-purple-500/30' },
-                { label: 'Mukellefiyet Belgesi', url: 'https://dijital.gib.gov.tr/', icon: '📑', color: 'from-teal-500/20 to-teal-600/20 border-teal-500/30' },
-                { label: 'Beyanname Sorgula', url: 'https://dijital.gib.gov.tr/', icon: '🔍', color: 'from-indigo-500/20 to-indigo-600/20 border-indigo-500/30' },
-                { label: 'Tahakkuk Fisi', url: 'https://dijital.gib.gov.tr/', icon: '🧾', color: 'from-orange-500/20 to-orange-600/20 border-orange-500/30' },
-                { label: 'e-Tebligat', url: 'https://dijital.gib.gov.tr/', icon: '📨', color: 'from-cyan-500/20 to-cyan-600/20 border-cyan-500/30' },
+                { label: 'Borcu Yok Kagidi', url: 'https://dijital.gib.gov.tr/portal/login', icon: '📋', color: 'from-green-500/20 to-green-600/20 border-green-500/30' },
+                { label: 'Vergi Odeme', url: 'https://dijital.gib.gov.tr/portal/login', icon: '💳', color: 'from-purple-500/20 to-purple-600/20 border-purple-500/30' },
+                { label: 'Mukellefiyet Belgesi', url: 'https://dijital.gib.gov.tr/portal/login', icon: '📑', color: 'from-teal-500/20 to-teal-600/20 border-teal-500/30' },
+                { label: 'Beyanname Sorgula', url: 'https://dijital.gib.gov.tr/portal/login', icon: '🔍', color: 'from-indigo-500/20 to-indigo-600/20 border-indigo-500/30' },
+                { label: 'Tahakkuk Fisi', url: 'https://dijital.gib.gov.tr/portal/login', icon: '🧾', color: 'from-orange-500/20 to-orange-600/20 border-orange-500/30' },
+                { label: 'e-Tebligat', url: 'https://dijital.gib.gov.tr/portal/login', icon: '📨', color: 'from-cyan-500/20 to-cyan-600/20 border-cyan-500/30' },
               ].map((item, i) => (
                 <a key={i} href={item.url} target="_blank" rel="noopener noreferrer" className={`flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br ${item.color} hover:scale-105 transition-all cursor-pointer text-center group`}>
                   <span className="text-2xl">{item.icon}</span>
@@ -795,7 +825,7 @@ export default function ClientDetail() {
                     { label: 'e-Fatura Portal Giris', url: 'https://ebelge.gib.gov.tr/efabortalgiris.html', icon: '📄', color: 'from-blue-500/20 to-blue-600/20 border-blue-500/30' },
                     { label: 'Gelen Faturalar', url: 'https://ebelge.gib.gov.tr/efabortalgiris.html', icon: '📥', color: 'from-green-500/20 to-green-600/20 border-green-500/30' },
                     { label: 'Giden Faturalar', url: 'https://ebelge.gib.gov.tr/efabortalgiris.html', icon: '📤', color: 'from-orange-500/20 to-orange-600/20 border-orange-500/30' },
-                    { label: 'e-Arsiv Portal', url: 'https://earsivportal.efatura.gov.tr/', icon: '📂', color: 'from-purple-500/20 to-purple-600/20 border-purple-500/30' },
+                    { label: 'e-Arsiv Portal', url: 'https://earsivportal.efatura.gov.tr/intragiris.html', icon: '📂', color: 'from-purple-500/20 to-purple-600/20 border-purple-500/30' },
                   ].map((item, i) => (
                     <a key={i} href={item.url} target="_blank" rel="noopener noreferrer" className={`flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br ${item.color} hover:scale-105 transition-all cursor-pointer text-center group`}>
                       <span className="text-2xl">{item.icon}</span>
@@ -813,13 +843,26 @@ export default function ClientDetail() {
                 <div className="flex items-center gap-2 mb-3">
                   <span className="w-2 h-2 bg-emerald-400 rounded-full"></span>
                   <span className="text-emerald-400 text-sm font-medium">e-Arsiv Mukellef</span>
-                  <span className="text-gray-500 text-[10px]">GIB portal uzerinden giris</span>
+                  <span className="text-gray-500 text-[10px]">Internet Vergi Dairesi sifresiyle giris</span>
                 </div>
+                {/* Otomatik e-Arsiv giris */}
+                {client.vergiUser && client.vergiPass && (
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(client.vergiPass).catch(() => {})
+                      window.open('https://earsivportal.efatura.gov.tr/intragiris.html', '_blank')
+                      alert('e-Arsiv Portal aciliyor.\\nSifre panoya kopyalandi.\\nKullanici: ' + client.vergiUser)
+                    }}
+                    className="w-full mb-3 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white py-2.5 rounded-xl text-sm font-medium hover:from-emerald-500 hover:to-emerald-600 transition-all flex items-center justify-center gap-2"
+                  >
+                    <ExternalLink className="w-4 h-4" /> e-Arsiv Otomatik Giris (Sifre Kopyala + Ac)
+                  </button>
+                )}
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                   {[
-                    { label: 'e-Arsiv Portal Giris', url: 'https://earsivportal.efatura.gov.tr/', icon: '📂', color: 'from-green-500/20 to-green-600/20 border-green-500/30' },
-                    { label: 'e-Arsiv Fatura Kes', url: 'https://earsivportal.efatura.gov.tr/', icon: '✂️', color: 'from-orange-500/20 to-orange-600/20 border-orange-500/30' },
-                    { label: 'Fatura Sorgula', url: 'https://earsivportal.efatura.gov.tr/', icon: '🔍', color: 'from-purple-500/20 to-purple-600/20 border-purple-500/30' },
+                    { label: 'e-Arsiv Portal Giris', url: 'https://earsivportal.efatura.gov.tr/intragiris.html', icon: '📂', color: 'from-green-500/20 to-green-600/20 border-green-500/30' },
+                    { label: 'e-Arsiv Fatura Kes', url: 'https://earsivportal.efatura.gov.tr/intragiris.html', icon: '✂️', color: 'from-orange-500/20 to-orange-600/20 border-orange-500/30' },
+                    { label: 'Fatura Sorgula', url: 'https://earsivportal.efatura.gov.tr/intragiris.html', icon: '🔍', color: 'from-purple-500/20 to-purple-600/20 border-purple-500/30' },
                   ].map((item, i) => (
                     <a key={i} href={item.url} target="_blank" rel="noopener noreferrer" className={`flex flex-col items-center gap-2 p-4 rounded-xl border bg-gradient-to-br ${item.color} hover:scale-105 transition-all cursor-pointer text-center group`}>
                       <span className="text-2xl">{item.icon}</span>

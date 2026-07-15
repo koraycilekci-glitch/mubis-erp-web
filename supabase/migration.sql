@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   email TEXT,
   role TEXT NOT NULL DEFAULT 'personel' CHECK (role IN ('admin', 'personel', 'client')),
   permissions JSONB DEFAULT '{}',
+  temp_password BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );

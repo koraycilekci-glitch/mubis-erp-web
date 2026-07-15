@@ -24,6 +24,7 @@ import AylikBeyanTakip from './pages/AylikBeyanTakip'
 import ClientBeyanTakip from './pages/ClientBeyanTakip'
 import MusteriListesi from './pages/MusteriListesi'
 import SetupPage from './pages/SetupPage'
+import ChangePassword from './pages/ChangePassword'
 
 function App() {
   return (
@@ -37,6 +38,7 @@ function App() {
             <Route path="/iletisim" element={<Contact />} />
             <Route path="/giris" element={<Login />} />
             <Route path="/setup" element={<SetupPage />} />
+            <Route path="/sifre-degistir" element={<ChangePassword />} />
             
             {/* Admin Routes */}
             <Route path="/admin" element={<AdminDashboard />} />

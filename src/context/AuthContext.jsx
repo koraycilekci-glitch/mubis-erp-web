@@ -8,6 +8,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [needsPasswordChange, setNeedsPasswordChange] = useState(false)
 
   // Profil bilgisini cek
   const fetchProfile = async (authUser) => {
@@ -27,25 +28,28 @@ export function AuthProvider({ children }) {
 
   // Oturum takibi
   useEffect(() => {
-    // Mevcut oturumu kontrol et
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         setUser(session.user)
-        fetchProfile(session.user).then(() => setLoading(false))
+        fetchProfile(session.user).then((prof) => {
+          if (prof?.temp_password) setNeedsPasswordChange(true)
+          setLoading(false)
+        })
       } else {
         setLoading(false)
       }
     })
 
-    // Oturum degisikliklerini dinle
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (session?.user) {
           setUser(session.user)
-          await fetchProfile(session.user)
+          const prof = await fetchProfile(session.user)
+          if (prof?.temp_password) setNeedsPasswordChange(true)
         } else {
           setUser(null)
           setProfile(null)
+          setNeedsPasswordChange(false)
         }
         setLoading(false)
       }
@@ -54,15 +58,28 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe()
   }, [])
 
-  // Giris yap
-  const login = async (email, password) => {
+  // Giris yap (email veya TC/VKN destekli)
+  const login = async (identifier, password) => {
     try {
+      // TC/VKN ise @mubis.app ekle, email ise direkt kullan
+      let email = identifier
+      if (!identifier.includes('@')) {
+        email = `${identifier}@mubis.app`
+      }
+
       const { data, error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) return { success: false, error: error.message }
       
       const prof = await fetchProfile(data.user)
+      
+      // Gecici sifre kontrolu
+      if (prof?.temp_password) {
+        setNeedsPasswordChange(true)
+      }
+
       return { 
         success: true, 
+        tempPassword: prof?.temp_password || false,
         user: { 
           ...data.user, 
           name: prof?.name || email,
@@ -80,9 +97,61 @@ export function AuthProvider({ children }) {
     await supabase.auth.signOut()
     setUser(null)
     setProfile(null)
+    setNeedsPasswordChange(false)
   }
 
-  // Musteri islemleri (Supabase uzerinden)
+  // Sifre sifirlama emaili gonder
+  const resetPassword = async (identifier) => {
+    try {
+      let email = identifier
+      if (!identifier.includes('@')) {
+        // TC/VKN ile giris yapan musteri - onun gercek emailini bul
+        const { data: clients } = await supabase
+          .from('clients')
+          .select('email')
+          .or(`tc.eq.${identifier},vkn.eq.${identifier}`)
+          .limit(1)
+        
+        if (clients && clients.length > 0 && clients[0].email) {
+          email = clients[0].email
+        } else {
+          return { success: false, error: 'Bu TC/VKN ile kayitli musteri bulunamadi veya email adresi yok' }
+        }
+      }
+
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/sifre-degistir`
+      })
+      if (error) return { success: false, error: error.message }
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  }
+
+  // Sifre guncelle (gecici sifre degistirme veya normal degistirme)
+  const updatePassword = async (newPassword) => {
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword })
+      if (error) return { success: false, error: error.message }
+      
+      // Gecici sifre flagini kaldir
+      if (profile?.id) {
+        await supabase
+          .from('profiles')
+          .update({ temp_password: false })
+          .eq('id', profile.id)
+      }
+
+      setNeedsPasswordChange(false)
+      setProfile(prev => prev ? { ...prev, temp_password: false } : null)
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  }
+
+  // Musteri islemleri
   const getClients = async () => {
     try {
       const data = await clientService.getClients()
@@ -119,22 +188,40 @@ export function AuthProvider({ children }) {
     }
   }
 
-  const changePassword = async (username, newPassword) => {
-    // Client password degistirme (clients tablosunda)
+  // Musteri icin Supabase Auth hesabi olustur (admin tarafindan)
+  const createClientAuth = async (identifier, tempPassword, name, clientEmail) => {
     try {
-      const clients = await clientService.getClients()
-      const client = clients.find(c => c.username === username)
-      if (client) {
-        await clientService.updateClient(client.id, { password: newPassword, temp_password: false })
-        return { success: true }
+      const authEmail = `${identifier}@mubis.app`
+      
+      const { data, error } = await supabase.auth.signUp({
+        email: authEmail,
+        password: tempPassword || '123456',
+        options: {
+          data: { name: name, role: 'client' }
+        }
+      })
+      
+      if (error) return { success: false, error: error.message }
+      
+      // Profili guncelle - temp_password ve gercek email
+      if (data.user) {
+        await supabase
+          .from('profiles')
+          .update({ 
+            role: 'client', 
+            name: name,
+            temp_password: true,
+            email: clientEmail || authEmail
+          })
+          .eq('id', data.user.id)
       }
-      return { success: false, error: 'Kullanici bulunamadi' }
+
+      return { success: true, authUser: data.user }
     } catch (err) {
       return { success: false, error: err.message }
     }
   }
 
-  // Kullanici bilgileri (profil + auth)
   const currentUser = user ? {
     id: user.id,
     email: user.email,
@@ -142,19 +229,23 @@ export function AuthProvider({ children }) {
     role: profile?.role || 'personel',
     permissions: profile?.permissions || {},
     username: user.email,
+    tempPassword: profile?.temp_password || false,
   } : null
 
   return (
     <AuthContext.Provider value={{ 
       user: currentUser, 
       loading, 
+      needsPasswordChange,
       login, 
       logout, 
+      resetPassword,
+      updatePassword,
       getClients, 
       addClient, 
       deleteClient, 
-      updateClient, 
-      changePassword,
+      updateClient,
+      createClientAuth,
       profile
     }}>
       {children}

@@ -151,6 +151,99 @@ export const IZIN_GUNLERI = [
 ]
 // 18 yas alti ve 50 yas ustu: en az 20 gun
 
+// Resmi Tatiller (Turkiye)
+export const RESMI_TATILLER = {
+  2024: [
+    '2024-01-01', // Yilbasi
+    '2024-04-10', '2024-04-11', '2024-04-12', // Ramazan Bayrami
+    '2024-04-23', // 23 Nisan
+    '2024-05-01', // 1 Mayis
+    '2024-05-19', // 19 Mayis
+    '2024-06-16', '2024-06-17', '2024-06-18', '2024-06-19', // Kurban Bayrami
+    '2024-07-15', // 15 Temmuz
+    '2024-08-30', // 30 Agustos
+    '2024-10-29', // 29 Ekim
+  ],
+  2025: [
+    '2025-01-01', // Yilbasi
+    '2025-03-30', '2025-03-31', '2025-04-01', // Ramazan Bayrami
+    '2025-04-23', // 23 Nisan
+    '2025-05-01', // 1 Mayis
+    '2025-05-19', // 19 Mayis
+    '2025-06-06', '2025-06-07', '2025-06-08', '2025-06-09', // Kurban Bayrami
+    '2025-07-15', // 15 Temmuz
+    '2025-08-30', // 30 Agustos
+    '2025-10-29', // 29 Ekim
+  ],
+  2026: [
+    '2026-01-01', // Yilbasi
+    '2026-03-20', '2026-03-21', '2026-03-22', // Ramazan Bayrami
+    '2026-04-23', // 23 Nisan
+    '2026-05-01', // 1 Mayis
+    '2026-05-19', // 19 Mayis
+    '2026-05-27', '2026-05-28', '2026-05-29', '2026-05-30', // Kurban Bayrami
+    '2026-07-15', // 15 Temmuz
+    '2026-08-30', // 30 Agustos
+    '2026-10-29', // 29 Ekim
+  ]
+}
+
+// Bir tarihin resmi tatil olup olmadigini kontrol et
+export function isResmiTatil(tarih) {
+  const d = new Date(tarih)
+  const yil = d.getFullYear()
+  const key = d.toISOString().split('T')[0]
+  return (RESMI_TATILLER[yil] || []).includes(key)
+}
+
+// Bir tarihin pazar olup olmadigini kontrol et
+export function isPazar(tarih) {
+  return new Date(tarih).getDay() === 0
+}
+
+// Iki tarih arasindaki is gunlerini hesapla (pazar + resmi tatil haric)
+export function hesaplaIsGunu(baslangic, bitis) {
+  const start = new Date(baslangic)
+  const end = new Date(bitis)
+  let gun = 0
+  const current = new Date(start)
+  while (current <= end) {
+    if (!isPazar(current) && !isResmiTatil(current)) {
+      gun++
+    }
+    current.setDate(current.getDate() + 1)
+  }
+  return gun
+}
+
+// Ise giris tarihine gore hak edilen yillik izin gunu hesapla
+export function hesaplaIzinHakki(iseGiris, referansTarih = new Date(), dogumTarihi = null) {
+  const giris = new Date(iseGiris)
+  const ref = new Date(referansTarih)
+  const yil = (ref - giris) / (365.25 * 24 * 60 * 60 * 1000)
+  
+  if (yil < 1) return 0 // 1 yildan az calisma - izin hakki yok
+  
+  let hakEdilenGun = 0
+  for (const dilim of IZIN_GUNLERI) {
+    if (yil >= dilim.minYil && yil < dilim.maxYil) {
+      hakEdilenGun = dilim.gun
+      break
+    }
+  }
+  
+  // 18 yas alti veya 50 yas ustu: en az 20 gun
+  if (dogumTarihi) {
+    const dogum = new Date(dogumTarihi)
+    const yas = (ref - dogum) / (365.25 * 24 * 60 * 60 * 1000)
+    if (yas < 18 || yas >= 50) {
+      hakEdilenGun = Math.max(hakEdilenGun, 20)
+    }
+  }
+  
+  return hakEdilenGun
+}
+
 // Yil listesi
 export const YILLAR = [2020, 2021, 2022, 2023, 2024, 2025, 2026]
 

@@ -9,8 +9,9 @@ import {
   FileText, Calendar, Edit3, Plus, Trash2, Save, X,
   Globe, CreditCard, Hash, ListChecks, Shield,
   Briefcase, Tag, Upload, Search, Home, ExternalLink,
-  Eye, EyeOff, Lock, Landmark, KeyRound, Receipt
+  Eye, EyeOff, Lock, Landmark, KeyRound, Receipt, Users, AlertTriangle
 } from 'lucide-react'
+import { getAccountPlans, saveAccountPlans, getEmployees, addEmployee, updateEmployee, deleteEmployee, saveEmployeesFromExcel } from '../services/clientService'
 
 export default function ClientDetail() {
   const { id } = useParams()
@@ -27,6 +28,12 @@ export default function ClientDetail() {
   const [naceResults, setNaceResults] = useState([])
   const [showNaceDropdown, setShowNaceDropdown] = useState(false)
   const hesapFileRef = useRef(null)
+  const bordroFileRef = useRef(null)
+  // Personel
+  const [personelList, setPersonelList] = useState([])
+  const [showPersonelForm, setShowPersonelForm] = useState(false)
+  const [editPersonelId, setEditPersonelId] = useState(null)
+  const [personelForm, setPersonelForm] = useState({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '' })
 
   // Yeni yetkili/ortak formu
   const [newOfficial, setNewOfficial] = useState({ name: '', title: '', phone: '', email: '', tc: '', address: '', hisse: '', sermaye: '' })
@@ -145,12 +152,30 @@ export default function ClientDetail() {
       setClient(found)
       setEditData(found)
     }
-    const stored = localStorage.getItem(`mubis_hesap_kodlari_${id}`)
-    if (stored) {
-      try { setHesapKodlari(JSON.parse(stored)) } catch(e) { /* ignore */ }
-    }
+    // Hesap kodlarini Supabase'den yukle
+    loadHesapKodlari()
+    // Personelleri yukle
+    loadPersonel()
     setLoading(false)
   }, [id, clients])
+
+  const loadHesapKodlari = async () => {
+    try {
+      const plans = await getAccountPlans(parseInt(id))
+      setHesapKodlari(plans.map(p => ({ kod: p.code, ad: p.name, id: p.id, is_auto_added: p.is_auto_added })))
+    } catch (e) {
+      // Fallback: localStorage
+      const stored = localStorage.getItem(`mubis_hesap_kodlari_${id}`)
+      if (stored) try { setHesapKodlari(JSON.parse(stored)) } catch(e) {}
+    }
+  }
+
+  const loadPersonel = async () => {
+    try {
+      const data = await getEmployees(parseInt(id))
+      setPersonelList(data)
+    } catch (e) { console.error('Personel yukleme hatasi:', e) }
+  }
 
   const saveClient = async (data) => {
     const result = await updateClient(parseInt(id), data)
@@ -256,11 +281,11 @@ export default function ClientDetail() {
   }
 
   // Hesap kodu upload
-  const handleHesapKoduUpload = (e) => {
+  const handleHesapKoduUpload = async (e) => {
     const file = e.target.files[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
         const data = new Uint8Array(ev.target.result)
         const workbook = XLSX.read(data, { type: 'array' })
@@ -269,15 +294,93 @@ export default function ClientDetail() {
         const codes = []
         jsonData.forEach((row, i) => {
           if (i === 0) return
-          if (row[0]) codes.push({ kod: String(row[0]).trim(), ad: String(row[1] || '').trim() })
+          if (row[0]) codes.push({ code: String(row[0]).trim(), name: String(row[1] || '').trim() })
         })
-        setHesapKodlari(codes)
-        localStorage.setItem(`mubis_hesap_kodlari_${id}`, JSON.stringify(codes))
+        // Supabase'e kaydet
+        try {
+          await saveAccountPlans(parseInt(id), codes)
+          await loadHesapKodlari()
+        } catch (err) {
+          // Fallback localStorage
+          const local = codes.map(c => ({ kod: c.code, ad: c.name }))
+          setHesapKodlari(local)
+          localStorage.setItem(`mubis_hesap_kodlari_${id}`, JSON.stringify(local))
+        }
         alert(`${codes.length} hesap kodu yuklendi!`)
       } catch (err) { alert('Excel okunamadi: ' + err.message) }
     }
     reader.readAsArrayBuffer(file)
     e.target.value = ''
+  }
+
+  // Bordro Excel yukleme
+  const handleBordroUpload = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    try {
+      const data = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = (ev) => {
+          try {
+            const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array' })
+            const sheet = wb.Sheets[wb.SheetNames[0]]
+            resolve(XLSX.utils.sheet_to_json(sheet))
+          } catch (err) { reject(err) }
+        }
+        reader.readAsArrayBuffer(file)
+      })
+      const parsed = data.map(row => {
+        const adSoyad = row['Ad Soyad'] || row['Ad'] || row['Personel'] || row['ADI SOYADI'] || row['AD SOYAD'] || ''
+        const tc = String(row['TC Kimlik'] || row['TC'] || row['TC No'] || row['TCKN'] || '').trim()
+        const iseGiris = parseExcelDate(row['Ise Giris'] || row['İşe Giriş'] || row['ISE GIRIS'] || row['İŞE GİRİŞ TARİHİ'] || '')
+        const brut = parseFloat(String(row['Brut Ucret'] || row['Brüt Ücret'] || row['BRÜT ÜCRET'] || row['Brüt'] || 0).replace(',', '.')) || 0
+        return { ad_soyad: String(adSoyad).trim(), tc_kimlik: tc, ise_giris: iseGiris, brut_ucret: brut }
+      }).filter(e => e.ad_soyad)
+      if (parsed.length === 0) return alert('Excel dosyasinda personel bilgisi bulunamadi!')
+      if (confirm(`${parsed.length} personel bulundu. Kaydetmek istiyor musunuz?`)) {
+        await saveEmployeesFromExcel(parseInt(id), parsed)
+        await loadPersonel()
+        alert(`${parsed.length} personel basariyla yuklendi!`)
+      }
+    } catch (err) { alert('Excel okuma hatasi: ' + err.message) }
+    e.target.value = ''
+  }
+
+  function parseExcelDate(val) {
+    if (!val) return null
+    if (typeof val === 'number') { const d = new Date((val - 25569) * 86400 * 1000); return d.toISOString().split('T')[0] }
+    const s = String(val).trim()
+    const m = s.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/)
+    if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`
+    const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (m2) return `${m2[1]}-${m2[2]}-${m2[3]}`
+    return null
+  }
+
+  // Personel CRUD
+  const handleSavePersonel = async () => {
+    if (!personelForm.ad_soyad.trim()) return alert('Ad Soyad zorunlu!')
+    try {
+      if (editPersonelId) {
+        await updateEmployee(editPersonelId, personelForm)
+      } else {
+        await addEmployee(parseInt(id), personelForm)
+      }
+      setPersonelForm({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '' })
+      setShowPersonelForm(false)
+      setEditPersonelId(null)
+      await loadPersonel()
+    } catch (err) { alert('Hata: ' + err.message) }
+  }
+
+  const handleDeletePersonel = async (empId) => {
+    if (!confirm('Bu personeli silmek istiyor musunuz?')) return
+    try { await deleteEmployee(empId); await loadPersonel() } catch (err) { alert('Hata: ' + err.message) }
+  }
+
+  const handleClearHesapKodlari = async () => {
+    if (!confirm('Tum hesap kodlarini silmek istiyor musunuz?')) return
+    try { await saveAccountPlans(parseInt(id), []); setHesapKodlari([]) } catch(e) { setHesapKodlari([]); localStorage.removeItem(`mubis_hesap_kodlari_${id}`) }
   }
 
   if (loading) {
@@ -303,7 +406,8 @@ export default function ClientDetail() {
     { id: 'kurumlar', label: 'Kurum Erisimi', icon: Landmark },
     { id: 'services', label: 'E-Hizmetler', icon: Shield },
     { id: 'documents', label: 'Evraklar', icon: FileText },
-    ...(client.musteriSinifi === '1. Sinif' ? [{ id: 'hesapkodlari', label: 'Hesap Kodlari', icon: Hash }] : []),
+    ...((client.musteriSinifi === '1. Sinif' || isCompany) ? [{ id: 'hesapkodlari', label: 'Hesap Kodlari', icon: Hash }] : []),
+    { id: 'personel', label: 'Personel', icon: Users },
   ]
 
   const filteredHesapKodlari = hesapKodlari.filter(hk => {
@@ -1069,7 +1173,7 @@ export default function ClientDetail() {
       )}
 
       {/* ==================== HESAP KODLARI TAB ==================== */}
-      {activeTab === 'hesapkodlari' && client.musteriSinifi === '1. Sinif' && (
+      {activeTab === 'hesapkodlari' && (client.musteriSinifi === '1. Sinif' || isCompany) && (
         <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
           <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
             <div>
@@ -1078,7 +1182,7 @@ export default function ClientDetail() {
             </div>
             <div className="flex gap-2">
               {hesapKodlari.length > 0 && (
-                <button onClick={() => { setHesapKodlari([]); localStorage.removeItem(`mubis_hesap_kodlari_${id}`) }} className="bg-red-500/20 text-red-400 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1"><Trash2 className="w-4 h-4" /><span>Temizle</span></button>
+                <button onClick={handleClearHesapKodlari} className="bg-red-500/20 text-red-400 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1"><Trash2 className="w-4 h-4" /><span>Temizle</span></button>
               )}
               <button onClick={() => hesapFileRef.current?.click()} className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1"><Upload className="w-4 h-4" /><span>Excel Yukle</span></button>
               <input ref={hesapFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleHesapKoduUpload} className="hidden" />
@@ -1095,14 +1199,115 @@ export default function ClientDetail() {
                   <thead className="bg-blue-900/30 sticky top-0"><tr className="text-left text-gray-400 text-sm"><th className="px-4 py-2">#</th><th className="px-4 py-2">Hesap Kodu</th><th className="px-4 py-2">Hesap Adi</th></tr></thead>
                   <tbody>
                     {filteredHesapKodlari.map((hk, i) => (
-                      <tr key={i} className="border-t border-blue-700/20 hover:bg-blue-800/20"><td className="px-4 py-2 text-gray-500 text-sm">{i+1}</td><td className="px-4 py-2 text-yellow-400 text-sm font-mono font-medium">{hk.kod}</td><td className="px-4 py-2 text-white text-sm">{hk.ad}</td></tr>
+                      <tr key={i} className={`border-t border-blue-700/20 hover:bg-blue-800/20 ${hk.is_auto_added ? 'bg-yellow-500/5' : ''}`}><td className="px-4 py-2 text-gray-500 text-sm">{i+1}</td><td className="px-4 py-2 text-yellow-400 text-sm font-mono font-medium">{hk.kod}{hk.is_auto_added && <span className="ml-2 text-[10px] bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded">AI</span>}</td><td className="px-4 py-2 text-white text-sm">{hk.ad}</td></tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              {hesapKodlari.some(h => h.is_auto_added) && (
+                <div className="mt-3 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-xl">
+                  <p className="text-yellow-400 text-xs font-semibold flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> AI tarafindan eklenen hesaplar</p>
+                  <p className="text-gray-400 text-xs mt-1">Bu hesaplari LUCA'ya manuel olarak eklemeniz gerekir.</p>
+                </div>
+              )}
             </>
           ) : (
             <div className="text-center py-12"><Hash className="w-12 h-12 text-gray-600 mx-auto mb-3" /><p className="text-gray-400 mb-2">Hesap kodu listesi yuklu degil</p><p className="text-gray-500 text-sm">LUCA Excel hesap kodu listesini yukleyebilirsiniz</p></div>
+          )}
+        </div>
+      )}
+
+      {/* ==================== PERSONEL TAB ==================== */}
+      {activeTab === 'personel' && (
+        <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+          <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+            <div>
+              <h3 className="text-lg font-semibold text-white">Personel Listesi</h3>
+              <p className="text-gray-500 text-xs mt-1">{personelList.length} personel kayitli</p>
+            </div>
+            <div className="flex gap-2">
+              <label className="cursor-pointer bg-green-600/20 text-green-400 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1 hover:bg-green-600/30 transition-colors">
+                <Upload className="w-4 h-4" /><span>Bordro Excel</span>
+                <input ref={bordroFileRef} type="file" accept=".xlsx,.xls" onChange={handleBordroUpload} className="hidden" />
+              </label>
+              <button onClick={() => { setShowPersonelForm(true); setEditPersonelId(null); setPersonelForm({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '' }) }}
+                className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1">
+                <Plus className="w-4 h-4" /><span>Ekle</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Personel Ekleme/Duzenleme Formu */}
+          {showPersonelForm && (
+            <div className="mb-6 p-4 bg-blue-900/20 rounded-xl border border-blue-700/40">
+              <h4 className="text-sm font-semibold text-yellow-400 mb-3">{editPersonelId ? 'Personel Duzenle' : 'Yeni Personel'}</h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <input type="text" placeholder="Ad Soyad *" value={personelForm.ad_soyad} onChange={(e) => setPersonelForm({...personelForm, ad_soyad: e.target.value})}
+                  className="bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" placeholder="TC Kimlik No" value={personelForm.tc_kimlik} onChange={(e) => setPersonelForm({...personelForm, tc_kimlik: e.target.value})}
+                  className="bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="number" placeholder="Brut Ucret" value={personelForm.brut_ucret} onChange={(e) => setPersonelForm({...personelForm, brut_ucret: e.target.value})}
+                  className="bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <div>
+                  <label className="text-xs text-gray-500">Ise Giris</label>
+                  <input type="date" value={personelForm.ise_giris} onChange={(e) => setPersonelForm({...personelForm, ise_giris: e.target.value})}
+                    className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">Isten Cikis</label>
+                  <input type="date" value={personelForm.isten_cikis} onChange={(e) => setPersonelForm({...personelForm, isten_cikis: e.target.value})}
+                    className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                </div>
+              </div>
+              <div className="flex gap-2 mt-3">
+                <button onClick={handleSavePersonel} className="bg-yellow-500 text-blue-950 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1"><Save className="w-4 h-4" />Kaydet</button>
+                <button onClick={() => { setShowPersonelForm(false); setEditPersonelId(null) }} className="bg-red-500/20 text-red-400 px-4 py-2 rounded-lg text-sm"><X className="w-4 h-4" /></button>
+              </div>
+            </div>
+          )}
+
+          {personelList.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-blue-900/30">
+                  <tr className="text-left text-gray-400 text-sm">
+                    <th className="px-4 py-2">#</th>
+                    <th className="px-4 py-2">Ad Soyad</th>
+                    <th className="px-4 py-2">TC Kimlik</th>
+                    <th className="px-4 py-2">Ise Giris</th>
+                    <th className="px-4 py-2">Isten Cikis</th>
+                    <th className="px-4 py-2 text-right">Brut Ucret</th>
+                    <th className="px-4 py-2 text-center">Islem</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {personelList.map((p, i) => (
+                    <tr key={p.id} className="border-t border-blue-700/20 hover:bg-blue-800/20">
+                      <td className="px-4 py-2 text-gray-500 text-sm">{i+1}</td>
+                      <td className="px-4 py-2 text-white text-sm font-medium">{p.ad_soyad}</td>
+                      <td className="px-4 py-2 text-gray-300 text-sm font-mono">{p.tc_kimlik || '-'}</td>
+                      <td className="px-4 py-2 text-gray-300 text-sm">{p.ise_giris ? new Date(p.ise_giris).toLocaleDateString('tr-TR') : '-'}</td>
+                      <td className="px-4 py-2 text-gray-300 text-sm">{p.isten_cikis ? new Date(p.isten_cikis).toLocaleDateString('tr-TR') : '-'}</td>
+                      <td className="px-4 py-2 text-yellow-400 text-sm text-right font-medium">{p.brut_ucret ? Number(p.brut_ucret).toLocaleString('tr-TR', {minimumFractionDigits: 2}) + ' TL' : '-'}</td>
+                      <td className="px-4 py-2 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button onClick={() => { setEditPersonelId(p.id); setShowPersonelForm(true); setPersonelForm({ ad_soyad: p.ad_soyad, tc_kimlik: p.tc_kimlik || '', ise_giris: p.ise_giris || '', isten_cikis: p.isten_cikis || '', brut_ucret: p.brut_ucret || '' }) }}
+                            className="text-blue-400 hover:text-blue-300 p-1"><Edit3 className="w-4 h-4" /></button>
+                          <button onClick={() => handleDeletePersonel(p.id)}
+                            className="text-red-400 hover:text-red-300 p-1"><Trash2 className="w-4 h-4" /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="text-center py-12">
+              <Users className="w-12 h-12 text-gray-600 mx-auto mb-3" />
+              <p className="text-gray-400 mb-2">Personel kaydi bulunamadi</p>
+              <p className="text-gray-500 text-sm">Bordro Excel yukleyerek veya elle personel ekleyebilirsiniz</p>
+            </div>
           )}
         </div>
       )}

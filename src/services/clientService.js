@@ -243,6 +243,186 @@ export async function upsertBeyanStatus(clientId, year, month, beyanType, status
   return data
 }
 
+// ============ ACCOUNT PLANS (Hesap Plani) ============
+
+export async function getAccountPlans(clientId) {
+  const { data, error } = await supabase
+    .from('account_plans')
+    .select('*')
+    .eq('client_id', clientId)
+    .order('code')
+  if (error) throw error
+  return data || []
+}
+
+export async function saveAccountPlans(clientId, plans) {
+  // Onceki kayitlari sil, yenilerini ekle
+  await supabase.from('account_plans').delete().eq('client_id', clientId)
+  if (plans.length === 0) return []
+  const rows = plans.map(p => ({
+    client_id: clientId,
+    code: p.code,
+    name: p.name,
+    is_auto_added: p.is_auto_added || false
+  }))
+  const { data, error } = await supabase
+    .from('account_plans')
+    .insert(rows)
+    .select()
+  if (error) throw error
+  return data || []
+}
+
+export async function addAccountPlan(clientId, code, name, isAutoAdded = false) {
+  const { data, error } = await supabase
+    .from('account_plans')
+    .upsert({ client_id: clientId, code, name, is_auto_added: isAutoAdded }, { onConflict: 'client_id,code' })
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function deleteAccountPlan(id) {
+  const { error } = await supabase.from('account_plans').delete().eq('id', id)
+  if (error) throw error
+}
+
+export async function getAutoAddedAccounts(clientId) {
+  const { data, error } = await supabase
+    .from('account_plans')
+    .select('*')
+    .eq('client_id', clientId)
+    .eq('is_auto_added', true)
+    .order('code')
+  if (error) throw error
+  return data || []
+}
+
+// ============ EMPLOYEES (Personel) ============
+
+export async function getEmployees(clientId) {
+  const { data, error } = await supabase
+    .from('employees')
+    .select('*')
+    .eq('client_id', clientId)
+    .order('ad_soyad')
+  if (error) throw error
+  return data || []
+}
+
+export async function addEmployee(clientId, employeeData) {
+  const { data, error } = await supabase
+    .from('employees')
+    .insert({
+      client_id: clientId,
+      ad_soyad: employeeData.ad_soyad || employeeData.adSoyad || '',
+      tc_kimlik: employeeData.tc_kimlik || employeeData.tcKimlik || '',
+      ise_giris: employeeData.ise_giris || employeeData.iseGiris || null,
+      isten_cikis: employeeData.isten_cikis || employeeData.istenCikis || null,
+      brut_ucret: employeeData.brut_ucret || employeeData.brutUcret || 0,
+      aktif: employeeData.aktif !== undefined ? employeeData.aktif : true
+    })
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function updateEmployee(id, employeeData) {
+  const mapped = {}
+  if (employeeData.ad_soyad !== undefined || employeeData.adSoyad !== undefined) mapped.ad_soyad = employeeData.ad_soyad || employeeData.adSoyad
+  if (employeeData.tc_kimlik !== undefined || employeeData.tcKimlik !== undefined) mapped.tc_kimlik = employeeData.tc_kimlik || employeeData.tcKimlik
+  if (employeeData.ise_giris !== undefined || employeeData.iseGiris !== undefined) mapped.ise_giris = employeeData.ise_giris || employeeData.iseGiris
+  if (employeeData.isten_cikis !== undefined || employeeData.istenCikis !== undefined) mapped.isten_cikis = employeeData.isten_cikis || employeeData.istenCikis
+  if (employeeData.brut_ucret !== undefined || employeeData.brutUcret !== undefined) mapped.brut_ucret = employeeData.brut_ucret || employeeData.brutUcret
+  if (employeeData.aktif !== undefined) mapped.aktif = employeeData.aktif
+  mapped.updated_at = new Date().toISOString()
+
+  const { data, error } = await supabase
+    .from('employees')
+    .update(mapped)
+    .eq('id', id)
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function deleteEmployee(id) {
+  // Izin kayitlarini da sil
+  await supabase.from('leave_records').delete().eq('employee_id', id)
+  const { error } = await supabase.from('employees').delete().eq('id', id)
+  if (error) throw error
+}
+
+export async function saveEmployeesFromExcel(clientId, employees) {
+  const rows = employees.map(e => ({
+    client_id: clientId,
+    ad_soyad: e.ad_soyad || '',
+    tc_kimlik: e.tc_kimlik || '',
+    ise_giris: e.ise_giris || null,
+    isten_cikis: e.isten_cikis || null,
+    brut_ucret: e.brut_ucret || 0,
+    aktif: true
+  }))
+  const { data, error } = await supabase
+    .from('employees')
+    .insert(rows)
+    .select()
+  if (error) throw error
+  return data || []
+}
+
+// ============ LEAVE RECORDS (Izin Takip) ============
+
+export async function getLeaveRecords(clientId, yil = null) {
+  let query = supabase
+    .from('leave_records')
+    .select('*')
+    .eq('client_id', clientId)
+    .order('baslangic', { ascending: false })
+  if (yil) query = query.eq('yil', yil)
+  const { data, error } = await query
+  if (error) throw error
+  return data || []
+}
+
+export async function getEmployeeLeaveRecords(employeeId, yil = null) {
+  let query = supabase
+    .from('leave_records')
+    .select('*')
+    .eq('employee_id', employeeId)
+    .order('baslangic', { ascending: false })
+  if (yil) query = query.eq('yil', yil)
+  const { data, error } = await query
+  if (error) throw error
+  return data || []
+}
+
+export async function addLeaveRecord(record) {
+  const { data, error } = await supabase
+    .from('leave_records')
+    .insert({
+      employee_id: record.employee_id || record.employeeId,
+      client_id: record.client_id || record.clientId,
+      yil: record.yil,
+      baslangic: record.baslangic,
+      bitis: record.bitis,
+      is_gunu: record.is_gunu || record.isGunu,
+      aciklama: record.aciklama || ''
+    })
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function deleteLeaveRecord(id) {
+  const { error } = await supabase.from('leave_records').delete().eq('id', id)
+  if (error) throw error
+}
+
 // ============ HELPER: DB -> Frontend format donusumu ============
 
 export function dbToFrontend(dbClient) {

@@ -1,13 +1,14 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useClients } from '../hooks/useClients'
 import { aiService } from '../services/aiService'
+import { getAutoAddedAccounts } from '../services/clientService'
 import { 
   Upload, FileText, Loader2, 
   CheckCircle, AlertTriangle, X, Download, 
   Eye, Save, Zap, Brain, 
   TrendingUp, Clock, Trash2,
-  FileSpreadsheet, Edit3
+  FileSpreadsheet, Edit3, Hash
 } from 'lucide-react'
 
 export default function SmartImport() {
@@ -24,8 +25,18 @@ export default function SmartImport() {
   const [ocrProgress, setOcrProgress] = useState(0)
   const [selectedClient, setSelectedClient] = useState('')
   const fileInputRef = useRef(null)
+  const [autoAddedAccounts, setAutoAddedAccounts] = useState([])
 
   const [globalInvoiceType, setGlobalInvoiceType] = useState('gelen')
+
+  // AI tarafindan eklenen hesaplari yukle
+  useEffect(() => {
+    if (selectedClient) {
+      getAutoAddedAccounts(parseInt(selectedClient)).then(setAutoAddedAccounts).catch(() => setAutoAddedAccounts([]))
+    } else {
+      setAutoAddedAccounts([])
+    }
+  }, [selectedClient, documents])
 
   const [learnedMatches, setLearnedMatches] = useState(() => {
     const stored = localStorage.getItem('mubis_learned_matches')
@@ -1077,6 +1088,35 @@ const renderInvoiceHTML = (xmlContent) => {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Tarafindan Eklenen Hesaplar */}
+      {selectedClient && autoAddedAccounts.length > 0 && (
+        <div className="bg-yellow-500/5 rounded-2xl p-6 border border-yellow-500/20 mt-6">
+          <h3 className="text-yellow-400 font-semibold flex items-center space-x-2 mb-3">
+            <Hash className="w-5 h-5" />
+            <span>AI Tarafindan Eklenen Hesap Kodlari ({autoAddedAccounts.length})</span>
+          </h3>
+          <p className="text-gray-400 text-sm mb-3">Bu hesap kodlarini LUCA'ya manuel olarak eklemeniz gerekir.</p>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-blue-900/30">
+                <tr className="text-left text-gray-400 text-sm">
+                  <th className="px-4 py-2">Hesap Kodu</th>
+                  <th className="px-4 py-2">Hesap Adi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {autoAddedAccounts.map((acc) => (
+                  <tr key={acc.id} className="border-t border-blue-700/20">
+                    <td className="px-4 py-2 text-yellow-400 text-sm font-mono font-medium">{acc.code}</td>
+                    <td className="px-4 py-2 text-white text-sm">{acc.name}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

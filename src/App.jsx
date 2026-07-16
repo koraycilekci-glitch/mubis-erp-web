@@ -27,6 +27,7 @@ import SetupPage from './pages/SetupPage'
 import ChangePassword from './pages/ChangePassword'
 import Settings from './pages/Settings'
 import PratikHesaplamalar from './pages/PratikHesaplamalar'
+import IzinTakip from './pages/IzinTakip'
 
 function App() {
   return (
@@ -61,6 +62,7 @@ function App() {
             <Route path="/admin/client/:id/beyan-takip" element={<ClientBeyanTakip />} />
             <Route path="/admin/ayarlar" element={<Settings />} />
             <Route path="/admin/hesaplamalar" element={<PratikHesaplamalar />} />
+            <Route path="/admin/izin-takip" element={<IzinTakip />} />
 
             {/* Client Routes */}
             <Route path="/portal" element={<ClientPortal />} />

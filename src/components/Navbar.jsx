@@ -5,7 +5,7 @@ import {
   Brain, Home,
   FileText, Bell,
   FileArchive, FileCheck, Calendar,
-  Calculator, Settings
+  Calculator, Settings, CalendarDays
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -95,6 +95,13 @@ export default function Navbar() {
                     >
                       <Calculator className="w-3.5 h-3.5" />
                       <span>Hesap</span>
+                    </Link>
+                    <Link 
+                      to="/admin/izin-takip"
+                      className="bg-gradient-to-r from-teal-500 to-teal-700 text-white px-2.5 py-1 rounded-lg font-semibold hover:shadow-lg hover:shadow-teal-500/30 transition-all duration-300 text-xs flex items-center space-x-1"
+                    >
+                      <CalendarDays className="w-3.5 h-3.5" />
+                      <span>Izin</span>
                     </Link>
                     <Link 
                       to="/admin/ayarlar"
@@ -235,6 +242,14 @@ export default function Navbar() {
                       >
                         <Calculator className="w-4 h-4" />
                         <span>Pratik Hesaplamalar</span>
+                      </Link>
+                      <Link 
+                        to="/admin/izin-takip"
+                        onClick={() => setIsMenuOpen(false)}
+                        className="bg-gradient-to-r from-teal-500 to-teal-700 text-white px-4 py-2.5 rounded-lg font-semibold text-center flex items-center justify-center space-x-2 text-sm"
+                      >
+                        <CalendarDays className="w-4 h-4" />
+                        <span>Izin Takip</span>
                       </Link>
                       <Link 
                         to="/admin/ayarlar"

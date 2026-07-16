@@ -1,5 +1,6 @@
 // 📄 AI Servisi - Firma Ünvanı Okuma ve Hesap Eşleştirme
 import * as XLSX from 'xlsx'
+import { getAccountPlans, addAccountPlan } from './clientService'
 
 export class AIService {
   constructor() {
@@ -368,6 +369,47 @@ export class AIService {
 
   getClientAccountPlan(clientId) {
     return this.clientAccountPlan[clientId] || null
+  }
+
+  // ============ SUPABASE HESAP PLANI ENTEGRASYONU ============
+  
+  async loadSupabaseAccountPlan(clientId) {
+    try {
+      const plans = await getAccountPlans(clientId)
+      return plans.map(p => ({ kod: p.code, ad: p.name, id: p.id, is_auto_added: p.is_auto_added }))
+    } catch (e) {
+      console.error('Supabase hesap plani yuklenemedi:', e)
+      return []
+    }
+  }
+
+  // Ana hesap kodunun altindaki son alt hesabi bul ve +1 arttir
+  getNextSubAccountCode(accountPlan, mainCode) {
+    // mainCode: ornegin "120" veya "320"
+    const prefix = mainCode.endsWith('.') ? mainCode : mainCode + '.'
+    const subCodes = accountPlan
+      .filter(a => (a.kod || a.code || '').startsWith(prefix))
+      .map(a => {
+        const parts = (a.kod || a.code || '').split('.')
+        return parseInt(parts[parts.length - 1]) || 0
+      })
+      .sort((a, b) => b - a)
+    
+    const nextNum = (subCodes[0] || 0) + 1
+    return `${mainCode}.${String(nextNum).padStart(2, '0')}`
+  }
+
+  // AI fatura islerken yeni hesap kodu olustur ve kaydet
+  async autoAddAccountCode(clientId, mainCode, accountName) {
+    try {
+      const plans = await this.loadSupabaseAccountPlan(clientId)
+      const newCode = this.getNextSubAccountCode(plans, mainCode)
+      await addAccountPlan(clientId, newCode, accountName, true)
+      return { success: true, code: newCode, name: accountName }
+    } catch (e) {
+      console.error('Hesap kodu eklenemedi:', e)
+      return { success: false, error: e.message }
+    }
   }
 
   // ============ XML OKUMA - KDV'DEN HESAPLAMA ============

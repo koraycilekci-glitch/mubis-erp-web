@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { ArrowLeft, Save, User, Building, MapPin, Calendar, FileText, X, Globe, Users, Newspaper } from 'lucide-react'
+import { ArrowLeft, Save, User, Building, MapPin, Calendar, FileText, X, Globe, Users, Newspaper, Eye, EyeOff } from 'lucide-react'
 
 export default function NewClient() {
   const navigate = useNavigate()
   const { addClient } = useAuth()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showPasswords, setShowPasswords] = useState({})
   const [formData, setFormData] = useState({
     type: 'company',
     name: '',
@@ -60,7 +61,7 @@ export default function NewClient() {
     setFormData(newData)
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
     setLoading(true)
@@ -76,15 +77,24 @@ export default function NewClient() {
       return
     }
 
-    const result = addClient(formData)
-    setLoading(false)
+    try {
+      const result = await addClient(formData)
+      setLoading(false)
 
-    if (result.success) {
-      alert('Müşteri başarıyla eklendi!')
-      navigate('/admin')
-    } else {
-      setError(result.error)
+      if (result && result.success !== false) {
+        alert('Müşteri başarıyla eklendi!')
+        navigate('/admin')
+      } else {
+        setError(result?.error || 'Müşteri eklenirken bir hata oluştu')
+      }
+    } catch (err) {
+      setLoading(false)
+      setError(err.message || 'Müşteri eklenirken bir hata oluştu')
     }
+  }
+
+  const togglePassword = (field) => {
+    setShowPasswords(prev => ({ ...prev, [field]: !prev[field] }))
   }
 
   return (
@@ -500,25 +510,35 @@ export default function NewClient() {
                   </div>
                   <div>
                     <label className="text-gray-400 text-xs block mb-1">İşyeri Şifresi</label>
-                    <input
-                      type="password"
-                      name="sgkWorkplacePassword"
-                      value={formData.sgkWorkplacePassword}
-                      onChange={handleChange}
-                      placeholder="İşyeri Şifresi"
-                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-1.5 px-3 text-white text-sm focus:outline-none focus:border-yellow-400 transition-colors"
-                    />
+                    <div className="relative">
+                      <input
+                        type={showPasswords.sgkWorkplacePassword ? 'text' : 'password'}
+                        name="sgkWorkplacePassword"
+                        value={formData.sgkWorkplacePassword}
+                        onChange={handleChange}
+                        placeholder="İşyeri Şifresi"
+                        className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-1.5 px-3 pr-10 text-white text-sm focus:outline-none focus:border-yellow-400 transition-colors"
+                      />
+                      <button type="button" onClick={() => togglePassword('sgkWorkplacePassword')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-yellow-400 transition-colors">
+                        {showPasswords.sgkWorkplacePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
                   </div>
                   <div>
                     <label className="text-gray-400 text-xs block mb-1">Sistem Şifresi</label>
-                    <input
-                      type="password"
-                      name="sgkSystemPassword"
-                      value={formData.sgkSystemPassword}
-                      onChange={handleChange}
-                      placeholder="Sistem Şifresi"
-                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-1.5 px-3 text-white text-sm focus:outline-none focus:border-yellow-400 transition-colors"
-                    />
+                    <div className="relative">
+                      <input
+                        type={showPasswords.sgkSystemPassword ? 'text' : 'password'}
+                        name="sgkSystemPassword"
+                        value={formData.sgkSystemPassword}
+                        onChange={handleChange}
+                        placeholder="Sistem Şifresi"
+                        className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-1.5 px-3 pr-10 text-white text-sm focus:outline-none focus:border-yellow-400 transition-colors"
+                      />
+                      <button type="button" onClick={() => togglePassword('sgkSystemPassword')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-yellow-400 transition-colors">
+                        {showPasswords.sgkSystemPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -552,14 +572,19 @@ export default function NewClient() {
                     placeholder="Vergi Dairesi Kullanıcı Adı"
                     className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-1.5 px-3 text-white text-sm focus:outline-none focus:border-yellow-400 transition-colors"
                   />
-                  <input
-                    type="password"
-                    name="dvdPassword"
-                    value={formData.dvdPassword}
-                    onChange={handleChange}
-                    placeholder="Vergi Dairesi Şifresi"
-                    className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-1.5 px-3 text-white text-sm focus:outline-none focus:border-yellow-400 transition-colors"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showPasswords.dvdPassword ? 'text' : 'password'}
+                      name="dvdPassword"
+                      value={formData.dvdPassword}
+                      onChange={handleChange}
+                      placeholder="Vergi Dairesi Şifresi"
+                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-1.5 px-3 pr-10 text-white text-sm focus:outline-none focus:border-yellow-400 transition-colors"
+                    />
+                    <button type="button" onClick={() => togglePassword('dvdPassword')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-yellow-400 transition-colors">
+                      {showPasswords.dvdPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -592,14 +617,19 @@ export default function NewClient() {
                     placeholder="Ticari Sicil Kullanıcı Adı"
                     className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-1.5 px-3 text-white text-sm focus:outline-none focus:border-yellow-400 transition-colors"
                   />
-                  <input
-                    type="password"
-                    name="tsgPassword"
-                    value={formData.tsgPassword}
-                    onChange={handleChange}
-                    placeholder="Ticari Sicil Şifresi"
-                    className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-1.5 px-3 text-white text-sm focus:outline-none focus:border-yellow-400 transition-colors"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showPasswords.tsgPassword ? 'text' : 'password'}
+                      name="tsgPassword"
+                      value={formData.tsgPassword}
+                      onChange={handleChange}
+                      placeholder="Ticari Sicil Şifresi"
+                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-1.5 px-3 pr-10 text-white text-sm focus:outline-none focus:border-yellow-400 transition-colors"
+                    />
+                    <button type="button" onClick={() => togglePassword('tsgPassword')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-yellow-400 transition-colors">
+                      {showPasswords.tsgPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

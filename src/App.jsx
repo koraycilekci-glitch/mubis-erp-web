@@ -28,6 +28,9 @@ import ChangePassword from './pages/ChangePassword'
 import Settings from './pages/Settings'
 import PratikHesaplamalar from './pages/PratikHesaplamalar'
 import IzinTakip from './pages/IzinTakip'
+import OdemeTakip from './pages/OdemeTakip'
+import OdemeBasarili from './pages/OdemeBasarili'
+import OdemeBasarisiz from './pages/OdemeBasarisiz'
 
 function App() {
   return (
@@ -63,6 +66,9 @@ function App() {
             <Route path="/admin/ayarlar" element={<Settings />} />
             <Route path="/admin/hesaplamalar" element={<PratikHesaplamalar />} />
             <Route path="/admin/izin-takip" element={<IzinTakip />} />
+            <Route path="/admin/odeme-takip" element={<OdemeTakip />} />
+            <Route path="/odeme-basarili" element={<OdemeBasarili />} />
+            <Route path="/odeme-basarisiz" element={<OdemeBasarisiz />} />
 
             {/* Client Routes */}
             <Route path="/portal" element={<ClientPortal />} />

@@ -9,9 +9,10 @@ import {
   FileText, Calendar, Edit3, Plus, Trash2, Save, X,
   Globe, CreditCard, Hash, ListChecks, Shield,
   Briefcase, Tag, Upload, Search, Home, ExternalLink,
-  Eye, EyeOff, Lock, Landmark, KeyRound, Receipt, Users, AlertTriangle
+  Eye, EyeOff, Lock, Landmark, KeyRound, Receipt, Users, AlertTriangle, DollarSign, CreditCard as CreditCardIcon
 } from 'lucide-react'
 import { getAccountPlans, saveAccountPlans, getEmployees, addEmployee, updateEmployee, deleteEmployee, saveEmployeesFromExcel } from '../services/clientService'
+import { getAccountingFee, saveAccountingFee, getPayments, addPayment, deletePayment, hesaplaBorcOzeti, BANKA_BILGILERI } from '../services/paymentService'
 
 export default function ClientDetail() {
   const { id } = useParams()
@@ -34,6 +35,12 @@ export default function ClientDetail() {
   const [showPersonelForm, setShowPersonelForm] = useState(false)
   const [editPersonelId, setEditPersonelId] = useState(null)
   const [personelForm, setPersonelForm] = useState({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '', dogum_tarihi: '' })
+  // Muhasebe ucreti
+  const [accountingFee, setAccountingFee] = useState(null)
+  const [feeForm, setFeeForm] = useState({ onceki_donem_borc: '', defter_tasdik_ucreti: '', aylik_ucret: '', baslangic_ay: '1', baslangic_yil: '2025', notlar: '' })
+  const [clientPayments, setClientPayments] = useState([])
+  const [showPaymentForm, setShowPaymentForm] = useState(false)
+  const [paymentForm, setPaymentForm] = useState({ tutar: '', odeme_tipi: 'eft', donem: '', aciklama: '', odeme_tarihi: new Date().toISOString().split('T')[0] })
 
   // Yeni yetkili/ortak formu
   const [newOfficial, setNewOfficial] = useState({ name: '', title: '', phone: '', email: '', tc: '', address: '', hisse: '', sermaye: '' })
@@ -156,6 +163,8 @@ export default function ClientDetail() {
     loadHesapKodlari()
     // Personelleri yukle
     loadPersonel()
+    // Muhasebe ucretlerini yukle
+    loadAccounting()
     setLoading(false)
   }, [id, clients])
 
@@ -175,6 +184,27 @@ export default function ClientDetail() {
       const data = await getEmployees(parseInt(id))
       setPersonelList(data)
     } catch (e) { console.error('Personel yukleme hatasi:', e) }
+  }
+
+  const loadAccounting = async () => {
+    try {
+      const [fee, pays] = await Promise.all([
+        getAccountingFee(parseInt(id)),
+        getPayments(parseInt(id))
+      ])
+      setAccountingFee(fee)
+      if (fee) {
+        setFeeForm({
+          onceki_donem_borc: fee.onceki_donem_borc || '',
+          defter_tasdik_ucreti: fee.defter_tasdik_ucreti || '',
+          aylik_ucret: fee.aylik_ucret || '',
+          baslangic_ay: String(fee.baslangic_ay || 1),
+          baslangic_yil: String(fee.baslangic_yil || 2025),
+          notlar: fee.notlar || ''
+        })
+      }
+      setClientPayments(pays)
+    } catch (e) { console.error('Muhasebe yukleme hatasi:', e) }
   }
 
   const saveClient = async (data) => {
@@ -383,6 +413,31 @@ export default function ClientDetail() {
     try { await saveAccountPlans(parseInt(id), []); setHesapKodlari([]) } catch(e) { setHesapKodlari([]); localStorage.removeItem(`mubis_hesap_kodlari_${id}`) }
   }
 
+  // Muhasebe ucreti kaydet
+  const handleSaveFee = async () => {
+    try {
+      await saveAccountingFee(parseInt(id), feeForm)
+      await loadAccounting()
+      alert('Muhasebe ucreti kaydedildi!')
+    } catch (err) { alert('Hata: ' + err.message) }
+  }
+
+  // Odeme kaydet
+  const handleSavePayment = async () => {
+    if (!paymentForm.tutar || Number(paymentForm.tutar) <= 0) return alert('Tutar giriniz!')
+    try {
+      await addPayment({ client_id: parseInt(id), ...paymentForm })
+      setPaymentForm({ tutar: '', odeme_tipi: 'eft', donem: '', aciklama: '', odeme_tarihi: new Date().toISOString().split('T')[0] })
+      setShowPaymentForm(false)
+      await loadAccounting()
+    } catch (err) { alert('Hata: ' + err.message) }
+  }
+
+  const handleDeletePayment = async (payId) => {
+    if (!confirm('Bu odeme kaydini silmek istiyor musunuz?')) return
+    try { await deletePayment(payId); await loadAccounting() } catch (err) { alert('Hata: ' + err.message) }
+  }
+
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-yellow-400"></div></div>
   }
@@ -408,6 +463,7 @@ export default function ClientDetail() {
     { id: 'documents', label: 'Evraklar', icon: FileText },
     ...((client.musteriSinifi === '1. Sinif' || isCompany) ? [{ id: 'hesapkodlari', label: 'Hesap Kodlari', icon: Hash }] : []),
     { id: 'personel', label: 'Personel', icon: Users },
+    { id: 'muhasebe', label: 'Muhasebe Ucreti', icon: DollarSign },
   ]
 
   const filteredHesapKodlari = hesapKodlari.filter(hk => {
@@ -1314,6 +1370,189 @@ export default function ClientDetail() {
               <p className="text-gray-500 text-sm">Bordro Excel yukleyerek veya elle personel ekleyebilirsiniz</p>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ==================== MUHASEBE UCRETI TAB ==================== */}
+      {activeTab === 'muhasebe' && (
+        <div className="space-y-6">
+          {/* Borc Ozeti */}
+          {(() => {
+            const ozet = hesaplaBorcOzeti(accountingFee, clientPayments)
+            const fmt = (n) => Number(n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 })
+            return (
+              <div className="bg-blue-800/20 rounded-2xl p-6 border border-blue-700/30">
+                <h3 className="text-lg font-semibold text-white flex items-center space-x-2 mb-4">
+                  <DollarSign className="w-5 h-5 text-yellow-400" />
+                  <span>Borc Durumu</span>
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  <div className="bg-blue-900/30 rounded-xl p-3 text-center">
+                    <p className="text-xs text-gray-400">Onceki Donem</p>
+                    <p className="text-lg font-bold text-orange-400">{fmt(ozet.oncekiDonem)} TL</p>
+                  </div>
+                  <div className="bg-blue-900/30 rounded-xl p-3 text-center">
+                    <p className="text-xs text-gray-400">Defter Tasdik</p>
+                    <p className="text-lg font-bold text-blue-400">{fmt(ozet.defterTasdik)} TL</p>
+                  </div>
+                  <div className="bg-blue-900/30 rounded-xl p-3 text-center">
+                    <p className="text-xs text-gray-400">Aylik ({ozet.gecenAy} ay x {fmt(ozet.aylikUcret)})</p>
+                    <p className="text-lg font-bold text-yellow-400">{fmt(ozet.aylikToplam)} TL</p>
+                  </div>
+                  <div className="bg-blue-900/30 rounded-xl p-3 text-center">
+                    <p className="text-xs text-gray-400">Toplam Borc</p>
+                    <p className="text-lg font-bold text-white">{fmt(ozet.toplamBorc)} TL</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-green-500/10 rounded-xl p-3 text-center border border-green-500/20">
+                    <p className="text-xs text-gray-400">Toplam Odeme</p>
+                    <p className="text-lg font-bold text-green-400">-{fmt(ozet.toplamOdeme)} TL</p>
+                  </div>
+                  <div className={`rounded-xl p-3 text-center border ${ozet.kalanBorc > 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-green-500/10 border-green-500/20'}`}>
+                    <p className="text-xs text-gray-400">Kalan Borc</p>
+                    <p className={`text-xl font-bold ${ozet.kalanBorc > 0 ? 'text-red-400' : 'text-green-400'}`}>{fmt(ozet.kalanBorc)} TL</p>
+                  </div>
+                </div>
+                {ozet.sonOdeme && <p className="text-xs text-gray-500 mt-2">Son odeme: {new Date(ozet.sonOdeme).toLocaleDateString('tr-TR')}</p>}
+              </div>
+            )
+          })()}
+
+          {/* Ucret Ayarlari */}
+          <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+            <h3 className="text-lg font-semibold text-white mb-4">Ucret Ayarlari</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Onceki Donem Borc (TL)</label>
+                <input type="number" value={feeForm.onceki_donem_borc} onChange={(e) => setFeeForm({...feeForm, onceki_donem_borc: e.target.value})}
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400" />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Defter Tasdik Ucreti (TL)</label>
+                <input type="number" value={feeForm.defter_tasdik_ucreti} onChange={(e) => setFeeForm({...feeForm, defter_tasdik_ucreti: e.target.value})}
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400" />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Aylik Muhasebe Ucreti (TL)</label>
+                <input type="number" value={feeForm.aylik_ucret} onChange={(e) => setFeeForm({...feeForm, aylik_ucret: e.target.value})}
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400" />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Baslangic Ay</label>
+                <select value={feeForm.baslangic_ay} onChange={(e) => setFeeForm({...feeForm, baslangic_ay: e.target.value})}
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400">
+                  {['Ocak','Subat','Mart','Nisan','Mayis','Haziran','Temmuz','Agustos','Eylul','Ekim','Kasim','Aralik'].map((m, i) => (
+                    <option key={i} value={i+1}>{m}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Baslangic Yil</label>
+                <select value={feeForm.baslangic_yil} onChange={(e) => setFeeForm({...feeForm, baslangic_yil: e.target.value})}
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400">
+                  {[2020,2021,2022,2023,2024,2025,2026].map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Notlar</label>
+                <input type="text" value={feeForm.notlar} onChange={(e) => setFeeForm({...feeForm, notlar: e.target.value})}
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400" />
+              </div>
+            </div>
+            <button onClick={handleSaveFee}
+              className="mt-4 bg-yellow-500 text-blue-950 px-6 py-2.5 rounded-lg font-semibold hover:bg-yellow-400 transition-colors flex items-center space-x-2">
+              <Save className="w-4 h-4" /><span>Kaydet</span>
+            </button>
+          </div>
+
+          {/* Odeme Gecmisi */}
+          <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">Odeme Gecmisi</h3>
+              <button onClick={() => setShowPaymentForm(!showPaymentForm)}
+                className="bg-green-600/20 text-green-400 px-4 py-2 rounded-lg text-sm font-medium flex items-center space-x-1 hover:bg-green-600/30 transition-colors">
+                <Plus className="w-4 h-4" /><span>Odeme Ekle</span>
+              </button>
+            </div>
+
+            {showPaymentForm && (
+              <div className="mb-4 p-4 bg-blue-900/20 rounded-xl border border-green-500/30">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                  <div>
+                    <label className="text-xs text-gray-400">Tutar (TL) *</label>
+                    <input type="number" value={paymentForm.tutar} onChange={(e) => setPaymentForm({...paymentForm, tutar: e.target.value})}
+                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400">Odeme Tipi</label>
+                    <select value={paymentForm.odeme_tipi} onChange={(e) => setPaymentForm({...paymentForm, odeme_tipi: e.target.value})}
+                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400">
+                      <option value="eft">EFT/Havale</option>
+                      <option value="kredi_karti">Kredi Karti</option>
+                      <option value="nakit">Nakit</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400">Donem</label>
+                    <input type="month" value={paymentForm.donem} onChange={(e) => setPaymentForm({...paymentForm, donem: e.target.value})}
+                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400">Tarih</label>
+                    <input type="date" value={paymentForm.odeme_tarihi} onChange={(e) => setPaymentForm({...paymentForm, odeme_tarihi: e.target.value})}
+                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400">Aciklama</label>
+                    <input type="text" value={paymentForm.aciklama} onChange={(e) => setPaymentForm({...paymentForm, aciklama: e.target.value})}
+                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-3">
+                  <button onClick={handleSavePayment} className="bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1"><Save className="w-4 h-4" />Kaydet</button>
+                  <button onClick={() => setShowPaymentForm(false)} className="bg-red-500/20 text-red-400 px-4 py-2 rounded-lg text-sm"><X className="w-4 h-4" /></button>
+                </div>
+              </div>
+            )}
+
+            {clientPayments.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-blue-900/30">
+                    <tr className="text-left text-gray-400 text-xs">
+                      <th className="px-4 py-2">Tarih</th>
+                      <th className="px-4 py-2 text-right">Tutar</th>
+                      <th className="px-4 py-2">Tip</th>
+                      <th className="px-4 py-2">Donem</th>
+                      <th className="px-4 py-2">Aciklama</th>
+                      <th className="px-4 py-2 text-center">Sil</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clientPayments.map(p => (
+                      <tr key={p.id} className="border-t border-blue-700/20 hover:bg-blue-800/20">
+                        <td className="px-4 py-2 text-white text-sm">{new Date(p.odeme_tarihi).toLocaleDateString('tr-TR')}</td>
+                        <td className="px-4 py-2 text-right text-green-400 text-sm font-medium">{Number(p.tutar).toLocaleString('tr-TR', {minimumFractionDigits: 2})} TL</td>
+                        <td className="px-4 py-2 text-gray-300 text-xs">
+                          <span className={`px-2 py-1 rounded ${p.odeme_tipi === 'eft' ? 'bg-blue-500/20 text-blue-400' : p.odeme_tipi === 'kredi_karti' ? 'bg-purple-500/20 text-purple-400' : 'bg-gray-500/20 text-gray-400'}`}>
+                            {p.odeme_tipi === 'eft' ? 'EFT/Havale' : p.odeme_tipi === 'kredi_karti' ? 'Kredi Karti' : 'Nakit'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-gray-400 text-sm">{p.donem || '-'}</td>
+                        <td className="px-4 py-2 text-gray-400 text-sm">{p.aciklama || '-'}</td>
+                        <td className="px-4 py-2 text-center">
+                          <button onClick={() => handleDeletePayment(p.id)} className="text-red-400 hover:text-red-300 p-1"><Trash2 className="w-4 h-4" /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-gray-500 text-sm text-center py-6">Henuz odeme kaydi yok</p>
+            )}
+          </div>
         </div>
       )}
     </div>

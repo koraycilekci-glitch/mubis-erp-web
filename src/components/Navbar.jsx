@@ -5,7 +5,7 @@ import {
   Brain, Home,
   FileText, Bell,
   FileArchive, FileCheck, Calendar,
-  Calculator, Settings, CalendarDays
+  Calculator, Settings, CalendarDays, DollarSign
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -102,6 +102,13 @@ export default function Navbar() {
                     >
                       <CalendarDays className="w-3.5 h-3.5" />
                       <span>Izin</span>
+                    </Link>
+                    <Link 
+                      to="/admin/odeme-takip"
+                      className="bg-gradient-to-r from-emerald-500 to-emerald-700 text-white px-2.5 py-1 rounded-lg font-semibold hover:shadow-lg hover:shadow-emerald-500/30 transition-all duration-300 text-xs flex items-center space-x-1"
+                    >
+                      <DollarSign className="w-3.5 h-3.5" />
+                      <span>Odeme</span>
                     </Link>
                     <Link 
                       to="/admin/ayarlar"
@@ -250,6 +257,14 @@ export default function Navbar() {
                       >
                         <CalendarDays className="w-4 h-4" />
                         <span>Izin Takip</span>
+                      </Link>
+                      <Link 
+                        to="/admin/odeme-takip"
+                        onClick={() => setIsMenuOpen(false)}
+                        className="bg-gradient-to-r from-emerald-500 to-emerald-700 text-white px-4 py-2.5 rounded-lg font-semibold text-center flex items-center justify-center space-x-2 text-sm"
+                      >
+                        <DollarSign className="w-4 h-4" />
+                        <span>Odeme Takip</span>
                       </Link>
                       <Link 
                         to="/admin/ayarlar"

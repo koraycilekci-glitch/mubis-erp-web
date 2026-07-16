@@ -72,8 +72,20 @@ export const SGK = {
   }
 }
 
-// Damga Vergisi Orani
-export const DAMGA_VERGISI = 0.00759
+// Damga Vergisi Orani (yil bazli)
+export const DAMGA_VERGISI_ORANLARI = {
+  2020: 0.00948,
+  2021: 0.00948,
+  2022: 0.00948,
+  2023: 0.00948,
+  2024: 0.00759,
+  2025: 0.00759,
+  2026: 0.00759,
+}
+export const DAMGA_VERGISI = 0.00759 // Guncel yil varsayilan
+export function getDamgaVergisiOrani(yil) {
+  return DAMGA_VERGISI_ORANLARI[yil] || DAMGA_VERGISI
+}
 
 // Kidem Tazminati Tavani (donem bazli)
 export const KIDEM_TAVANI = {

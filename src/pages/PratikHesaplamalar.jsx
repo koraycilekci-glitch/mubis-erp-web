@@ -810,19 +810,34 @@ function KiraArtis() {
 
 function DamgaVergisi() {
   const [tutar, setTutar] = useState('')
+  const [yil, setYil] = useState(String(new Date().getFullYear()))
   const t = Number(tutar) || 0
-  const damga = t * D.DAMGA_VERGISI
+  const oran = D.getDamgaVergisiOrani(Number(yil))
+  const damga = t * oran
 
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <Card title="Kontrat Damga Vergisi">
-        <Input label="Kontrat Tutari" value={tutar} onChange={setTutar} suffix="TL" />
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Yil</label>
+            <select value={yil} onChange={(e) => setYil(e.target.value)}
+              className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400">
+              {[2020,2021,2022,2023,2024,2025,2026].map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+          <Input label="Kontrat Tutari" value={tutar} onChange={setTutar} suffix="TL" />
+          <div className="bg-blue-900/20 rounded-lg p-3">
+            <p className="text-xs text-gray-400">Damga Vergisi Orani</p>
+            <p className="text-yellow-400 font-semibold">%{(oran * 100).toFixed(3)} <span className="text-gray-500 text-xs">({yil} yili)</span></p>
+          </div>
+        </div>
       </Card>
       <Card title="Sonuc">
         {t > 0 ? (
           <div className="space-y-1">
             <Result label="Kontrat Tutari" value={`${D.fmt(t)} TL`} />
-            <Result label={`Damga Vergisi (%${(D.DAMGA_VERGISI * 100).toFixed(2)})`} value={`${D.fmt(damga)} TL`} highlight />
+            <Result label={`Damga Vergisi (%${(oran * 100).toFixed(3)})`} value={`${D.fmt(damga)} TL`} highlight />
           </div>
         ) : <p className="text-gray-500 text-sm">Tutar girin</p>}
       </Card>

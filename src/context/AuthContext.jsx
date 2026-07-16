@@ -28,8 +28,18 @@ export function AuthProvider({ children }) {
 
   // Oturum takibi
   useEffect(() => {
+    // Beni hatirla secili degilse ve yeni session ise cikis yap
+    const noRemember = sessionStorage.getItem('mubis_no_remember')
+    
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
+        // Eger daha once "hatirla" secilmemisse ve bu yeni bir tab/pencere ise
+        if (noRemember === null && localStorage.getItem('mubis_no_persist') === '1') {
+          supabase.auth.signOut()
+          localStorage.removeItem('mubis_no_persist')
+          setLoading(false)
+          return
+        }
         setUser(session.user)
         fetchProfile(session.user).then((prof) => {
           if (prof?.temp_password) setNeedsPasswordChange(true)
@@ -59,12 +69,20 @@ export function AuthProvider({ children }) {
   }, [])
 
   // Giris yap (email veya TC/VKN destekli)
-  const login = async (identifier, password) => {
+  const login = async (identifier, password, rememberMe = true) => {
     try {
       // TC/VKN ise @mubis.app ekle, email ise direkt kullan
       let email = identifier
       if (!identifier.includes('@')) {
         email = `${identifier}@mubis.app`
+      }
+
+      // Beni hatirla secenegi
+      if (!rememberMe) {
+        // Session sadece tab acikken gecerli
+        sessionStorage.setItem('mubis_no_remember', '1')
+      } else {
+        sessionStorage.removeItem('mubis_no_remember')
       }
 
       const { data, error } = await supabase.auth.signInWithPassword({ email, password })

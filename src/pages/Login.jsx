@@ -11,6 +11,7 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false)
   const [mode, setMode] = useState('login') // login | forgot | forgot-sent
   const [resetEmail, setResetEmail] = useState('')
+  const [rememberMe, setRememberMe] = useState(true)
   const { login, resetPassword } = useAuth()
   const navigate = useNavigate()
 
@@ -19,7 +20,7 @@ export default function Login() {
     setError('')
     setLoading(true)
 
-    const result = await login(identifier, password)
+    const result = await login(identifier, password, rememberMe)
     setLoading(false)
 
     if (result.success) {
@@ -105,6 +106,14 @@ export default function Login() {
                       {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                     </button>
                   </div>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)}
+                      className="w-4 h-4 rounded border-blue-700 bg-blue-900/30 text-yellow-500 focus:ring-yellow-500 focus:ring-offset-0 cursor-pointer" />
+                    <span className="text-gray-400 text-sm">Beni Hatirla</span>
+                  </label>
                 </div>
 
                 <button type="submit" disabled={loading}

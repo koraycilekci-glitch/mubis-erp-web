@@ -4,7 +4,8 @@ import {
   LogOut, LayoutDashboard, Menu, X, 
   Brain, Home,
   FileText, Bell,
-  FileArchive, FileCheck, Calendar
+  FileArchive, FileCheck, Calendar,
+  Calculator, Settings
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -87,6 +88,20 @@ export default function Navbar() {
                     >
                       <FileArchive className="w-3.5 h-3.5" />
                       <span>e-Fatura</span>
+                    </Link>
+                    <Link 
+                      to="/admin/hesaplamalar"
+                      className="bg-gradient-to-r from-orange-500 to-orange-700 text-white px-2.5 py-1 rounded-lg font-semibold hover:shadow-lg hover:shadow-orange-500/30 transition-all duration-300 text-xs flex items-center space-x-1"
+                    >
+                      <Calculator className="w-3.5 h-3.5" />
+                      <span>Hesap</span>
+                    </Link>
+                    <Link 
+                      to="/admin/ayarlar"
+                      className="text-gray-400 hover:text-white p-1.5 rounded-lg hover:bg-blue-800/30 transition-colors"
+                      title="Ayarlar"
+                    >
+                      <Settings className="w-4 h-4" />
                     </Link>
                   </div>
                 )}
@@ -212,6 +227,22 @@ export default function Navbar() {
                       >
                         <FileArchive className="w-4 h-4" />
                         <span>e-Fatura XML</span>
+                      </Link>
+                      <Link 
+                        to="/admin/hesaplamalar"
+                        onClick={() => setIsMenuOpen(false)}
+                        className="bg-gradient-to-r from-orange-500 to-orange-700 text-white px-4 py-2.5 rounded-lg font-semibold text-center flex items-center justify-center space-x-2 text-sm"
+                      >
+                        <Calculator className="w-4 h-4" />
+                        <span>Pratik Hesaplamalar</span>
+                      </Link>
+                      <Link 
+                        to="/admin/ayarlar"
+                        onClick={() => setIsMenuOpen(false)}
+                        className="bg-gradient-to-r from-gray-500 to-gray-700 text-white px-4 py-2.5 rounded-lg font-semibold text-center flex items-center justify-center space-x-2 text-sm"
+                      >
+                        <Settings className="w-4 h-4" />
+                        <span>Ayarlar</span>
                       </Link>
                     </>
                   )}

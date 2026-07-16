@@ -28,7 +28,7 @@ export default function IzinTakip() {
   const [searchTerm, setSearchTerm] = useState('')
 
   // Yeni personel formu
-  const [empForm, setEmpForm] = useState({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '' })
+  const [empForm, setEmpForm] = useState({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '', dogum_tarihi: '' })
   // Yeni izin formu
   const [leaveForm, setLeaveForm] = useState({ baslangic: '', bitis: '', aciklama: 'Yillik Izin' })
 
@@ -89,7 +89,7 @@ export default function IzinTakip() {
     if (!empForm.ad_soyad.trim()) return alert('Ad Soyad zorunlu!')
     try {
       await addEmployee(selectedClientId, empForm)
-      setEmpForm({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '' })
+      setEmpForm({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '', dogum_tarihi: '' })
       setShowAddEmployee(false)
       await loadEmployees()
     } catch (err) {
@@ -102,7 +102,7 @@ export default function IzinTakip() {
     try {
       await updateEmployee(editingEmployee.id, empForm)
       setEditingEmployee(null)
-      setEmpForm({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '' })
+      setEmpForm({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '', dogum_tarihi: '' })
       await loadEmployees()
     } catch (err) {
       alert('Hata: ' + err.message)
@@ -127,7 +127,8 @@ export default function IzinTakip() {
       tc_kimlik: emp.tc_kimlik || '',
       ise_giris: emp.ise_giris || '',
       isten_cikis: emp.isten_cikis || '',
-      brut_ucret: emp.brut_ucret || ''
+      brut_ucret: emp.brut_ucret || '',
+      dogum_tarihi: emp.dogum_tarihi || ''
     })
   }
 
@@ -240,9 +241,19 @@ export default function IzinTakip() {
 
   // Izin hesaplama ozeti
   const getIzinOzeti = (emp) => {
-    if (!emp?.ise_giris) return { hakEdilen: 0, kullanilanBuYil: 0, oncekiYilKalan: 0, toplam: 0, kalan: 0 }
+    if (!emp?.ise_giris) return { hakEdilen: 0, kullanilanBuYil: 0, oncekiYilKalan: 0, toplam: 0, kalan: 0, yasNotu: '' }
     
-    const hakEdilen = hesaplaIzinHakki(emp.ise_giris, new Date(`${selectedYil}-12-31`))
+    const hakEdilen = hesaplaIzinHakki(emp.ise_giris, new Date(`${selectedYil}-12-31`), emp.dogum_tarihi || null)
+    
+    // Yas kontrolu notu
+    let yasNotu = ''
+    if (emp.dogum_tarihi) {
+      const dogum = new Date(emp.dogum_tarihi)
+      const refDate = new Date(`${selectedYil}-12-31`)
+      const yas = (refDate - dogum) / (365.25 * 24 * 60 * 60 * 1000)
+      if (yas < 18) yasNotu = '18 yas alti - en az 20 gun (Is Kanunu Md.53)'
+      else if (yas >= 50) yasNotu = '50 yas ustu - en az 20 gun (Is Kanunu Md.53)'
+    }
     
     // Bu yil kullanilan
     const buYilRecords = allLeaveRecords.filter(r => r.yil === selectedYil)
@@ -264,7 +275,7 @@ export default function IzinTakip() {
     const toplam = hakEdilen + oncekiYilKalan
     const kalan = toplam - kullanilanBuYil
 
-    return { hakEdilen, kullanilanBuYil, oncekiYilKalan, toplam, kalan }
+    return { hakEdilen, kullanilanBuYil, oncekiYilKalan, toplam, kalan, yasNotu }
   }
 
   // PDF Izin Belgesi olustur
@@ -481,7 +492,7 @@ export default function IzinTakip() {
                       <input type="file" accept=".xlsx,.xls" onChange={handleBordroUpload} className="hidden" />
                     </label>
                     <button
-                      onClick={() => { setShowAddEmployee(true); setEditingEmployee(null); setEmpForm({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '' }) }}
+                      onClick={() => { setShowAddEmployee(true); setEditingEmployee(null); setEmpForm({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '', dogum_tarihi: '' }) }}
                       className="bg-yellow-500/20 text-yellow-400 p-2 rounded-lg hover:bg-yellow-500/30 transition-colors"
                       title="Personel Ekle"
                     >
@@ -527,6 +538,11 @@ export default function IzinTakip() {
                     </div>
                     <input type="number" placeholder="Brut Ucret" value={empForm.brut_ucret} onChange={(e) => setEmpForm({...empForm, brut_ucret: e.target.value})}
                       className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                    <div>
+                      <label className="text-xs text-gray-500">Dogum Tarihi</label>
+                      <input type="date" value={empForm.dogum_tarihi} onChange={(e) => setEmpForm({...empForm, dogum_tarihi: e.target.value})}
+                        className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                    </div>
                     <div className="flex space-x-2">
                       <button onClick={editingEmployee ? handleUpdateEmployee : handleAddEmployee}
                         className="flex-1 bg-yellow-500 text-blue-950 py-2 rounded-lg text-sm font-semibold hover:bg-yellow-400 transition-colors flex items-center justify-center space-x-1">
@@ -554,7 +570,8 @@ export default function IzinTakip() {
                 ) : (
                   filteredEmployees.map(emp => {
                     const isSelected = selectedEmployee?.id === emp.id
-                    const izinHakki = emp.ise_giris ? hesaplaIzinHakki(emp.ise_giris, new Date(`${selectedYil}-12-31`)) : 0
+                    const izinHakki = emp.ise_giris ? hesaplaIzinHakki(emp.ise_giris, new Date(`${selectedYil}-12-31`), emp.dogum_tarihi || null) : 0
+                    const yas = emp.dogum_tarihi ? Math.floor((new Date() - new Date(emp.dogum_tarihi)) / (365.25 * 24 * 60 * 60 * 1000)) : null
                     return (
                       <div
                         key={emp.id}
@@ -649,14 +666,23 @@ export default function IzinTakip() {
                       
                       {/* Izin hakkinda bilgi */}
                       {selectedEmployee.ise_giris && (
+                        <>
                         <div className="mt-3 text-xs text-gray-500 flex items-center space-x-1">
                           <Clock className="w-3.5 h-3.5" />
                           <span>
                             Ise Giris: {new Date(selectedEmployee.ise_giris).toLocaleDateString('tr-TR')} | 
-                            Calisma Suresi: {Math.floor((new Date(`${selectedYil}-12-31`) - new Date(selectedEmployee.ise_giris)) / (365.25 * 24 * 60 * 60 * 1000))} yil |
+                            {selectedEmployee.dogum_tarihi && ` Dogum: ${new Date(selectedEmployee.dogum_tarihi).toLocaleDateString('tr-TR')} |`}
+                            {' '}Calisma Suresi: {Math.floor((new Date(`${selectedYil}-12-31`) - new Date(selectedEmployee.ise_giris)) / (365.25 * 24 * 60 * 60 * 1000))} yil |
                             Is Kanunu Md.53
                           </span>
                         </div>
+                        {ozet.yasNotu && (
+                          <div className="mt-2 bg-orange-500/10 border border-orange-500/30 rounded-lg p-2 flex items-center space-x-2">
+                            <AlertTriangle className="w-4 h-4 text-orange-400 flex-shrink-0" />
+                            <span className="text-orange-400 text-xs font-medium">{ozet.yasNotu}</span>
+                          </div>
+                        )}
+                        </>
                       )}
                     </div>
                   )

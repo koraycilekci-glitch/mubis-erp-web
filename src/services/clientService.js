@@ -321,6 +321,7 @@ export async function addEmployee(clientId, employeeData) {
       ise_giris: employeeData.ise_giris || employeeData.iseGiris || null,
       isten_cikis: employeeData.isten_cikis || employeeData.istenCikis || null,
       brut_ucret: employeeData.brut_ucret || employeeData.brutUcret || 0,
+      dogum_tarihi: employeeData.dogum_tarihi || employeeData.dogumTarihi || null,
       aktif: employeeData.aktif !== undefined ? employeeData.aktif : true
     })
     .select()
@@ -336,6 +337,7 @@ export async function updateEmployee(id, employeeData) {
   if (employeeData.ise_giris !== undefined || employeeData.iseGiris !== undefined) mapped.ise_giris = employeeData.ise_giris || employeeData.iseGiris
   if (employeeData.isten_cikis !== undefined || employeeData.istenCikis !== undefined) mapped.isten_cikis = employeeData.isten_cikis || employeeData.istenCikis
   if (employeeData.brut_ucret !== undefined || employeeData.brutUcret !== undefined) mapped.brut_ucret = employeeData.brut_ucret || employeeData.brutUcret
+  if (employeeData.dogum_tarihi !== undefined || employeeData.dogumTarihi !== undefined) mapped.dogum_tarihi = employeeData.dogum_tarihi || employeeData.dogumTarihi || null
   if (employeeData.aktif !== undefined) mapped.aktif = employeeData.aktif
   mapped.updated_at = new Date().toISOString()
 
@@ -364,6 +366,7 @@ export async function saveEmployeesFromExcel(clientId, employees) {
     ise_giris: e.ise_giris || null,
     isten_cikis: e.isten_cikis || null,
     brut_ucret: e.brut_ucret || 0,
+    dogum_tarihi: e.dogum_tarihi || null,
     aktif: true
   }))
   const { data, error } = await supabase

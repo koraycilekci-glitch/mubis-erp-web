@@ -21,10 +21,14 @@ CREATE TABLE IF NOT EXISTS employees (
   ise_giris DATE,
   isten_cikis DATE,
   brut_ucret NUMERIC DEFAULT 0,
+  dogum_tarihi DATE,
   aktif BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Eger tablo zaten varsa dogum_tarihi ekle
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS dogum_tarihi DATE;
 
 -- 3. Izin kayitlari
 CREATE TABLE IF NOT EXISTS leave_records (

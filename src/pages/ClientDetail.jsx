@@ -33,7 +33,7 @@ export default function ClientDetail() {
   const [personelList, setPersonelList] = useState([])
   const [showPersonelForm, setShowPersonelForm] = useState(false)
   const [editPersonelId, setEditPersonelId] = useState(null)
-  const [personelForm, setPersonelForm] = useState({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '' })
+  const [personelForm, setPersonelForm] = useState({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '', dogum_tarihi: '' })
 
   // Yeni yetkili/ortak formu
   const [newOfficial, setNewOfficial] = useState({ name: '', title: '', phone: '', email: '', tc: '', address: '', hisse: '', sermaye: '' })
@@ -1230,7 +1230,7 @@ export default function ClientDetail() {
                 <Upload className="w-4 h-4" /><span>Bordro Excel</span>
                 <input ref={bordroFileRef} type="file" accept=".xlsx,.xls" onChange={handleBordroUpload} className="hidden" />
               </label>
-              <button onClick={() => { setShowPersonelForm(true); setEditPersonelId(null); setPersonelForm({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '' }) }}
+              <button onClick={() => { setShowPersonelForm(true); setEditPersonelId(null); setPersonelForm({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '', dogum_tarihi: '' }) }}
                 className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1">
                 <Plus className="w-4 h-4" /><span>Ekle</span>
               </button>
@@ -1256,6 +1256,11 @@ export default function ClientDetail() {
                 <div>
                   <label className="text-xs text-gray-500">Isten Cikis</label>
                   <input type="date" value={personelForm.isten_cikis} onChange={(e) => setPersonelForm({...personelForm, isten_cikis: e.target.value})}
+                    className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">Dogum Tarihi</label>
+                  <input type="date" value={personelForm.dogum_tarihi} onChange={(e) => setPersonelForm({...personelForm, dogum_tarihi: e.target.value})}
                     className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
                 </div>
               </div>
@@ -1291,7 +1296,7 @@ export default function ClientDetail() {
                       <td className="px-4 py-2 text-yellow-400 text-sm text-right font-medium">{p.brut_ucret ? Number(p.brut_ucret).toLocaleString('tr-TR', {minimumFractionDigits: 2}) + ' TL' : '-'}</td>
                       <td className="px-4 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">
-                          <button onClick={() => { setEditPersonelId(p.id); setShowPersonelForm(true); setPersonelForm({ ad_soyad: p.ad_soyad, tc_kimlik: p.tc_kimlik || '', ise_giris: p.ise_giris || '', isten_cikis: p.isten_cikis || '', brut_ucret: p.brut_ucret || '' }) }}
+                          <button onClick={() => { setEditPersonelId(p.id); setShowPersonelForm(true); setPersonelForm({ ad_soyad: p.ad_soyad, tc_kimlik: p.tc_kimlik || '', ise_giris: p.ise_giris || '', isten_cikis: p.isten_cikis || '', brut_ucret: p.brut_ucret || '', dogum_tarihi: p.dogum_tarihi || '' }) }}
                             className="text-blue-400 hover:text-blue-300 p-1"><Edit3 className="w-4 h-4" /></button>
                           <button onClick={() => handleDeletePersonel(p.id)}
                             className="text-red-400 hover:text-red-300 p-1"><Trash2 className="w-4 h-4" /></button>

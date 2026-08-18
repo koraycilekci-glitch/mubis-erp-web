@@ -1,0 +1,13 @@
+.env
+.env.local
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+downloads/
+celerybeat/
+*.log
+.DS_Store

@@ -21,6 +21,15 @@ export function useClients() {
 
   useEffect(() => {
     refresh()
+
+    // Global yenileme eventini dinle
+    const handleRefresh = () => {
+      refresh()
+    }
+    window.addEventListener('mubis-clients-refresh', handleRefresh)
+    return () => {
+      window.removeEventListener('mubis-clients-refresh', handleRefresh)
+    }
   }, [refresh])
 
   return { clients, loading, refresh, setClients }

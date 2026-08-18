@@ -9,20 +9,29 @@ import {
   FileText, Calendar, Edit3, Plus, Trash2, Save, X,
   Globe, CreditCard, Hash, ListChecks, Shield,
   Briefcase, Tag, Upload, Search, Home, ExternalLink,
-  Eye, EyeOff, Lock, Landmark, KeyRound, Receipt, Users, AlertTriangle, DollarSign, CreditCard as CreditCardIcon
+  Eye, EyeOff, Lock, Landmark, KeyRound, Receipt, Users, AlertTriangle, DollarSign, CreditCard as CreditCardIcon,
+  Send, MessageCircle, Download, Camera
 } from 'lucide-react'
-import { getAccountPlans, saveAccountPlans, getEmployees, addEmployee, updateEmployee, deleteEmployee, saveEmployeesFromExcel } from '../services/clientService'
+import { getAccountPlans, saveAccountPlans, getEmployees, addEmployee, updateEmployee, deleteEmployee, saveEmployeesFromExcel, getPartners, addPartner, updatePartner, deletePartner } from '../services/clientService'
 import { getAccountingFee, saveAccountingFee, getPayments, addPayment, deletePayment, hesaplaBorcOzeti, BANKA_BILGILERI } from '../services/paymentService'
+import { uploadGelirBeyanDocument, uploadGeciciVergiDocument, uploadVergiLevhasi, uploadMaliEvrak } from '../services/documentService'
+import { supabase } from '../lib/supabase'
+import ZReportManager from '../components/ZReportManager'
+import ExpenseUploader from '../components/ExpenseUploader'
+import KiraTalepOnay from '../components/KiraTalepOnay'
+import PortalErisimKarti from '../components/PortalErisimKarti'
+import PortalOtomasyonKarti from '../components/PortalOtomasyonKarti'
 
 export default function ClientDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { updateClient } = useAuth()
-  const { clients } = useClients()
+  const { clients, refresh: refreshClients } = useClients()
   const [client, setClient] = useState(null)
   const [loading, setLoading] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
   const [activeTab, setActiveTab] = useState('info')
+  const [uploadDocType, setUploadDocType] = useState(null)
   const [editData, setEditData] = useState({})
   const [hesapKodlari, setHesapKodlari] = useState([])
   const [hesapSearch, setHesapSearch] = useState('')
@@ -42,14 +51,23 @@ export default function ClientDetail() {
   const [showPaymentForm, setShowPaymentForm] = useState(false)
   const [paymentForm, setPaymentForm] = useState({ tutar: '', odeme_tipi: 'eft', donem: '', aciklama: '', odeme_tarihi: new Date().toISOString().split('T')[0] })
 
-  // Yeni yetkili/ortak formu
-  const [newOfficial, setNewOfficial] = useState({ name: '', title: '', phone: '', email: '', tc: '', address: '', hisse: '', sermaye: '' })
-  const [showOfficialForm, setShowOfficialForm] = useState(false)
-  const [editOfficialIndex, setEditOfficialIndex] = useState(-1)
+  // Yeni yetkili/ortak formu (partners tablosu)
+  const [partners, setPartners] = useState([])
+  const [newPartner, setNewPartner] = useState({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', address: '' })
+  const [showPartnerForm, setShowPartnerForm] = useState(false)
+  const [editPartnerId, setEditPartnerId] = useState(null)
   // Yeni banka formu
   const [newBank, setNewBank] = useState({ bank: '', branch: '', iban: '', accountNo: '' })
   const [showBankForm, setShowBankForm] = useState(false)
   const [editBankIndex, setEditBankIndex] = useState(-1)
+  // Evrak yukleme
+  const [clientDocuments, setClientDocuments] = useState({})
+  const [docLoading, setDocLoading] = useState(false)
+  const [gelirBeyanYear, setGelirBeyanYear] = useState(new Date().getFullYear())
+  const [geciciVergiYear, setGeciciVergiYear] = useState(new Date().getFullYear())
+  const [geciciVergiPeriod, setGeciciVergiPeriod] = useState('1')
+  const [maliEvrakCategory, setMaliEvrakCategory] = useState('imza_beyani')
+  const [maliEvrakName, setMaliEvrakName] = useState('')
   // Sifre gorunurluk
   const [showPasswords, setShowPasswords] = useState({})
   // MUBiS Proxy durumu
@@ -93,12 +111,12 @@ export default function ClientDetail() {
 
   // DVS otomatik giris
   const handleDVSLogin = async (portalType = 'dvs') => {
-    if (proxyReady && client?.vergiUser && client?.vergiPass) {
-      await proxyLogin(portalType, { username: client.vergiUser, password: client.vergiPass })
+    if (proxyReady && client?.dvsUsername && client?.dvsPassword) {
+      await proxyLogin(portalType, { username: client.dvsUsername, password: client.dvsPassword })
     } else {
-      if (client?.vergiPass) {
-        navigator.clipboard.writeText(client.vergiPass)
-        alert(`Kullanici: ${client.vergiUser}\nSifre panoya kopyalandi!`)
+      if (client?.dvsPassword) {
+        navigator.clipboard.writeText(client.dvsPassword)
+        alert(`Kullanici: ${client.dvsUsername}\nSifre panoya kopyalandi!`)
       }
       window.open('https://dijital.gib.gov.tr/portal/login', '_blank')
     }
@@ -106,12 +124,12 @@ export default function ClientDetail() {
 
   // e-Arsiv otomatik giris
   const handleEArsivLogin = async () => {
-    if (proxyReady && client?.vergiUser && client?.vergiPass) {
-      await proxyLogin('earsiv', { username: client.vergiUser, password: client.vergiPass })
+    if (proxyReady && client?.dvsUsername && client?.dvsPassword) {
+      await proxyLogin('earsiv', { username: client.dvsUsername, password: client.dvsPassword })
     } else {
-      if (client?.vergiPass) {
-        navigator.clipboard.writeText(client.vergiPass)
-        alert(`Kullanici: ${client.vergiUser}\nSifre panoya kopyalandi!`)
+      if (client?.dvsPassword) {
+        navigator.clipboard.writeText(client.dvsPassword)
+        alert(`Kullanici: ${client.dvsUsername}\nSifre panoya kopyalandi!`)
       }
       window.open('https://earsivportal.efatura.gov.tr/intragiris.html', '_blank')
     }
@@ -157,6 +175,7 @@ export default function ClientDetail() {
     const found = clients.find(c => c.id === parseInt(id))
     if (found) {
       setClient(found)
+      setClientDocuments(found.client_documents || {})
       setEditData(found)
     }
     // Hesap kodlarini Supabase'den yukle
@@ -165,8 +184,151 @@ export default function ClientDetail() {
     loadPersonel()
     // Muhasebe ucretlerini yukle
     loadAccounting()
+    // Ortaklari yukle
+    loadPartners()
     setLoading(false)
   }, [id, clients])
+
+  const loadPartners = async () => {
+    try {
+      const data = await getPartners(parseInt(id))
+      setPartners(data)
+    } catch (e) { console.error('Ortak yukleme hatasi:', e) }
+  }
+
+  const updateClientDocuments = async (nextDocs) => {
+    setDocLoading(true)
+    try {
+      const { error } = await supabase
+        .from('clients')
+        .update({ client_documents: nextDocs })
+        .eq('id', parseInt(id))
+      if (error) throw error
+      setClientDocuments(nextDocs)
+      setClient(prev => prev ? { ...prev, client_documents: nextDocs } : prev)
+    } catch (e) {
+      console.error('Evrak kaydetme hatasi:', e)
+      throw new Error(e.message || 'Evrak kaydedilemedi')
+    } finally {
+      setDocLoading(false)
+    }
+  }
+
+  const handleGelirBeyanUpload = async (e, documentType) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setDocLoading(true)
+    try {
+      const uploaded = await uploadGelirBeyanDocument({
+        client,
+        year: gelirBeyanYear,
+        documentType,
+        file
+      })
+      const next = { ...clientDocuments }
+      next.mali_veriler = next.mali_veriler || {}
+      next.mali_veriler.gelir_beyani = next.mali_veriler.gelir_beyani || {}
+      next.mali_veriler.gelir_beyani[gelirBeyanYear] = next.mali_veriler.gelir_beyani[gelirBeyanYear] || {}
+      next.mali_veriler.gelir_beyani[gelirBeyanYear][documentType] = uploaded
+      await updateClientDocuments(next)
+      e.target.value = ''
+      alert('Evrak yuklendi.')
+    } catch (err) {
+      console.error('Gelir beyani yukleme hatasi:', err)
+      alert('Yukleme basarisiz: ' + (err.message || 'Bilinmeyen hata'))
+      setDocLoading(false)
+    }
+  }
+
+  const handleGeciciVergiUpload = async (e, documentType) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setDocLoading(true)
+    try {
+      const uploaded = await uploadGeciciVergiDocument({
+        client,
+        year: geciciVergiYear,
+        period: geciciVergiPeriod,
+        documentType,
+        file
+      })
+      const next = { ...clientDocuments }
+      next.mali_veriler = next.mali_veriler || {}
+      next.mali_veriler.gecici_vergi = next.mali_veriler.gecici_vergi || {}
+      next.mali_veriler.gecici_vergi[geciciVergiYear] = next.mali_veriler.gecici_vergi[geciciVergiYear] || {}
+      next.mali_veriler.gecici_vergi[geciciVergiYear][geciciVergiPeriod] = next.mali_veriler.gecici_vergi[geciciVergiYear][geciciVergiPeriod] || {}
+      next.mali_veriler.gecici_vergi[geciciVergiYear][geciciVergiPeriod][documentType] = uploaded
+      await updateClientDocuments(next)
+      e.target.value = ''
+      alert('Evrak yuklendi.')
+    } catch (err) {
+      console.error('Gecici vergi yukleme hatasi:', err)
+      alert('Yukleme basarisiz: ' + (err.message || 'Bilinmeyen hata'))
+      setDocLoading(false)
+    }
+  }
+
+  const handleVergiLevhasiUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setDocLoading(true)
+    try {
+      const uploaded = await uploadVergiLevhasi({ client, file })
+      const next = { ...clientDocuments }
+      next.mali_veriler = next.mali_veriler || {}
+      next.mali_veriler.vergi_levhasi = uploaded
+      await updateClientDocuments(next)
+      e.target.value = ''
+      alert('Vergi levhasi yuklendi.')
+    } catch (err) {
+      console.error('Vergi levhasi yukleme hatasi:', err)
+      alert('Yukleme basarisiz: ' + (err.message || 'Bilinmeyen hata'))
+      setDocLoading(false)
+    }
+  }
+
+  const handleMaliEvrakUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file || !maliEvrakName.trim()) {
+      alert('Lutfen evrak adi girin.')
+      return
+    }
+    setDocLoading(true)
+    try {
+      const uploaded = await uploadMaliEvrak({
+        client,
+        category: maliEvrakCategory,
+        name: maliEvrakName,
+        file
+      })
+      const next = { ...clientDocuments }
+      next.mali_evraklar = next.mali_evraklar || {}
+      next.mali_evraklar[maliEvrakCategory] = next.mali_evraklar[maliEvrakCategory] || []
+      next.mali_evraklar[maliEvrakCategory].push(uploaded)
+      await updateClientDocuments(next)
+      setMaliEvrakName('')
+      e.target.value = ''
+      alert('Evrak yuklendi.')
+    } catch (err) {
+      console.error('Mali evrak yukleme hatasi:', err)
+      alert('Yukleme basarisiz: ' + (err.message || 'Bilinmeyen hata'))
+      setDocLoading(false)
+    }
+  }
+
+  const handleDeleteClientDocument = async (pathGetter) => {
+    if (!window.confirm('Bu evragi silmek istediginize emin misiniz?')) return
+    setDocLoading(true)
+    try {
+      const next = { ...clientDocuments }
+      pathGetter(next)
+      await updateClientDocuments(next)
+    } catch (err) {
+      console.error('Evrak silme hatasi:', err)
+      alert('Silme basarisiz: ' + (err.message || 'Bilinmeyen hata'))
+      setDocLoading(false)
+    }
+  }
 
   const loadHesapKodlari = async () => {
     try {
@@ -208,17 +370,98 @@ export default function ClientDetail() {
   }
 
   const saveClient = async (data) => {
-    const result = await updateClient(parseInt(id), data)
-    if (result.success) {
-      setClient(data)
-      setEditData(data)
+    try {
+      const result = await updateClient(parseInt(id), data)
+      if (result.success) {
+        setClient(data)
+        setEditData(data)
+      } else {
+        alert('Kaydetme hatasi: ' + (result.error || 'Bilinmeyen hata'))
+      }
+      return result
+    } catch (err) {
+      const msg = err?.message || err?.error_description || 'Bilinmeyen hata'
+      alert('Kaydetme hatasi: ' + msg)
+      console.error('saveClient hatasi:', err)
+      return { success: false, error: msg }
     }
-    return result
   }
 
   const handleSave = async () => {
-    const result = await saveClient(editData)
+    // clients tablosuna gidecek izin verilen alanlar
+    const allowedFields = [
+      'name','shortName','company','vkn','tc','taxNo','email','phone','whatsapp','taxOffice','address','city',
+      'type','companyType','taxType','capital','openDate','closeDate','musteriSinifi',
+      'naceCode','naceDesc','efatura','earsiv','esmm','edefter','edefterPeriod','serbestMeslek',
+      'eimzaStart','eimzaEnd','kartTipi','kartSifre','kiraBilgisi','kiraKontratBitis',
+      'dvsUsername','dvsPassword','sgkUser','sgkIsyeriKodu','sgkSistemSifre','sgkIsyeriSifre',
+      'earsivUser','earsivPass','edevletUser','edevletPass','ticaretSicilNo','beyanProfile',
+      'status','username','password','tempPassword','officials','banks','services','documents',
+      'phoneNumbers','emails'
+    ]
+    const cleanData = {}
+    allowedFields.forEach(key => {
+      if (key in editData) cleanData[key] = editData[key]
+    })
+    // Tarih alanlarini yyyy-aa-gg formatinda normalize et
+    const dateFields = ['isAcilisTarihi','openDate','eimzaStart','eimzaEnd','kiraBaslangic','kiraBitis']
+    dateFields.forEach(df => {
+      if (cleanData[df] && typeof cleanData[df] === 'string' && cleanData[df].match(/^\d{2}\.\d{2}\.\d{4}$/)) {
+        const [g, a, y] = cleanData[df].split('.')
+        cleanData[df] = `${y}-${a}-${g}`
+      }
+    })
+    // kiraBilgisi icindeki tarihleri de normalize et
+    if (cleanData.kiraBilgisi && typeof cleanData.kiraBilgisi === 'object') {
+      const kb = { ...cleanData.kiraBilgisi }
+      ;['kiraBaslangic','kiraBitis'].forEach(df => {
+        if (kb[df] && typeof kb[df] === 'string' && kb[df].match(/^\d{2}\.\d{2}\.\d{4}$/)) {
+          const [g, a, y] = kb[df].split('.')
+          kb[df] = `${y}-${a}-${g}`
+        }
+      })
+      cleanData.kiraBilgisi = kb
+    }
+    // Eger isAcilisTarihi varsa openDate'e de yaz (geriye uyumluluk)
+    if (cleanData.isAcilisTarihi && !cleanData.openDate) {
+      cleanData.openDate = cleanData.isAcilisTarihi
+    }
+    const result = await saveClient(cleanData)
     if (result.success) setIsEditing(false)
+  }
+
+  // Kira bilgisi helper'lari (kira_bilgisi text/JSONB alani)
+  const getKiraBilgisi = (source) => {
+    const raw = source?.kiraBilgisi || source?.kira_bilgisi || {}
+    if (typeof raw === 'string') {
+      try { return JSON.parse(raw) } catch { return {} }
+    }
+    return raw || {}
+  }
+
+  const setKiraField = (field, value) => {
+    const kb = { ...getKiraBilgisi(editData), [field]: value }
+    setEditData({ ...editData, kiraBilgisi: kb })
+  }
+
+  const addEvSahibi = () => {
+    const kb = getKiraBilgisi(editData)
+    const list = [...(kb.evSahipleri || []), { tc: '', adSoyad: '', adres: '', hisseOrani: '' }]
+    setKiraField('evSahipleri', list)
+  }
+
+  const updateEvSahibi = (index, field, value) => {
+    const kb = getKiraBilgisi(editData)
+    const list = [...(kb.evSahipleri || [])]
+    list[index] = { ...list[index], [field]: value }
+    setKiraField('evSahipleri', list)
+  }
+
+  const removeEvSahibi = (index) => {
+    const kb = getKiraBilgisi(editData)
+    const list = [...(kb.evSahipleri || [])]
+    list.splice(index, 1)
+    setKiraField('evSahipleri', list)
   }
 
   const handlePhoneChange = (e) => {
@@ -228,6 +471,38 @@ export default function ClientDetail() {
       newData.whatsapp = val
     }
     setEditData(newData)
+  }
+
+  const formatDisplayDate = (val) => {
+    if (!val) return '-'
+    // Excel seri numarasi (ornek: 45192) - string olarak gelmis olabilir
+    if (typeof val === 'number' || (typeof val === 'string' && /^\d+$/.test(val.trim()) && parseInt(val.trim(),10) > 30000)) {
+      const num = typeof val === 'number' ? val : parseInt(val.trim(), 10)
+      const d = new Date((num - 25569) * 86400 * 1000)
+      if (isNaN(d.getTime())) return String(val)
+      const g = String(d.getDate()).padStart(2, '0')
+      const a = String(d.getMonth() + 1).padStart(2, '0')
+      const y = d.getFullYear()
+      return `${g}.${a}.${y}`
+    }
+    if (typeof val === 'string' && val.includes('T')) {
+      const d = new Date(val)
+      if (isNaN(d.getTime())) return val
+      const g = String(d.getDate()).padStart(2, '0')
+      const a = String(d.getMonth() + 1).padStart(2, '0')
+      const y = d.getFullYear()
+      return `${g}.${a}.${y}`
+    }
+    // zaten yyyy-aa-gg formatinda string ise cevir
+    if (typeof val === 'string' && val.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      const [y, a, g] = val.split('-')
+      return `${g}.${a}.${y}`
+    }
+    // gg.aa.yyyy formatinda ise oldugu gibi dondur
+    if (typeof val === 'string' && val.match(/^\d{2}\.\d{2}\.\d{4}$/)) {
+      return val
+    }
+    return val
   }
 
   const handleNaceSearch = (query) => {
@@ -255,32 +530,48 @@ export default function ClientDetail() {
     await saveClient(updated)
   }
 
-  // Yetkili/Ortak ekle veya guncelle
-  const addOfficial = async () => {
-    if (!newOfficial.name) return
-    const officials = [...(client.officials || [])]
-    if (editOfficialIndex >= 0) {
-      officials[editOfficialIndex] = { ...newOfficial }
-    } else {
-      officials.push({ ...newOfficial })
+  // Ortak ekle veya guncelle (partners tablosu)
+  const handleSavePartner = async () => {
+    if (!newPartner.name) return
+    try {
+      if (editPartnerId) {
+        await updatePartner(editPartnerId, newPartner)
+      } else {
+        await addPartner(parseInt(id), newPartner)
+      }
+      await loadPartners()
+      setNewPartner({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', address: '' })
+      setShowPartnerForm(false)
+      setEditPartnerId(null)
+    } catch (err) {
+      alert('Ortak kaydedilemedi: ' + (err.message || 'Bilinmeyen hata'))
     }
-    const updated = { ...client, officials }
-    await saveClient(updated)
-    setNewOfficial({ name: '', title: '', phone: '', email: '', tc: '', address: '', hisse: '', sermaye: '' })
-    setShowOfficialForm(false)
-    setEditOfficialIndex(-1)
   }
 
-  const startEditOfficial = (index) => {
-    setNewOfficial({ ...client.officials[index] })
-    setEditOfficialIndex(index)
-    setShowOfficialForm(true)
+  const startEditPartner = (partner) => {
+    setNewPartner({
+      name: partner.name || '',
+      title: partner.title || '',
+      phone: partner.phone || '',
+      email: partner.email || '',
+      tc: partner.tc || '',
+      vkn: partner.vkn || '',
+      vergi_dairesi: partner.vergi_dairesi || '',
+      hisse_orani: partner.hisse_orani || '',
+      address: partner.address || '',
+    })
+    setEditPartnerId(partner.id)
+    setShowPartnerForm(true)
   }
 
-  const removeOfficial = async (index) => {
-    const officials = [...(client.officials || [])]
-    officials.splice(index, 1)
-    await saveClient({ ...client, officials })
+  const removePartner = async (partnerId) => {
+    if (!confirm('Bu ortagi silmek istiyor musunuz?')) return
+    try {
+      await deletePartner(partnerId)
+      await loadPartners()
+    } catch (err) {
+      alert('Ortak silinemedi: ' + (err.message || 'Bilinmeyen hata'))
+    }
   }
 
   // Banka ekle veya guncelle
@@ -387,6 +678,32 @@ export default function ClientDetail() {
     return null
   }
 
+  // Veritabanindan gelen tarihi input[type=date] icin normalize et
+  function normalizeDateForInput(val) {
+    if (!val) return ''
+    if (typeof val === 'string' && val.match(/^\d{4}-\d{2}-\d{2}$/)) return val
+    if (typeof val === 'string' && val.match(/^\d{2}\.\d{2}\.\d{4}$/)) {
+      const [g, a, y] = val.split('.')
+      return `${y}-${a}-${g}`
+    }
+    if (typeof val === 'number') {
+      const d = new Date((val - 25569) * 86400 * 1000)
+      return d.toISOString().split('T')[0]
+    }
+    if (typeof val === 'string' && val.includes('T')) {
+      return val.split('T')[0]
+    }
+    // Eger sadece rakamlardan olusuyorsa (Excel seri numarasi string olarak gelmis olabilir)
+    if (typeof val === 'string' && /^\d+$/.test(val.trim())) {
+      const num = parseInt(val.trim(), 10)
+      if (!isNaN(num) && num > 30000) {
+        const d = new Date((num - 25569) * 86400 * 1000)
+        if (!isNaN(d.getTime())) return d.toISOString().split('T')[0]
+      }
+    }
+    return ''
+  }
+
   // Personel CRUD
   const handleSavePersonel = async () => {
     if (!personelForm.ad_soyad.trim()) return alert('Ad Soyad zorunlu!')
@@ -452,7 +769,8 @@ export default function ClientDetail() {
     )
   }
 
-  const isCompany = client.type === 'company'
+  const isCompany = client.type === 'company' || client.type === 'adi_ortaklik' || client.type === 'apartman_yonetimi' || client.type === 'dernek'
+  const isAdiOrtaklik = client.type === 'adi_ortaklik'
 
   const tabs = [
     { id: 'info', label: 'Bilgiler', icon: Building2 },
@@ -463,6 +781,7 @@ export default function ClientDetail() {
     { id: 'documents', label: 'Evraklar', icon: FileText },
     ...((client.musteriSinifi === '1. Sinif' || isCompany) ? [{ id: 'hesapkodlari', label: 'Hesap Kodlari', icon: Hash }] : []),
     { id: 'personel', label: 'Personel', icon: Users },
+    { id: 'zrapor', label: 'Belge Yükle', icon: Camera },
     { id: 'muhasebe', label: 'Muhasebe Ucreti', icon: DollarSign },
   ]
 
@@ -534,14 +853,32 @@ export default function ClientDetail() {
               {isCompany ? (
                 <>
                   <InfoRow label="Sirket Unvani" value={client.name} editKey="name" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                  <InfoRow label="Kisa Ad" value={client.shortName} editKey="shortName" isEditing={isEditing} editData={editData} setEditData={setEditData} />
                   <InfoRow label="VKN" value={client.vkn} editKey="vkn" isEditing={isEditing} editData={editData} setEditData={setEditData} />
                   <InfoRow label="Sermaye" value={client.capital} editKey="capital" isEditing={isEditing} editData={editData} setEditData={setEditData} />
                   <InfoRow label="Vergi Dairesi" value={client.taxOffice} editKey="taxOffice" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                  {/* Musteri Turu - Dropdown (sirket/adi ortaklik/apartman yonetimi) */}
+                  <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                    <span className="text-gray-400 text-sm">Musteri Turu</span>
+                    {isEditing ? (
+                      <select value={editData.type || 'company'} onChange={(e) => setEditData({...editData, type: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400">
+                        <option value="company">Sirket</option>
+                        <option value="individual">Gercek Kisi</option>
+                        <option value="adi_ortaklik">Adi Ortaklik</option>
+                        <option value="apartman_yonetimi">Apartman Yonetimi</option>
+                        <option value="dernek">Dernek</option>
+                      </select>
+                    ) : (
+                      <span className="text-white text-sm font-medium">{client.type === 'company' ? 'Sirket' : client.type === 'adi_ortaklik' ? 'Adi Ortaklik' : client.type === 'apartman_yonetimi' ? 'Apartman Yonetimi' : client.type === 'dernek' ? 'Dernek' : 'Gercek Kisi'}</span>
+                    )}
+                  </div>
                 </>
               ) : (
                 <>
                   <InfoRow label="Ad Soyad" value={client.name} editKey="name" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                  <InfoRow label="Kisa Ad" value={client.shortName} editKey="shortName" isEditing={isEditing} editData={editData} setEditData={setEditData} />
                   <InfoRow label="TC Kimlik No" value={client.tc} editKey="tc" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                  <InfoRow label="Vergi No" value={client.taxNo} editKey="taxNo" isEditing={isEditing} editData={editData} setEditData={setEditData} />
                   <InfoRow label="Vergi Dairesi" value={client.taxOffice} editKey="taxOffice" isEditing={isEditing} editData={editData} setEditData={setEditData} />
                   {/* Musteri Sinifi - Dropdown */}
                   <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
@@ -553,13 +890,47 @@ export default function ClientDetail() {
                         <option value="2. Sinif">2. Sinif (Isletme)</option>
                         <option value="Serbest Meslek">Serbest Meslek</option>
                         <option value="Basit Usul">Basit Usul</option>
+                        <option value="Dernek">Dernek</option>
+                        <option value="Apartman Yonetimi">Apartman Yonetimi</option>
                       </select>
                     ) : (
                       <span className="text-white text-sm font-medium">{client.musteriSinifi || '-'}</span>
                     )}
                   </div>
+                  {/* Musteri Turu - Dropdown */}
+                  <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                    <span className="text-gray-400 text-sm">Musteri Turu</span>
+                    {isEditing ? (
+                      <select value={editData.type || 'individual'} onChange={(e) => setEditData({...editData, type: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400">
+                        <option value="individual">Gercek Kisi</option>
+                        <option value="company">Sirket</option>
+                        <option value="adi_ortaklik">Adi Ortaklik</option>
+                        <option value="apartman_yonetimi">Apartman Yonetimi</option>
+                        <option value="dernek">Dernek</option>
+                      </select>
+                    ) : (
+                      <span className="text-white text-sm font-medium">{client.type === 'company' ? 'Sirket' : client.type === 'adi_ortaklik' ? 'Adi Ortaklik' : client.type === 'apartman_yonetimi' ? 'Apartman Yonetimi' : client.type === 'dernek' ? 'Dernek' : 'Gercek Kisi'}</span>
+                    )}
+                  </div>
                 </>
               )}
+              {/* Vergi Turu */}
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm">Vergi Turu</span>
+                {isEditing ? (
+                  <select value={editData.taxType || ''} onChange={(e) => setEditData({...editData, taxType: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400">
+                    <option value="">Seciniz</option>
+                    <option value="Kurumlar Vergisi">Kurumlar Vergisi</option>
+                    <option value="Gelir Vergisi">Gelir Vergisi</option>
+                    <option value="Basit Usul">Basit Usul</option>
+                    <option value="Apartman Yonetimi">Apartman Yonetimi</option>
+                    <option value="Dernek">Dernek</option>
+                    <option value="Serbest Meslek">Serbest Meslek</option>
+                  </select>
+                ) : (
+                  <span className="text-white text-sm font-medium">{client.taxType || '-'}</span>
+                )}
+              </div>
               {/* Faaliyet Kodu */}
               <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl relative">
                 <span className="text-gray-400 text-sm">Faaliyet Kodu</span>
@@ -633,6 +1004,151 @@ export default function ClientDetail() {
                 )}
               </div>
               <InfoRow label="E-Posta" value={client.email} editKey="email" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+              
+              {/* Birden Fazla Telefon / WhatsApp */}
+              <div className="p-3 bg-blue-900/20 rounded-xl">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-gray-400 text-sm">Iletisim Numaralari</span>
+                  {isEditing && (
+                    <button
+                      onClick={() => setEditData(prev => ({
+                        ...prev,
+                        phoneNumbers: [...(prev.phoneNumbers || []), { name: '', phone: '', isWhatsapp: true }]
+                      }))}
+                      className="text-xs text-yellow-400 hover:text-yellow-300"
+                    >
+                      + Yeni
+                    </button>
+                  )}
+                </div>
+                {isEditing ? (
+                  <div className="space-y-2">
+                    {(editData.phoneNumbers || []).map((item, idx) => (
+                      <div key={idx} className="flex gap-2 items-center">
+                        <input
+                          type="text"
+                          placeholder="Ad Soyad"
+                          value={item.name || ''}
+                          onChange={(e) => {
+                            const next = [...(editData.phoneNumbers || [])]
+                            next[idx] = { ...next[idx], name: e.target.value }
+                            setEditData(prev => ({ ...prev, phoneNumbers: next }))
+                          }}
+                          className="flex-1 bg-blue-900/30 border border-blue-700/50 rounded-lg py-1 px-2 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-yellow-400"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Telefon"
+                          value={item.phone || ''}
+                          onChange={(e) => {
+                            const next = [...(editData.phoneNumbers || [])]
+                            next[idx] = { ...next[idx], phone: e.target.value }
+                            setEditData(prev => ({ ...prev, phoneNumbers: next }))
+                          }}
+                          className="flex-1 bg-blue-900/30 border border-blue-700/50 rounded-lg py-1 px-2 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-yellow-400"
+                        />
+                        <label className="flex items-center gap-1 text-xs text-gray-400 whitespace-nowrap cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={item.isWhatsapp !== false}
+                            onChange={(e) => {
+                              const next = [...(editData.phoneNumbers || [])]
+                              next[idx] = { ...next[idx], isWhatsapp: e.target.checked }
+                              setEditData(prev => ({ ...prev, phoneNumbers: next }))
+                            }}
+                            className="rounded border-blue-700/50"
+                          />
+                          WA
+                        </label>
+                        {(editData.phoneNumbers || []).length > 1 && (
+                          <button
+                            onClick={() => {
+                              const next = (editData.phoneNumbers || []).filter((_, i) => i !== idx)
+                              setEditData(prev => ({ ...prev, phoneNumbers: next }))
+                            }}
+                            className="p-1 text-gray-500 hover:text-red-400"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {(client.phoneNumbers || []).length > 0 ? (
+                      (client.phoneNumbers || []).map((item, idx) => (
+                        <div key={idx} className="flex items-center gap-2 text-sm">
+                          <span className="text-white">{item.name || 'Kisi'}:</span>
+                          <span className="text-gray-300">{item.phone}</span>
+                          {item.isWhatsapp && <span className="text-green-400 text-xs">(WA)</span>}
+                        </div>
+                      ))
+                    ) : (
+                      <span className="text-gray-500 text-sm">-</span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Birden Fazla E-posta */}
+              <div className="p-3 bg-blue-900/20 rounded-xl">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-gray-400 text-sm">E-posta Adresleri</span>
+                  {isEditing && (
+                    <button
+                      onClick={() => setEditData(prev => ({
+                        ...prev,
+                        emails: [...(prev.emails || []), { email: '' }]
+                      }))}
+                      className="text-xs text-yellow-400 hover:text-yellow-300"
+                    >
+                      + Yeni
+                    </button>
+                  )}
+                </div>
+                {isEditing ? (
+                  <div className="space-y-2">
+                    {(editData.emails || []).map((item, idx) => (
+                      <div key={idx} className="flex gap-2 items-center">
+                        <input
+                          type="email"
+                          placeholder="ornek@email.com"
+                          value={item.email || ''}
+                          onChange={(e) => {
+                            const next = [...(editData.emails || [])]
+                            next[idx] = { email: e.target.value }
+                            setEditData(prev => ({ ...prev, emails: next }))
+                          }}
+                          className="flex-1 bg-blue-900/30 border border-blue-700/50 rounded-lg py-1 px-2 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-yellow-400"
+                        />
+                        {(editData.emails || []).length > 1 && (
+                          <button
+                            onClick={() => {
+                              const next = (editData.emails || []).filter((_, i) => i !== idx)
+                              setEditData(prev => ({ ...prev, emails: next }))
+                            }}
+                            className="p-1 text-gray-500 hover:text-red-400"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {(client.emails || []).length > 0 ? (
+                      (client.emails || []).map((item, idx) => (
+                        <div key={idx} className="text-sm text-gray-300">{item.email}</div>
+                      ))
+                    ) : (
+                      <span className="text-gray-500 text-sm">-</span>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <InfoRow label="Web Sitesi" value={client.website} editKey="website" isEditing={isEditing} editData={editData} setEditData={setEditData} />
               {/* Adres - Textarea 2 satir */}
               <div className="p-3 bg-blue-900/20 rounded-xl">
@@ -649,31 +1165,149 @@ export default function ClientDetail() {
           {/* Kira Bilgileri */}
           <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2"><Home className="w-5 h-5 text-yellow-400" /> Kira Bilgileri</h3>
+
+            {/* Musteriden gelen kira yenileme bildirimi */}
+            <KiraTalepOnay
+              client={client}
+              onGuncellendi={() => refreshClients?.()}
+            />
+
             <div className="space-y-3">
-              <InfoRow label="Aylik Kira" value={client.kiraAmount} editKey="kiraAmount" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+              {/* Kira Tipi */}
               <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
-                <span className="text-gray-400 text-sm">Kontrat Baslangic</span>
+                <span className="text-gray-400 text-sm">Sahiplik Durumu</span>
                 {isEditing ? (
-                  <input type="date" value={editData.kiraBaslangic || ''} onChange={(e) => setEditData({...editData, kiraBaslangic: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" />
+                  <select
+                    value={getKiraBilgisi(editData).kiraTipi || ''}
+                    onChange={(e) => setKiraField('kiraTipi', e.target.value)}
+                    className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
+                  >
+                    <option value="">Seciniz</option>
+                    <option value="mal_sahibi">Mal Sahibi</option>
+                    <option value="kiraci">Kiraci</option>
+                  </select>
                 ) : (
-                  <span className="text-white text-sm font-medium">{client.kiraBaslangic || '-'}</span>
+                  <span className="text-white text-sm font-medium">
+                    {getKiraBilgisi(client).kiraTipi === 'mal_sahibi' ? 'Mal Sahibi' : getKiraBilgisi(client).kiraTipi === 'kiraci' ? 'Kiraci' : '-'}
+                  </span>
                 )}
               </div>
-              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
-                <span className="text-gray-400 text-sm">Kontrat Bitis</span>
-                {isEditing ? (
-                  <input type="date" value={editData.kiraBitis || ''} onChange={(e) => setEditData({...editData, kiraBitis: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" />
-                ) : (
-                  <span className="text-white text-sm font-medium">{client.kiraBitis || '-'}</span>
-                )}
-              </div>
-              {client.kiraBitis && (() => {
-                const diff = Math.ceil((new Date(client.kiraBitis) - new Date()) / (1000 * 60 * 60 * 24))
-                if (diff <= 60 && diff > 0) return <div className="p-3 bg-yellow-500/10 rounded-xl border border-yellow-500/30"><span className="text-yellow-400 text-sm font-medium">Kontrat bitisine {diff} gun kaldi!</span></div>
-                if (diff <= 0) return <div className="p-3 bg-red-500/10 rounded-xl border border-red-500/30"><span className="text-red-400 text-sm font-medium">Kontrat suresi dolmus!</span></div>
-                return null
-              })()}
-              <InfoRow label="Ev Sahibi" value={client.kiraSahibi} editKey="kiraSahibi" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+              {/* Isyeri Kirasi (sadece kiraci) */}
+              {getKiraBilgisi(isEditing ? editData : client).kiraTipi === 'kiraci' && (
+                <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                  <span className="text-gray-400 text-sm">Isyeri Kirasi (Aylik)</span>
+                  {isEditing ? (
+                    <input
+                      type="number"
+                      value={getKiraBilgisi(editData).isYeriKirasi || ''}
+                      onChange={(e) => setKiraField('isYeriKirasi', e.target.value)}
+                      placeholder="Orn: 15000"
+                      className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
+                    />
+                  ) : (
+                    <span className="text-white text-sm font-medium">{getKiraBilgisi(client).isYeriKirasi ? `${Number(getKiraBilgisi(client).isYeriKirasi).toLocaleString('tr-TR')} TL` : '-'}</span>
+                  )}
+                </div>
+              )}
+              {/* Kira Baslangic / Bitis Tarihleri (sadece kiraci) */}
+              {getKiraBilgisi(isEditing ? editData : client).kiraTipi === 'kiraci' && (
+                <>
+                  <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                    <span className="text-gray-400 text-sm">Kira Baslangic Tarihi</span>
+                    {isEditing ? (
+                      <input
+                        type="date"
+                        value={normalizeDateForInput(getKiraBilgisi(editData).kiraBaslangic)}
+                        onChange={(e) => setKiraField('kiraBaslangic', e.target.value)}
+                        className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
+                      />
+                    ) : (
+                      <span className="text-white text-sm font-medium">{formatDisplayDate(getKiraBilgisi(client).kiraBaslangic)}</span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                    <span className="text-gray-400 text-sm">Kira Bitis Tarihi</span>
+                    {isEditing ? (
+                      <input
+                        type="date"
+                        value={normalizeDateForInput(getKiraBilgisi(editData).kiraBitis)}
+                        onChange={(e) => setKiraField('kiraBitis', e.target.value)}
+                        className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
+                      />
+                    ) : (
+                      <span className="text-white text-sm font-medium">{formatDisplayDate(getKiraBilgisi(client).kiraBitis)}</span>
+                    )}
+                  </div>
+                  {getKiraBilgisi(client).kiraBitis && !isEditing && (() => {
+                    const diff = Math.ceil((new Date(getKiraBilgisi(client).kiraBitis) - new Date()) / (1000 * 60 * 60 * 24))
+                    if (diff <= 60 && diff > 0) return <div className="p-3 bg-yellow-500/10 rounded-xl border border-yellow-500/30"><span className="text-yellow-400 text-sm font-medium">Kontrat bitisine {diff} gun kaldi!</span></div>
+                    if (diff <= 0) return <div className="p-3 bg-red-500/10 rounded-xl border border-red-500/30"><span className="text-red-400 text-sm font-medium">Kontrat suresi dolmus!</span></div>
+                    return null
+                  })()}
+                </>
+              )}
+              {/* Stopaj (sadece kiraci) */}
+              {getKiraBilgisi(isEditing ? editData : client).kiraTipi === 'kiraci' && (
+                <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                  <span className="text-gray-400 text-sm">Stopaj</span>
+                  {isEditing ? (
+                    <select
+                      value={getKiraBilgisi(editData).stopaj || ''}
+                      onChange={(e) => setKiraField('stopaj', e.target.value)}
+                      className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
+                    >
+                      <option value="">Seciniz</option>
+                      <option value="var">Var</option>
+                      <option value="yok">Yok</option>
+                    </select>
+                  ) : (
+                    <span className="text-white text-sm font-medium">{getKiraBilgisi(client).stopaj === 'var' ? 'Var' : getKiraBilgisi(client).stopaj === 'yok' ? 'Yok' : '-'}</span>
+                  )}
+                </div>
+              )}
+              {/* Ev Sahipleri (sadece kiraci) */}
+              {getKiraBilgisi(isEditing ? editData : client).kiraTipi === 'kiraci' && (
+                <div className="p-3 bg-blue-900/20 rounded-xl">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-gray-400 text-sm">Ev Sahipleri</span>
+                    {isEditing && (
+                      <button onClick={addEvSahibi} className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> Ev Sahibi Ekle</button>
+                    )}
+                  </div>
+                  {(getKiraBilgisi(isEditing ? editData : client).evSahipleri || []).length === 0 ? (
+                    <p className="text-gray-500 text-xs">Ev sahibi kaydi yok</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {(getKiraBilgisi(isEditing ? editData : client).evSahipleri || []).map((es, i) => (
+                        <div key={i} className="bg-blue-950/40 rounded-lg p-3 border border-blue-700/30">
+                          {isEditing ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <input type="text" value={es.tc || ''} onChange={(e) => updateEvSahibi(i, 'tc', e.target.value)} placeholder="TC Kimlik No" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                              <input type="text" value={es.adSoyad || ''} onChange={(e) => updateEvSahibi(i, 'adSoyad', e.target.value)} placeholder="Ad Soyad" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                              <input type="text" value={es.hisseOrani || ''} onChange={(e) => updateEvSahibi(i, 'hisseOrani', e.target.value)} placeholder="Hisse Orani (%)" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                              <input type="text" value={es.adres || ''} onChange={(e) => updateEvSahibi(i, 'adres', e.target.value)} placeholder="Adres" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                              <div className="sm:col-span-2 text-right">
+                                <button onClick={() => removeEvSahibi(i)} className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1 ml-auto"><Trash2 className="w-3 h-3" /> Kaldir</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-sm">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-white font-medium">{es.adSoyad || '-'}</span>
+                                {es.hisseOrani && <span className="text-blue-400 text-xs">%{es.hisseOrani}</span>}
+                              </div>
+                              <div className="text-gray-400 text-xs mt-1 grid grid-cols-1 sm:grid-cols-2 gap-1">
+                                {es.tc && <span>TC: {es.tc}</span>}
+                                {es.adres && <span className="sm:col-span-2">Adres: {es.adres}</span>}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -683,11 +1317,15 @@ export default function ClientDetail() {
             <div className="space-y-3">
               <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
                 <span className="text-gray-400 text-sm">Is Acilis</span>
-                {isEditing ? <input type="date" value={editData.isAcilisTarihi || editData.openDate || ''} onChange={(e) => setEditData({...editData, isAcilisTarihi: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" /> : <span className="text-white text-sm">{client.isAcilisTarihi || client.openDate || '-'}</span>}
+                {isEditing ? <input type="date" value={normalizeDateForInput(editData.isAcilisTarihi || editData.openDate)} onChange={(e) => setEditData({...editData, isAcilisTarihi: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" /> : <span className="text-white text-sm">{formatDisplayDate(client.isAcilisTarihi || client.openDate)}</span>}
+              </div>
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm">e-Imza Baslangic</span>
+                {isEditing ? <input type="date" value={normalizeDateForInput(editData.eimzaStart)} onChange={(e) => setEditData({...editData, eimzaStart: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" /> : <span className="text-white text-sm">{formatDisplayDate(client.eimzaStart)}</span>}
               </div>
               <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
                 <span className="text-gray-400 text-sm">e-Imza Bitis</span>
-                {isEditing ? <input type="date" value={editData.eimzaEnd || ''} onChange={(e) => setEditData({...editData, eimzaEnd: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" /> : <span className="text-white text-sm">{client.eimzaEnd || '-'}</span>}
+                {isEditing ? <input type="date" value={normalizeDateForInput(editData.eimzaEnd)} onChange={(e) => setEditData({...editData, eimzaEnd: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" /> : <span className="text-white text-sm">{formatDisplayDate(client.eimzaEnd)}</span>}
               </div>
             </div>
           </div>
@@ -708,54 +1346,56 @@ export default function ClientDetail() {
       {activeTab === 'officials' && isCompany && (
         <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
           <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-semibold text-white">Sirket Ortaklari / Yetkililer</h3>
-            <button onClick={() => { setShowOfficialForm(!showOfficialForm); setEditOfficialIndex(-1); setNewOfficial({ name: '', title: '', phone: '', email: '', tc: '', address: '', hisse: '', sermaye: '' }) }} className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1">
+            <h3 className="text-lg font-semibold text-white">{isAdiOrtaklik ? 'Adi Ortaklik Ortaklari' : 'Sirket Ortaklari / Yetkililer'}</h3>
+            <button onClick={() => { setShowPartnerForm(!showPartnerForm); setEditPartnerId(null); setNewPartner({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', address: '' }) }} className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1">
               <Plus className="w-4 h-4" /><span>Ortak Ekle</span>
             </button>
           </div>
 
-          {showOfficialForm && (
+          {showPartnerForm && (
             <div className="bg-blue-900/20 rounded-xl p-4 mb-4 border border-blue-700/30">
-              <h4 className="text-white font-medium mb-3 text-sm">{editOfficialIndex >= 0 ? 'Ortak / Yetkili Duzenle' : 'Yeni Ortak / Yetkili'}</h4>
+              <h4 className="text-white font-medium mb-3 text-sm">{editPartnerId ? 'Ortak Duzenle' : 'Yeni Ortak'}</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <input type="text" value={newOfficial.name} onChange={(e) => setNewOfficial({...newOfficial, name: e.target.value})} placeholder="Ad Soyad *" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                <input type="text" value={newOfficial.title} onChange={(e) => setNewOfficial({...newOfficial, title: e.target.value})} placeholder="Unvan (Ortak/Mudur)" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                <input type="text" value={newOfficial.tc} onChange={(e) => setNewOfficial({...newOfficial, tc: e.target.value})} placeholder="TC Kimlik No" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                <input type="text" value={newOfficial.phone} onChange={(e) => setNewOfficial({...newOfficial, phone: e.target.value})} placeholder="Telefon" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                <input type="text" value={newOfficial.email} onChange={(e) => setNewOfficial({...newOfficial, email: e.target.value})} placeholder="E-Posta" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                <input type="text" value={newOfficial.hisse} onChange={(e) => setNewOfficial({...newOfficial, hisse: e.target.value})} placeholder="Hisse Orani (%)" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                <input type="text" value={newOfficial.sermaye} onChange={(e) => setNewOfficial({...newOfficial, sermaye: e.target.value})} placeholder="Sermaye Tutari" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                <textarea value={newOfficial.address} onChange={(e) => setNewOfficial({...newOfficial, address: e.target.value})} placeholder="Adres" rows={1} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400 resize-none sm:col-span-2" />
+                <input type="text" value={newPartner.name} onChange={(e) => setNewPartner({...newPartner, name: e.target.value})} placeholder="Ad Soyad *" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newPartner.title} onChange={(e) => setNewPartner({...newPartner, title: e.target.value})} placeholder="Unvan (Ortak/Mudur)" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newPartner.tc} onChange={(e) => setNewPartner({...newPartner, tc: e.target.value})} placeholder="TC Kimlik No" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newPartner.vkn} onChange={(e) => setNewPartner({...newPartner, vkn: e.target.value})} placeholder="Vergi No" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newPartner.vergi_dairesi} onChange={(e) => setNewPartner({...newPartner, vergi_dairesi: e.target.value})} placeholder="Vergi Dairesi" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newPartner.hisse_orani} onChange={(e) => setNewPartner({...newPartner, hisse_orani: e.target.value})} placeholder="Hisse Orani (%)" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newPartner.phone} onChange={(e) => setNewPartner({...newPartner, phone: e.target.value})} placeholder="Telefon" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newPartner.email} onChange={(e) => setNewPartner({...newPartner, email: e.target.value})} placeholder="E-Posta" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <textarea value={newPartner.address} onChange={(e) => setNewPartner({...newPartner, address: e.target.value})} placeholder="Adres" rows={1} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400 resize-none sm:col-span-2" />
               </div>
               <div className="flex gap-2 mt-3">
-                <button onClick={addOfficial} className="bg-green-500/20 text-green-400 px-4 py-2 rounded-lg text-sm font-medium">{editOfficialIndex >= 0 ? 'Guncelle' : 'Kaydet'}</button>
-                <button onClick={() => { setShowOfficialForm(false); setEditOfficialIndex(-1); setNewOfficial({ name: '', title: '', phone: '', email: '', tc: '', address: '', hisse: '', sermaye: '' }) }} className="bg-red-500/20 text-red-400 px-4 py-2 rounded-lg text-sm font-medium">Iptal</button>
+                <button onClick={handleSavePartner} className="bg-green-500/20 text-green-400 px-4 py-2 rounded-lg text-sm font-medium">{editPartnerId ? 'Guncelle' : 'Kaydet'}</button>
+                <button onClick={() => { setShowPartnerForm(false); setEditPartnerId(null); setNewPartner({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', address: '' }) }} className="bg-red-500/20 text-red-400 px-4 py-2 rounded-lg text-sm font-medium">Iptal</button>
               </div>
             </div>
           )}
 
-          {client.officials && client.officials.length > 0 ? (
+          {partners.length > 0 ? (
             <div className="space-y-3">
-              {client.officials.map((official, i) => (
-                <div key={i} className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/20">
+              {partners.map((partner) => (
+                <div key={partner.id} className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/20">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-white font-medium">{official.name}</span>
-                        {official.title && <span className="text-yellow-500 text-xs bg-yellow-500/10 px-2 py-0.5 rounded">{official.title}</span>}
-                        {official.hisse && <span className="text-blue-400 text-xs">%{official.hisse}</span>}
+                        <span className="text-white font-medium">{partner.name}</span>
+                        {partner.title && <span className="text-yellow-500 text-xs bg-yellow-500/10 px-2 py-0.5 rounded">{partner.title}</span>}
+                        {partner.hisse_orani && <span className="text-blue-400 text-xs">%{partner.hisse_orani}</span>}
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 mt-2 text-sm text-gray-400">
-                        {official.tc && <span>TC: {official.tc}</span>}
-                        {official.phone && <span>Tel: {official.phone}</span>}
-                        {official.email && <span>E-Posta: {official.email}</span>}
-                        {official.sermaye && <span>Sermaye: {official.sermaye}</span>}
-                        {official.address && <span className="sm:col-span-2">Adres: {official.address}</span>}
+                        {partner.tc && <span>TC: {partner.tc}</span>}
+                        {partner.vkn && <span>VKN: {partner.vkn}</span>}
+                        {partner.vergi_dairesi && <span>Vergi Dairesi: {partner.vergi_dairesi}</span>}
+                        {partner.phone && <span>Tel: {partner.phone}</span>}
+                        {partner.email && <span>E-Posta: {partner.email}</span>}
+                        {partner.address && <span className="sm:col-span-2">Adres: {partner.address}</span>}
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
-                      <button onClick={() => startEditOfficial(i)} className="text-gray-500 hover:text-yellow-400 transition-colors p-1" title="Duzenle"><Edit3 className="w-4 h-4" /></button>
-                      <button onClick={() => removeOfficial(i)} className="text-gray-500 hover:text-red-400 transition-colors p-1" title="Sil"><Trash2 className="w-4 h-4" /></button>
+                      <button onClick={() => startEditPartner(partner)} className="text-gray-500 hover:text-yellow-400 transition-colors p-1" title="Duzenle"><Edit3 className="w-4 h-4" /></button>
+                      <button onClick={() => removePartner(partner.id)} className="text-gray-500 hover:text-red-400 transition-colors p-1" title="Sil"><Trash2 className="w-4 h-4" /></button>
                     </div>
                   </div>
                 </div>
@@ -848,6 +1488,12 @@ export default function ClientDetail() {
       {/* ==================== KURUM ERİŞİMİ TAB ==================== */}
       {activeTab === 'kurumlar' && (
         <div className="space-y-6">
+          {/* MUBiS Portal Erisimi */}
+          <PortalErisimKarti client={client} onGuncellendi={() => refreshClients?.()} />
+
+          {/* Otomatik Belge Toplama */}
+          <PortalOtomasyonKarti client={client} />
+
           {/* Portal Sifreleri */}
           <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
@@ -862,21 +1508,21 @@ export default function ClientDetail() {
                 </div>
                 {isEditing ? (
                   <div className="space-y-2">
-                    <input type="text" value={editData.vergiUser || ''} onChange={(e) => setEditData({...editData, vergiUser: e.target.value})} placeholder="Kullanici Adi / VKN" className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                    <input type="text" value={editData.dvsUsername || ''} onChange={(e) => setEditData({...editData, dvsUsername: e.target.value})} placeholder="Kullanici Adi / VKN" className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
                     <div className="relative">
-                      <input type={showPasswords.vergiPass ? 'text' : 'password'} value={editData.vergiPass || ''} onChange={(e) => setEditData({...editData, vergiPass: e.target.value})} placeholder="Sifre" className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 pr-10 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                      <button type="button" onClick={() => setShowPasswords({...showPasswords, vergiPass: !showPasswords.vergiPass})} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
-                        {showPasswords.vergiPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      <input type={showPasswords.dvsPassword ? 'text' : 'password'} value={editData.dvsPassword || ''} onChange={(e) => setEditData({...editData, dvsPassword: e.target.value})} placeholder="Sifre" className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 pr-10 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                      <button type="button" onClick={() => setShowPasswords({...showPasswords, dvsPassword: !showPasswords.dvsPassword})} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                        {showPasswords.dvsPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
                     </div>
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    <div className="flex items-center justify-between"><span className="text-gray-400 text-xs">Kullanici:</span><span className="text-gray-200 text-sm font-mono">{client.vergiUser || '-'}</span></div>
+                    <div className="flex items-center justify-between"><span className="text-gray-400 text-xs">Kullanici:</span><span className="text-gray-200 text-sm font-mono">{client.dvsUsername || '-'}</span></div>
                     <div className="flex items-center justify-between"><span className="text-gray-400 text-xs">Sifre:</span>
                       <div className="flex items-center gap-1">
-                        <span className="text-gray-200 text-sm font-mono">{client.vergiPass ? (showPasswords.vergiPass ? client.vergiPass : '••••••••') : '-'}</span>
-                        {client.vergiPass && <button onClick={() => setShowPasswords({...showPasswords, vergiPass: !showPasswords.vergiPass})} className="text-gray-500 hover:text-yellow-400 transition-colors">{showPasswords.vergiPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}</button>}
+                        <span className="text-gray-200 text-sm font-mono">{client.dvsPassword ? (showPasswords.dvsPassword ? client.dvsPassword : '••••••••') : '-'}</span>
+                        {client.dvsPassword && <button onClick={() => setShowPasswords({...showPasswords, dvsPassword: !showPasswords.dvsPassword})} className="text-gray-500 hover:text-yellow-400 transition-colors">{showPasswords.dvsPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}</button>}
                       </div>
                     </div>
                   </div>
@@ -1223,8 +1869,194 @@ export default function ClientDetail() {
       {/* ==================== EVRAKLAR TAB ==================== */}
       {activeTab === 'documents' && (
         <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
-          <h3 className="text-lg font-semibold text-white mb-4">Evraklar</h3>
-          <p className="text-gray-500 text-center py-8">Evrak merkezi modulu ile entegre edilecek</p>
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-lg font-semibold text-white">📁 Evrak Yonetimi</h3>
+            {docLoading && <span className="text-yellow-400 text-sm animate-pulse">Islem yapiliyor...</span>}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Gelir Beyani */}
+            <div className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/30">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-white font-medium">Gelir Beyani</h4>
+                <select
+                  value={gelirBeyanYear}
+                  onChange={e => setGelirBeyanYear(e.target.value)}
+                  className="bg-blue-950 border border-blue-700/50 rounded-lg px-2 py-1 text-white text-sm"
+                >
+                  {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+              <div className="space-y-3">
+                {[
+                  { key: 'beyanname', label: 'Gelir/Kurumlar Vergi Beyani' },
+                  { key: 'tahakkuk', label: 'Tahakkuk' },
+                  { key: 'mizan', label: 'Mizan' }
+                ].map(doc => {
+                  const docData = clientDocuments?.mali_veriler?.gelir_beyani?.[gelirBeyanYear]?.[doc.key]
+                  return (
+                    <div key={doc.key} className="flex items-center justify-between p-3 bg-blue-950/40 rounded-lg">
+                      <span className="text-gray-300 text-sm">{doc.label}</span>
+                      <div className="flex items-center gap-2">
+                        {docData?.url ? (
+                          <>
+                            <a href={docData.url} target="_blank" rel="noreferrer" className="p-1.5 bg-blue-500/20 rounded-lg text-blue-400 hover:bg-blue-500/30" title="Goruntule"><Eye className="w-4 h-4" /></a>
+                            <a href={docData.url} download className="p-1.5 bg-green-500/20 rounded-lg text-green-400 hover:bg-green-500/30" title="Indir"><Download className="w-4 h-4" /></a>
+                            <button
+                              onClick={() => handleDeleteClientDocument(next => { delete next.mali_veriler.gelir_beyani[gelirBeyanYear][doc.key] })}
+                              className="p-1.5 bg-red-500/20 rounded-lg text-red-400 hover:bg-red-500/30"
+                              title="Sil"
+                            ><Trash2 className="w-4 h-4" /></button>
+                          </>
+                        ) : (
+                          <label className={`flex items-center gap-1 px-3 py-1.5 rounded-lg border border-dashed cursor-pointer text-sm ${docLoading ? 'opacity-50 cursor-not-allowed' : 'border-blue-700/50 hover:border-yellow-500/50 hover:bg-blue-900/30 text-gray-300'}`}>
+                            <Upload className="w-4 h-4" />
+                            <span>PDF Y</span>
+                            <input type="file" accept="application/pdf" disabled={docLoading} className="hidden" onChange={e => { handleGelirBeyanUpload(e, doc.key); e.target.value = '' }} />
+                          </label>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Gecici Vergi */}
+            <div className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/30">
+              <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+                <h4 className="text-white font-medium">Gecici Vergi</h4>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={geciciVergiYear}
+                    onChange={e => setGeciciVergiYear(e.target.value)}
+                    className="bg-blue-950 border border-blue-700/50 rounded-lg px-2 py-1 text-white text-sm"
+                  >
+                    {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                  <select
+                    value={geciciVergiPeriod}
+                    onChange={e => setGeciciVergiPeriod(e.target.value)}
+                    className="bg-blue-950 border border-blue-700/50 rounded-lg px-2 py-1 text-white text-sm"
+                  >
+                    {[1, 2, 3, 4].map(p => <option key={p} value={p}>{p}. Donem</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {[
+                  { key: 'beyanname', label: 'Gecici Vergi Beyanname' },
+                  { key: 'tahakkuk', label: 'Tahakkuk' },
+                  { key: 'mizan', label: 'Mizan' }
+                ].map(doc => {
+                  const docData = clientDocuments?.mali_veriler?.gecici_vergi?.[geciciVergiYear]?.[geciciVergiPeriod]?.[doc.key]
+                  return (
+                    <div key={doc.key} className="flex items-center justify-between p-3 bg-blue-950/40 rounded-lg">
+                      <span className="text-gray-300 text-sm">{doc.label}</span>
+                      <div className="flex items-center gap-2">
+                        {docData?.url ? (
+                          <>
+                            <a href={docData.url} target="_blank" rel="noreferrer" className="p-1.5 bg-blue-500/20 rounded-lg text-blue-400 hover:bg-blue-500/30" title="Goruntule"><Eye className="w-4 h-4" /></a>
+                            <a href={docData.url} download className="p-1.5 bg-green-500/20 rounded-lg text-green-400 hover:bg-green-500/30" title="Indir"><Download className="w-4 h-4" /></a>
+                            <button
+                              onClick={() => handleDeleteClientDocument(next => { delete next.mali_veriler.gecici_vergi[geciciVergiYear][geciciVergiPeriod][doc.key] })}
+                              className="p-1.5 bg-red-500/20 rounded-lg text-red-400 hover:bg-red-500/30"
+                              title="Sil"
+                            ><Trash2 className="w-4 h-4" /></button>
+                          </>
+                        ) : (
+                          <label className={`flex items-center gap-1 px-3 py-1.5 rounded-lg border border-dashed cursor-pointer text-sm ${docLoading ? 'opacity-50 cursor-not-allowed' : 'border-blue-700/50 hover:border-yellow-500/50 hover:bg-blue-900/30 text-gray-300'}`}>
+                            <Upload className="w-4 h-4" />
+                            <span>PDF Y</span>
+                            <input type="file" accept="application/pdf" disabled={docLoading} className="hidden" onChange={e => { handleGeciciVergiUpload(e, doc.key); e.target.value = '' }} />
+                          </label>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Vergi Levhasi */}
+            <div className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/30">
+              <h4 className="text-white font-medium mb-4">Vergi Levhasi</h4>
+              <div className="flex items-center justify-between p-3 bg-blue-950/40 rounded-lg">
+                <span className="text-gray-300 text-sm">Son Vergi Levhasi</span>
+                <div className="flex items-center gap-2">
+                  {clientDocuments?.mali_veriler?.vergi_levhasi?.url ? (
+                    <>
+                      <a href={clientDocuments.mali_veriler.vergi_levhasi.url} target="_blank" rel="noreferrer" className="p-1.5 bg-blue-500/20 rounded-lg text-blue-400 hover:bg-blue-500/30" title="Goruntule"><Eye className="w-4 h-4" /></a>
+                      <a href={clientDocuments.mali_veriler.vergi_levhasi.url} download className="p-1.5 bg-green-500/20 rounded-lg text-green-400 hover:bg-green-500/30" title="Indir"><Download className="w-4 h-4" /></a>
+                      <button
+                        onClick={() => handleDeleteClientDocument(next => { delete next.mali_veriler.vergi_levhasi })}
+                        className="p-1.5 bg-red-500/20 rounded-lg text-red-400 hover:bg-red-500/30"
+                        title="Sil"
+                      ><Trash2 className="w-4 h-4" /></button>
+                    </>
+                  ) : (
+                    <label className={`flex items-center gap-1 px-3 py-1.5 rounded-lg border border-dashed cursor-pointer text-sm ${docLoading ? 'opacity-50 cursor-not-allowed' : 'border-blue-700/50 hover:border-yellow-500/50 hover:bg-blue-900/30 text-gray-300'}`}>
+                      <Upload className="w-4 h-4" />
+                      <span>PDF Y</span>
+                      <input type="file" accept="application/pdf" disabled={docLoading} className="hidden" onChange={e => { handleVergiLevhasiUpload(e); e.target.value = '' }} />
+                    </label>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Mali Evraklar */}
+            <div className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/30">
+              <h4 className="text-white font-medium mb-4">Mali Evraklar</h4>
+              <div className="space-y-3 mb-4">
+                <select
+                  value={maliEvrakCategory}
+                  onChange={e => setMaliEvrakCategory(e.target.value)}
+                  className="w-full bg-blue-950 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm"
+                >
+                  <option value="imza_beyani">Imza Beyani</option>
+                  <option value="gazete">Gazete</option>
+                  <option value="kurulus_belgesi">Kurulus Belgesi</option>
+                  <option value="diger">Diger</option>
+                </select>
+                <input
+                  type="text"
+                  value={maliEvrakName}
+                  onChange={e => setMaliEvrakName(e.target.value)}
+                  placeholder="Evrak adi (ornegin: 2026 Imza Beyani)"
+                  className="w-full bg-blue-950 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm"
+                />
+                <label className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-dashed cursor-pointer ${docLoading || !maliEvrakName.trim() ? 'opacity-50 cursor-not-allowed border-gray-600' : 'border-blue-700/50 hover:border-yellow-500/50 hover:bg-blue-900/30'}`}>
+                  <Upload className="w-4 h-4 text-gray-400" />
+                  <span className="text-gray-300 text-sm">{docLoading ? 'Yukleniyor...' : 'PDF / Resim Yukle'}</span>
+                  <input type="file" accept=".pdf,.png,.jpg,.jpeg" disabled={docLoading || !maliEvrakName.trim()} className="hidden" onChange={e => { handleMaliEvrakUpload(e); e.target.value = '' }} />
+                </label>
+              </div>
+
+              {Object.keys(clientDocuments?.mali_evraklar || {}).length > 0 && (
+                <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                  {Object.entries(clientDocuments.mali_evraklar).map(([cat, list]) =>
+                    Array.isArray(list) && list.map((doc, idx) => (
+                      <div key={`${cat}_${idx}`} className="flex items-center justify-between p-2 bg-blue-950/40 rounded-lg">
+                        <div className="min-w-0">
+                          <p className="text-gray-200 text-sm truncate">{doc.name}</p>
+                          <p className="text-gray-500 text-xs">{cat.replace(/_/g, ' ')} · {doc.size}</p>
+                        </div>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <a href={doc.url} target="_blank" rel="noreferrer" className="p-1.5 bg-blue-500/20 rounded-lg text-blue-400 hover:bg-blue-500/30"><Eye className="w-4 h-4" /></a>
+                          <a href={doc.url} download className="p-1.5 bg-green-500/20 rounded-lg text-green-400 hover:bg-green-500/30"><Download className="w-4 h-4" /></a>
+                          <button
+                            onClick={() => handleDeleteClientDocument(next => { next.mali_evraklar[cat].splice(idx, 1) })}
+                            className="p-1.5 bg-red-500/20 rounded-lg text-red-400 hover:bg-red-500/30"
+                          ><Trash2 className="w-4 h-4" /></button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1368,6 +2200,54 @@ export default function ClientDetail() {
               <Users className="w-12 h-12 text-gray-600 mx-auto mb-3" />
               <p className="text-gray-400 mb-2">Personel kaydi bulunamadi</p>
               <p className="text-gray-500 text-sm">Bordro Excel yukleyerek veya elle personel ekleyebilirsiniz</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'zrapor' && (
+        <div className="space-y-6">
+          {/* Belge Türü Seçimi */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <button
+              onClick={() => setUploadDocType('zreport')}
+              className={`p-4 rounded-xl border-2 transition-all ${uploadDocType === 'zreport' ? 'border-yellow-400 bg-yellow-400/10' : 'border-blue-700/50 bg-blue-900/20 hover:border-blue-500/50'}`}
+            >
+              <div className="flex items-center gap-3">
+                <Camera className="w-6 h-6 text-yellow-400" />
+                <div className="text-left">
+                  <div className="text-white font-medium">Z Raporu</div>
+                  <div className="text-gray-400 text-sm">Yazarkasa Z raporu yükle ve OCR ile oku</div>
+                </div>
+              </div>
+            </button>
+            
+            <button
+              onClick={() => setUploadDocType('expense')}
+              className={`p-4 rounded-xl border-2 transition-all ${uploadDocType === 'expense' ? 'border-green-400 bg-green-400/10' : 'border-blue-700/50 bg-blue-900/20 hover:border-blue-500/50'}`}
+            >
+              <div className="flex items-center gap-3">
+                <Receipt className="w-6 h-6 text-green-400" />
+                <div className="text-left">
+                  <div className="text-white font-medium">Gider Fişi</div>
+                  <div className="text-gray-400 text-sm">Gider fişi yükle ve OCR ile oku</div>
+                </div>
+              </div>
+            </button>
+          </div>
+          
+          {/* Seçilen Belge Türüne Göre İçerik */}
+          {uploadDocType === 'zreport' && (
+            <ZReportManager clientId={id} clientName={client.name || client.company || ''} clientType={client.client_type} />
+          )}
+          
+          {uploadDocType === 'expense' && (
+            <ExpenseUploader clientId={id} clientName={client.name || client.company || ''} />
+          )}
+          
+          {!uploadDocType && (
+            <div className="text-center py-8 text-gray-400">
+              Yukarıdan belge türü seçin
             </div>
           )}
         </div>

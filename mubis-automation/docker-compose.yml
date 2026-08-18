@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  # --------------------------------------------------
+  # FastAPI - MUBiS Automation HTTP API
+  # --------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mubis-automation-api
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - SERVICE_NAME=api
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mubis_automation
+    volumes:
+      - .:/app
+      - downloads:/app/downloads
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - mubis-automation
+    restart: unless-stopped
+
+  # --------------------------------------------------
+  # Celery Worker - Robotları çalıştıran işçiler
+  # --------------------------------------------------
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mubis-automation-worker
+    command: celery -A worker.celery_app worker -l info -Q automation -n worker@%h
+    env_file:
+      - .env
+    environment:
+      - SERVICE_NAME=worker
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mubis_automation
+    volumes:
+      - .:/app
+      - downloads:/app/downloads
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - mubis-automation
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  # --------------------------------------------------
+  # Celery Beat - Zamanlanmış görevler
+  # --------------------------------------------------
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mubis-automation-scheduler
+    command: celery -A worker.celery_app beat -l info --scheduler celery.beat.PersistentScheduler
+    env_file:
+      - .env
+    environment:
+      - SERVICE_NAME=scheduler
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mubis_automation
+    volumes:
+      - .:/app
+      - celerybeat:/app/celerybeat
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - mubis-automation
+    restart: unless-stopped
+
+  # --------------------------------------------------
+  # Redis - Görev kuyruğu ve cache
+  # --------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: mubis-automation-redis
+    volumes:
+      - redis_data:/data
+    networks:
+      - mubis-automation
+    restart: unless-stopped
+
+  # --------------------------------------------------
+  # PostgreSQL - Yerel job/document log
+  # --------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: mubis-automation-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mubis_automation
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - mubis-automation
+    restart: unless-stopped
+
+volumes:
+  downloads:
+  celerybeat:
+  redis_data:
+  postgres_data:
+
+networks:
+  mubis-automation:
+    driver: bridge

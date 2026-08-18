@@ -15,8 +15,12 @@ export default async function handler(req, res) {
     console.log(`Payment callback received`, { source, body })
 
     // Supabase service key ile baglanti
-    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://gxuqrxmpgoeyykoolmwv.supabase.co'
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY
+
+    if (!supabaseServiceKey) {
+      console.error('Supabase service key eksik. Vercel ayarlarinda SUPABASE_SERVICE_ROLE_KEY tanimlanmali.')
+    }
 
     // ============ PAYTR CALLBACK ============
     // PayTR callback_link kullandiginda source parametresi olmaz,

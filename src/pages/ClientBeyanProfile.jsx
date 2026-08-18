@@ -2,13 +2,14 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useClients } from '../hooks/useClients'
+import { supabase } from '../lib/supabase'
 import { ArrowLeft, ListChecks, CheckCircle, XCircle } from 'lucide-react'
 
 export default function ClientBeyanProfile() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { updateClient } = useAuth()
-  const { clients } = useClients()
+  const { clients, refresh: refreshClients } = useClients()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [client, setClient] = useState(null)
@@ -20,21 +21,25 @@ export default function ClientBeyanProfile() {
   ]
 
   // Temel beyan tipleri
+  // tumBeyanTipleri listesi generateDefaultProfile icinde tanimlandi; bu sabit artik kullanilmiyor
   const temelBeyanTipleri = [
     { id: 'kdv', label: 'KDV', icon: '📄' },
     { id: 'kdv2', label: 'KDV2', icon: '📄' },
     { id: 'muhtasar', label: 'Muhtasar', icon: '📄' },
     { id: 'sgk', label: 'SGK', icon: '🏥' },
-    { id: 'gecici_vergi', label: 'Geçici Vergi', icon: '📊' },
   ]
 
   const getBeyanTipleri = useCallback((clientData) => {
-    const tipler = [...temelBeyanTipleri]
-    if (clientData?.type === 'company') {
-      tipler.push({ id: 'kurumlar_vergi', label: 'Kurumlar Vergisi', icon: '🏢' })
-    } else if (clientData?.type === 'individual') {
-      tipler.push({ id: 'gelir_vergi', label: 'Gelir Vergisi', icon: '👤' })
-    }
+    // Artik tum beyan tipleri listede gorunecek (varsayilan profil kapalilari pasif yapar)
+    const tipler = [
+      { id: 'kdv', label: 'KDV', icon: '📄' },
+      { id: 'kdv2', label: 'KDV2', icon: '📄' },
+      { id: 'muhtasar', label: 'Muhtasar', icon: '📄' },
+      { id: 'sgk', label: 'SGK', icon: '🏥' },
+      { id: 'gecici_vergi', label: 'Geçici Vergi', icon: '📊' },
+      { id: 'kurumlar_vergi', label: 'Kurumlar Vergisi', icon: '🏢' },
+      { id: 'gelir_vergi', label: 'Gelir Vergisi', icon: '👤' },
+    ]
     if (clientData?.edefter === true) {
       tipler.push({ id: 'edefter', label: 'e-Defter', icon: '📓' })
     }
@@ -43,14 +48,52 @@ export default function ClientBeyanProfile() {
 
   const generateDefaultProfile = useCallback((clientData) => {
     const profile = {}
-    const beyanTipleri = getBeyanTipleri(clientData)
-    
-    beyanTipleri.forEach(beyan => {
+    const type = clientData?.type
+    const isPartner = !!clientData?.parentClientId
+
+    // Tum beyan tipleri listesi (kullanici isterse kapalilari da acabilir)
+    const tumBeyanTipleri = [
+      { id: 'kdv', label: 'KDV', icon: '📄' },
+      { id: 'kdv2', label: 'KDV2', icon: '📄' },
+      { id: 'muhtasar', label: 'Muhtasar', icon: '📄' },
+      { id: 'sgk', label: 'SGK', icon: '🏥' },
+      { id: 'gecici_vergi', label: 'Geçici Vergi', icon: '📊' },
+      { id: 'kurumlar_vergi', label: 'Kurumlar Vergisi', icon: '🏢' },
+      { id: 'gelir_vergi', label: 'Gelir Vergisi', icon: '👤' },
+    ]
+    if (clientData?.edefter === true) {
+      tumBeyanTipleri.push({ id: 'edefter', label: 'e-Defter', icon: '📓' })
+    }
+
+    // Musteri turune gore varsayilan olarak ACIK olacak beyanlar
+    let varsayilanAcik = []
+    if (type === 'dernek') {
+      varsayilanAcik = ['kdv', 'kdv2', 'muhtasar', 'sgk']
+    } else if (type === 'apartman_yonetimi') {
+      varsayilanAcik = ['sgk']
+    } else if (type === 'adi_ortaklik') {
+      varsayilanAcik = ['kdv', 'kdv2', 'muhtasar', 'sgk']
+    } else if (isPartner) {
+      varsayilanAcik = ['gelir_vergi', 'gecici_vergi']
+    } else {
+      // Standart sirket/gercek kisi
+      varsayilanAcik = ['kdv', 'kdv2', 'muhtasar', 'sgk', 'gecici_vergi']
+      const taxType = clientData?.taxType || ''
+      if (taxType === 'Kurumlar Vergisi' || type === 'company') {
+        varsayilanAcik.push('kurumlar_vergi')
+      }
+      if (taxType === 'Gelir Vergisi' || type === 'individual') {
+        varsayilanAcik.push('gelir_vergi')
+      }
+    }
+
+    tumBeyanTipleri.forEach(beyan => {
+      const varsayilanAcikMi = varsayilanAcik.includes(beyan.id)
       profile[beyan.id] = {}
-      
+
       if (beyan.id === 'gecici_vergi') {
         for (let month = 0; month < 12; month++) {
-          if ([2, 5, 8, 11].includes(month)) {
+          if (varsayilanAcikMi && [2, 5, 8, 11].includes(month)) {
             profile[beyan.id][month] = { period: '3aylik', active: true }
           } else {
             profile[beyan.id][month] = { period: 'yok', active: false }
@@ -58,7 +101,7 @@ export default function ClientBeyanProfile() {
         }
       } else if (beyan.id === 'kurumlar_vergi') {
         for (let month = 0; month < 12; month++) {
-          if (month === 3) {
+          if (varsayilanAcikMi && month === 3) {
             profile[beyan.id][month] = { period: 'yillik', active: true }
           } else {
             profile[beyan.id][month] = { period: 'yok', active: false }
@@ -66,7 +109,7 @@ export default function ClientBeyanProfile() {
         }
       } else if (beyan.id === 'gelir_vergi') {
         for (let month = 0; month < 12; month++) {
-          if (month === 2) {
+          if (varsayilanAcikMi && month === 2) {
             profile[beyan.id][month] = { period: 'yillik', active: true }
           } else {
             profile[beyan.id][month] = { period: 'yok', active: false }
@@ -75,7 +118,9 @@ export default function ClientBeyanProfile() {
       } else if (beyan.id === 'edefter') {
         const period = clientData?.edefterPeriod || 'aylik'
         for (let month = 0; month < 12; month++) {
-          if (period === '3aylik' && ![2, 5, 8, 11].includes(month)) {
+          if (!varsayilanAcikMi) {
+            profile[beyan.id][month] = { period: 'yok', active: false }
+          } else if (period === '3aylik' && ![2, 5, 8, 11].includes(month)) {
             profile[beyan.id][month] = { period: 'yok', active: false }
           } else {
             profile[beyan.id][month] = { period: period, active: true }
@@ -83,21 +128,64 @@ export default function ClientBeyanProfile() {
         }
       } else {
         for (let month = 0; month < 12; month++) {
-          profile[beyan.id][month] = { period: 'aylik', active: true }
+          profile[beyan.id][month] = { period: 'aylik', active: varsayilanAcikMi }
         }
       }
     })
     return profile
-  }, [getBeyanTipleri])
+  }, [])
 
   useEffect(() => {
-    const found = clients.find(c => c.id === parseInt(id))
-    if (found) {
-      setClient(found)
-      const profile = found.beyanProfile || generateDefaultProfile(found)
-      setBeyanProfile(profile)
+    const loadClient = async () => {
+      setLoading(true)
+      let found = clients.find(c => c.id === parseInt(id))
+      
+      // Supabase'den guncel veriyi cek
+      try {
+        const { data, error } = await supabase
+          .from('clients')
+          .select('id, name, type, company, vkn, tc, taxType, tax_type, edefter, edefter_period, parent_client_id, beyan_profile')
+          .eq('id', parseInt(id))
+          .single()
+        if (!error && data) {
+          found = data
+        }
+      } catch (e) {
+        console.error('Client cekme hatasi:', e)
+      }
+
+      if (found) {
+        // Normalize: snake_case field'lari da camelCase'e cek
+        const normalized = {
+          ...found,
+          taxType: found.taxType || found.tax_type || '',
+          edefterPeriod: found.edefterPeriod || found.edefter_period || 'aylik',
+          parentClientId: found.parentClientId || found.parent_client_id || null,
+        }
+        setClient(normalized)
+        const hasProfile = found.beyan_profile && Object.keys(found.beyan_profile).length > 0
+        let profile = hasProfile ? found.beyan_profile : generateDefaultProfile(normalized)
+
+        // e-Defter periyodunu musteri kartindaki secimle senkronla
+        // (musteri kartinda 3 aylik secildiyse profilde de 3 aylik gorunmeli)
+        if (normalized.edefter) {
+          const period = String(normalized.edefterPeriod || 'aylik')
+            .toLowerCase().replace(/[\s_-]/g, '') === '3aylik' ? '3aylik' : 'aylik'
+          const edefterSatiri = {}
+          for (let month = 0; month < 12; month++) {
+            const aktifMi = period === '3aylik' ? [2, 5, 8, 11].includes(month) : true
+            edefterSatiri[month] = aktifMi
+              ? { period, active: true }
+              : { period: 'yok', active: false }
+          }
+          profile = { ...profile, edefter: edefterSatiri }
+        }
+
+        setBeyanProfile(profile)
+      }
+      setLoading(false)
     }
-    setLoading(false)
+    loadClient()
   }, [id, clients, generateDefaultProfile])
 
   // ✅ Aktif/Pasif değiştirme fonksiyonu
@@ -137,14 +225,45 @@ export default function ClientBeyanProfile() {
 
   const handleSave = async () => {
     setSaving(true)
-    const updatedClient = { ...client, beyanProfile: beyanProfile }
-    const result = await updateClient(parseInt(id), updatedClient)
-    setSaving(false)
-    if (result.success) {
-      alert('✅ Beyan profili başarıyla kaydedildi!')
-      navigate('/admin')
-    } else {
-      alert('❌ Kaydetme sırasında hata oluştu!')
+    try {
+      const cleanProfile = {}
+      Object.entries(beyanProfile).forEach(([beyanId, months]) => {
+        cleanProfile[beyanId] = {}
+        Object.entries(months).forEach(([month, data]) => {
+          if (data && data.period) {
+            cleanProfile[beyanId][month] = {
+              period: data.period,
+              active: !!data.active
+            }
+          }
+        })
+      })
+
+      console.log('Gonderilen profil:', cleanProfile)
+
+      // Dogrudan Supabase uzerinden guncelle
+      const { error } = await supabase
+        .from('clients')
+        .update({ beyan_profile: cleanProfile })
+        .eq('id', parseInt(id))
+
+      setSaving(false)
+
+      if (error) {
+        console.error('Supabase hatasi:', error)
+        alert('Kaydetme sirasinda hata olustu: ' + error.message)
+      } else {
+        // Client state'ini de guncelle ki yeniden yuklemede kaybolmasin
+        setClient(prev => prev ? { ...prev, beyanProfile: cleanProfile } : prev)
+        // Cache'i yenile ve navigate et
+        await refreshClients()
+        alert('Beyan profili basariyla kaydedildi!')
+        navigate('/admin')
+      }
+    } catch (err) {
+      setSaving(false)
+      console.error('Kaydetme exception:', err)
+      alert('Kaydetme sirasinda hata olustu: ' + err.message)
     }
   }
 
@@ -218,7 +337,7 @@ export default function ClientBeyanProfile() {
               <span>Beyan Profili</span>
             </h1>
             <p className="text-gray-400 text-sm">
-              {client.name} - {client.type === 'company' ? `🏢 Şirket · VKN: ${client.vkn}` : `👤 Bireysel · TC: ${client.tc}`}
+              {client.name} - {client.type === 'company' ? `🏢 Sirket · VKN: ${client.vkn}` : client.type === 'adi_ortaklik' ? `🤝 Adi Ortaklik · VKN: ${client.vkn}` : client.type === 'apartman_yonetimi' ? `🏢 Apartman Yonetimi · VKN: ${client.vkn}` : `👤 Bireysel · TC: ${client.tc}`}
             </p>
             {client.edefter && (
               <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full ml-2">

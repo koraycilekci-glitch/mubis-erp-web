@@ -2,7 +2,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { 
   LayoutDashboard, Users, Bell, 
-  FileText, Home, LogOut
+  FileText, Home, LogOut, Send
 } from 'lucide-react'
 
 export default function MobileNav() {
@@ -19,7 +19,7 @@ export default function MobileNav() {
     { path: '/admin', icon: LayoutDashboard, label: 'Panel' },
     { path: '/admin/musteriler', icon: Users, label: 'Musteriler' },
     { path: '/admin/aylik-beyan-takip', icon: FileText, label: 'Beyanlar' },
-    { path: '/admin/notifications', icon: Bell, label: 'Bildirim' },
+    { path: '/admin/gonderim-merkezi', icon: Send, label: 'Gonderim' },
   ]
 
   const clientLinks = [

@@ -488,7 +488,7 @@ function IzinHesap() {
 
 function GelirKurumlarVergisi() {
   const [matrah, setMatrah] = useState('')
-  const [yil, setYil] = useState('2025')
+  const [yil, setYil] = useState(String(new Date().getFullYear()))
   const [tip, setTip] = useState('ucret_disi')
   const [karsilastir, setKarsilastir] = useState(false)
   
@@ -562,7 +562,7 @@ function GelirKurumlarVergisi() {
 
 function GMSIradi() {
   const params = useParameters()
-  const [yil, setYil] = useState('2025')
+  const [yil, setYil] = useState(String(new Date().getFullYear()))
   const [konutKira, setKonutKira] = useState('')
   const [isyeriKira, setIsyeriKira] = useState('')
   const [kiraTip, setKiraTip] = useState('brut')
@@ -578,18 +578,19 @@ function GMSIradi() {
   
   let yillikKonut = Number(konutKira) || 0
   let yillikIsyeri = Number(isyeriKira) || 0
-  
-  // Net ise brute cevir + stopaj
-  let stopajKonut = 0, stopajIsyeri = 0
-  if (kiraTip === 'net') {
-    const brutKonut = yillikKonut / 0.80 // %20 stopaj
-    stopajKonut = brutKonut * 0.20
-    yillikKonut = brutKonut
-    const brutIsyeri = yillikIsyeri / 0.80
-    stopajIsyeri = brutIsyeri * 0.20
-    yillikIsyeri = brutIsyeri
+
+  // Konut kirasi nettir; brut/net secimi SADECE isyeri kirasina uygulanir
+  let stopajIsyeri = 0
+  if (yillikIsyeri > 0) {
+    if (kiraTip === 'net') {
+      const brutIsyeri = yillikIsyeri / 0.80 // %20 stopaj
+      stopajIsyeri = brutIsyeri * 0.20
+      yillikIsyeri = brutIsyeri
+    } else {
+      stopajIsyeri = yillikIsyeri * 0.20 // kiraci tarafindan kesilen stopaj (mahsup)
+    }
   }
-  const toplamStopaj = stopajKonut + stopajIsyeri
+  const toplamStopaj = stopajIsyeri
 
   const toplamKira = yillikKonut + yillikIsyeri
   const konutIstisna = yillikKonut > 0 ? Math.min(istisna, yillikKonut) : 0
@@ -630,10 +631,11 @@ function GMSIradi() {
             <Input label="Yillik Konut Kirasi" value={konutKira} onChange={setKonutKira} suffix="TL" />
             <Input label="Yillik Isyeri Kirasi" value={isyeriKira} onChange={setIsyeriKira} suffix="TL" />
           </div>
-          <Select label="Kira Tipi" value={kiraTip} onChange={setKiraTip} options={[
-            { value: 'brut', label: 'Brut Kira' },
-            { value: 'net', label: 'Net Kira (Stopaj Kesildikten Sonra)' }
+          <Select label="Kira Tipi (sadece Isyeri Kirasi icin)" value={kiraTip} onChange={setKiraTip} options={[
+            { value: 'brut', label: 'Isyeri Brut Kira' },
+            { value: 'net', label: 'Isyeri Net Kira (Stopaj Kesildikten Sonra)' }
           ]} />
+          <p className="text-gray-500 text-[10px]">Konut kirasi her zaman net kabul edilir, bu secimden etkilenmez.</p>
           <Select label="Gider Yontemi" value={giderYontemi} onChange={setGiderYontemi} options={[
             { value: 'goturu', label: 'Goturu Gider (%15)' },
             { value: 'gercek', label: 'Gercek Gider' }
@@ -767,26 +769,65 @@ function KiraArtis() {
   const params = useParameters()
   const [mevcutKira, setMevcutKira] = useState('')
   const [tufeOran, setTufeOran] = useState('')
+  const [oranBilgi, setOranBilgi] = useState('')
 
-  // Sayfa acilinca guncel kira artis oranini getir
+  const AY_ADLARI = ['Ocak', 'Subat', 'Mart', 'Nisan', 'Mayis', 'Haziran', 'Temmuz', 'Agustos', 'Eylul', 'Ekim', 'Kasim', 'Aralik']
+
+  // Sayfa acilinca guncel kira artis oranini getir (once cevrimici TUIK, sonra yerel tablo)
   useEffect(() => {
+    let cancelled = false
     const now = new Date()
-    const oran = params.getKiraArtisOrani(now.getFullYear(), now.getMonth() + 1)
-    if (oran) setTufeOran(String(oran))
+    const y = now.getFullYear()
+    const m = now.getMonth() + 1
+
+    const yerelYukle = () => {
+      const detay = params.getKiraArtisOraniDetay ? params.getKiraArtisOraniDetay(y, m) : null
+      if (detay) {
+        setTufeOran(String(detay.oran))
+        setOranBilgi(`Yerel tablo: ${AY_ADLARI[detay.ay - 1]} ${detay.yil} donemi`)
+      }
+    }
+
+    fetch('/api/tuik-kira')
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return
+        if (data?.success && data.guncel?.oran) {
+          const key = `${data.guncel.yil}-${String(data.guncel.ay).padStart(2, '0')}`
+          const oran = data.oranlar?.[key] || data.guncel.oran
+          setTufeOran(String(oran))
+          setOranBilgi(`TUIK cevrimici veri: ${AY_ADLARI[data.guncel.ay - 1]} ${data.guncel.yil} donemi`)
+
+          // Cevrimici tabloyu parametre veritabanina kaydet (bir kez, sonraki acilista cevrimdisi yedek olur)
+          try {
+            const flag = `tuik_sync_${key}`
+            if (!sessionStorage.getItem(flag) && data.oranlar && params.saveParam) {
+              sessionStorage.setItem(flag, '1')
+              Object.entries(data.oranlar).forEach(([k, v]) => {
+                const [yy, mm] = k.split('-').map(Number)
+                params.saveParam('kira_artis', yy, mm, 'oran', v)
+              })
+            }
+          } catch (e) { /* yoksay */ }
+        } else {
+          yerelYukle()
+        }
+      })
+      .catch(() => { if (!cancelled) yerelYukle() })
+
+    return () => { cancelled = true }
   }, [])
 
   const kira = Number(mevcutKira) || 0
   const oran = Number(tufeOran) || 0
   const yeniKira = kira * (1 + oran / 100)
   const artis = yeniKira - kira
-  const now = new Date()
-  const ayAdi = now.toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' })
 
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <Card title="Kira Artis Hesaplama">
         <div className="space-y-3">
-          <p className="text-gray-400 text-xs">12 aylik TUFE ortalamasina gore kira artis orani otomatik getirilir ({ayAdi}).</p>
+          <p className="text-gray-400 text-xs">12 aylik TUFE ortalamasi otomatik getirilir. {oranBilgi && <span className="text-emerald-400">({oranBilgi})</span>}</p>
           <Input label="Mevcut Kira" value={mevcutKira} onChange={setMevcutKira} suffix="TL" />
           <Input label="TUFE Artis Orani (%)" value={tufeOran} onChange={setTufeOran} suffix="%" placeholder="Otomatik" />
         </div>
@@ -947,19 +988,34 @@ function EmeklilikHesabi() {
 // ========== 10. BORCLANMA ==========
 
 function BorclanmaHesabi() {
+  const yil = new Date().getFullYear()
+  const sinirlar = D.getGunlukPekSinirlari(yil)
   const [gun, setGun] = useState('')
   const [pek, setPek] = useState('')
+
+  // Varsayilan: gunluk asgari PEK
+  useEffect(() => {
+    setPek(String(sinirlar.asgari.toFixed(2)))
+  }, [])
+
   const g = Number(gun) || 0
   const p = Number(pek) || 0
-  const borcAlt = g * p * 0.32
-  const borcUst = g * p * 0.45
+  const borc = g * p * 0.32
+  const borcAsgari = g * sinirlar.asgari * 0.32
+  const borcTavan = g * sinirlar.tavan * 0.32
 
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <Card title="Borclanma (Askerlik/Cocuk)">
         <div className="space-y-3">
           <Input label="Borclanma Gun Sayisi" value={gun} onChange={setGun} />
-          <Input label="Gunluk Prime Esas Kazanc" value={pek} onChange={setPek} suffix="TL" />
+          <Input label="Gunluk Prime Esas Kazanc (PEK)" value={pek} onChange={setPek} suffix="TL" />
+          <div className="bg-blue-900/20 rounded-lg p-3 text-xs space-y-1">
+            <p className="text-gray-400">{yil} yili gunluk PEK sinirlari:</p>
+            <p className="text-white">Asgari: <span className="text-yellow-400 font-semibold">{D.fmt(sinirlar.asgari)} TL</span> <span className="text-gray-500">(varsayilan)</span></p>
+            <p className="text-white">Tavan: <span className="text-yellow-400 font-semibold">{D.fmt(sinirlar.tavan)} TL</span></p>
+            <p className="text-gray-500">Borclanma tutari = Gun x PEK x %32</p>
+          </div>
         </div>
       </Card>
       <Card title="Sonuc">
@@ -967,8 +1023,10 @@ function BorclanmaHesabi() {
           <div className="space-y-1">
             <Result label="Gun Sayisi" value={`${g} gun`} />
             <Result label="Gunluk PEK" value={`${D.fmt(p)} TL`} />
-            <Result label="Borclanma (Alt %32)" value={`${D.fmt(borcAlt)} TL`} />
-            <Result label="Borclanma (Ust %45)" value={`${D.fmt(borcUst)} TL`} highlight />
+            <Result label="Borclanma Tutari (%32)" value={`${D.fmt(borc)} TL`} highlight />
+            <div className="my-1 border-t border-blue-700/30" />
+            <Result label="Asgari PEK ile" value={`${D.fmt(borcAsgari)} TL`} />
+            <Result label="Tavan PEK ile" value={`${D.fmt(borcTavan)} TL`} />
           </div>
         ) : <p className="text-gray-500 text-sm">Bilgileri girin</p>}
       </Card>
@@ -981,14 +1039,18 @@ function BorclanmaHesabi() {
 function SSKHisseHesabi() {
   const [brut, setBrut] = useState('')
   const [calTip, setCalTip] = useState('normal')
-  const [yil, setYil] = useState('2025')
+  const [yil, setYil] = useState(String(new Date().getFullYear()))
+  const [indirim, setIndirim] = useState('2')
   const y = Number(yil)
   const b = Number(brut) || 0
-  const tavan = D.SGK.tavan[y] || D.SGK.tavan[2025]
+  const tavan = D.SGK.tavan[y] || D.SGK.tavan[2026]
   const sgkMatrah = Math.min(b, tavan)
   const sgkIsci = sgkMatrah * D.SGK.isci
   const issizlikIsci = sgkMatrah * D.SGK.issizlik_isci
-  const sgkIsveren = sgkMatrah * D.SGK.isveren
+  const isverenTemelOran = D.getSgkIsverenOrani(y)
+  const isverenOran = isverenTemelOran - Number(indirim) / 100
+  const sgkIsveren = sgkMatrah * isverenOran
+  const indirimTutar = sgkMatrah * (Number(indirim) / 100)
   const issizlikIsveren = sgkMatrah * D.SGK.issizlik_isveren
   const toplamIsci = sgkIsci + issizlikIsci
   const toplamIsveren = sgkIsveren + issizlikIsveren
@@ -1003,6 +1065,11 @@ function SSKHisseHesabi() {
             { value: 'normal', label: 'Normal Calisan' },
             { value: 'emekli', label: 'Emekli Calisan' },
             { value: 'kapici', label: 'Kapici / Apartman Gorevlisi' }
+          ]} />
+          <Select label="Isveren Prim Indirimi (5510/tesvik)" value={indirim} onChange={setIndirim} options={[
+            { value: '0', label: '%0 - Indirimsiz' },
+            { value: '2', label: '%2 - Indirimli (varsayilan)' },
+            { value: '5', label: '%5 - Bes Puanlik Indirim' }
           ]} />
           <Input label="Brut Ucret" value={brut} onChange={setBrut} suffix="TL" />
         </div>
@@ -1019,7 +1086,8 @@ function SSKHisseHesabi() {
             <Result label="Toplam Isci" value={`${D.fmt(toplamIsci)} TL`} highlight />
             <div className="my-1 border-t border-blue-700/30" />
             <p className="text-yellow-400/70 text-xs font-semibold">Isveren Hissesi</p>
-            <Result label="SGK (%20.5)" value={`${D.fmt(sgkIsveren)} TL`} />
+            <Result label={`SGK (%${(isverenOran * 100).toFixed(2).replace('.', ',')}, %${indirim} indirimli)`} value={`${D.fmt(sgkIsveren)} TL`} />
+            {Number(indirim) > 0 && <Result label={`Indirim Tutari (%${indirim})`} value={`-${D.fmt(indirimTutar)} TL`} negative />}
             <Result label="Issizlik (%2)" value={`${D.fmt(issizlikIsveren)} TL`} />
             <Result label="Toplam Isveren" value={`${D.fmt(toplamIsveren)} TL`} highlight />
             <div className="my-1 border-t border-blue-700/30" />
@@ -1102,9 +1170,13 @@ function TevkifatliStopajliFatura() {
             { value: '1', label: '%1' }, { value: '10', label: '%10' }, { value: '20', label: '%20' }
           ]} />
           {tip === 'tevkifat' ? (
-            <Select label="Tevkifat Orani" value={tevOran} onChange={setTevOran} options={[
-              { value: '20', label: '2/10' }, { value: '30', label: '3/10' }, { value: '40', label: '4/10' },
-              { value: '50', label: '5/10' }, { value: '70', label: '7/10' }, { value: '90', label: '9/10' }
+            <Select label="Tevkifat Orani (Is Turu)" value={tevOran} onChange={setTevOran} options={[
+              { value: '20', label: '2/10 - Yemek servisi ve organizasyon hizmetleri' },
+              { value: '30', label: '3/10 - Baski, basim ve promosyon hizmetleri' },
+              { value: '40', label: '4/10 - Spor kulubu yayin/reklam/isim hakki' },
+              { value: '50', label: '5/10 - Temizlik, guvenlik, bahce bakim, makine kiralama, yapim isleri' },
+              { value: '70', label: '7/10 - Yuk tasimaciligi hizmetleri' },
+              { value: '90', label: '9/10 - Serbest meslek (muhasebecilik, muhendislik, avukatlik, danismanlik vb.)' }
             ]} />
           ) : (
             <Select label="Stopaj Orani" value={stopajOran} onChange={setStopajOran} options={[

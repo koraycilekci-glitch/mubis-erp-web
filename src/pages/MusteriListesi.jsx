@@ -1,11 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useClients } from '../hooks/useClients'
+import { supabase } from '../lib/supabase'
 import { Link, useNavigate } from 'react-router-dom'
+import * as XLSX from 'xlsx'
+import { bulkAddClients } from '../services/clientService'
 import { 
   Plus, Search, Filter, MapPin,
   Trash2, X, Eye, ListChecks, FileText,
-  Users, Building2, UserCheck, ChevronLeft
+  Users, Building2, UserCheck, ChevronLeft,
+  Upload, Download
 } from 'lucide-react'
 
 export default function MusteriListesi() {
@@ -19,12 +23,50 @@ export default function MusteriListesi() {
   const [showFilters, setShowFilters] = useState(false)
   const [sortBy, setSortBy] = useState('name')
   const [sortOrder, setSortOrder] = useState('asc')
+  const [uploading, setUploading] = useState(false)
+  const [selectedIds, setSelectedIds] = useState([])
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const fileInputRef = useRef(null)
 
   const handleDelete = async (id, name) => {
     if (window.confirm(`"${name}" musterisini silmek istediginize emin misiniz?`)) {
       await deleteClient(id)
       await refresh()
     }
+  }
+
+  const toggleSelection = (id) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+
+  const toggleAll = () => {
+    if (selectedIds.length === filteredClients.length) {
+      setSelectedIds([])
+    } else {
+      setSelectedIds(filteredClients.map(c => c.id))
+    }
+  }
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) return
+    if (!window.confirm(`${selectedIds.length} musteriyi silmek istediginize emin misiniz?`)) return
+    setUploading(true)
+    try {
+      const { error } = await supabase
+        .from('clients')
+        .delete()
+        .in('id', selectedIds)
+      if (error) throw error
+      const count = selectedIds.length
+      setSelectedIds([])
+      await refresh()
+      alert(`${count} musteri silindi.`)
+    } catch (err) {
+      console.error('Toplu silme hatasi:', err)
+      alert('Silme hatasi: ' + (err.message || 'Bilinmeyen hata'))
+    }
+    setUploading(false)
+    setShowDeleteConfirm(false)
   }
 
   const filteredClients = clients
@@ -108,6 +150,300 @@ export default function MusteriListesi() {
            filterTax !== 'all'
   }
 
+  const downloadTemplate = () => {
+    const headers = [
+      'Ad Soyad / Unvan', 'Kisa Ad', 'TC', 'VKN', 'Musteri Turu', 'Telefon', 'Email',
+      'Sehir', 'Ilce', 'Adres', 'Vergi Dairesi', 'Sirket Turu', 'Vergi Turu',
+      'Sermaye', 'Acilis Tarihi', 'NACE Kodu', 'NACE Aciklama', 'Musteri Sinifi',
+      'e-Fatura', 'e-Arsiv', 'e-SMM', 'e-Defter', 'e-Defter Periyodu', 'Serbest Meslek',
+      'SGK Isyeri No', 'SGK Kullanici', 'SGK Sistem Sifre', 'SGK Isyeri Sifre',
+      'DVS Kullanici', 'DVS Sifre', 'e-Arsiv Kullanici', 'e-Arsiv Sifre',
+      'e-Devlet Kullanici', 'e-Devlet Sifre', 'Ticaret Sicil No',
+      'KDV Beyan', 'KDV2 Beyan', 'Muhtasar Beyan', 'SGK Beyan', 'Gecici Vergi', 'Yillik Vergi',
+      'Kira Bilgisi', 'Kira Kontrat Bitis'
+    ]
+    const ws = XLSX.utils.aoa_to_sheet([headers])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Sablon')
+    ws['!cols'] = headers.map(() => ({ wch: 20 }))
+    XLSX.writeFile(wb, 'Mubis_Musteri_Sablonu.xlsx')
+  }
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    setUploading(true)
+    try {
+      let data = []
+      const ext = file.name.split('.').pop().toLowerCase()
+
+      if (ext === 'csv') {
+        const text = await file.text()
+        data = parseCSV(text)
+      } else {
+        data = await new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = (ev) => {
+            try {
+              const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array' })
+              const sheet = wb.Sheets[wb.SheetNames[0]]
+              resolve(XLSX.utils.sheet_to_json(sheet))
+            } catch (err) { reject(err) }
+          }
+          reader.readAsArrayBuffer(file)
+        })
+      }
+
+      const format = detectFormat(data, ext)
+      let result
+      switch (format) {
+        case 'gib':
+          result = await importGibPasswords(data)
+          alert(`${result.count} musteriye GIB sifreleri yuklendi.`)
+          break
+        case 'sgk':
+          result = await importSgkPasswords(data)
+          alert(`${result.count} musteriye SGK sifreleri yuklendi.`)
+          break
+        case 'luca':
+          result = await importLucaClients(data)
+          alert(`${result.count} musteri Luca listesinden eklendi.`)
+          break
+        case 'mubis':
+        default:
+          const mapped = data.map(row => mapMubisRow(row))
+          await bulkAddClients(mapped)
+          alert(`${mapped.length} musteri basariyla yuklendi!`)
+      }
+      await refresh()
+    } catch (err) {
+      console.error('Toplu yukleme hatasi:', err)
+      alert('Yukleme hatasi: ' + (err.message || 'Bilinmeyen hata'))
+    }
+    setUploading(false)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const parseCSV = (text) => {
+    const lines = text.split(/\r?\n/).filter(l => l.trim())
+    if (lines.length === 0) return []
+    const delimiter = lines[0].includes(';') ? ';' : ','
+    const firstRow = lines[0].split(delimiter).map(v => v.replace(/^"|"$/g, '').trim())
+
+    // Eger ilk satir tamamen sayi/sifre gibi gorunuyorsa baslik yoktur
+    const looksLikeData = firstRow.every(v => /^[0-9A-Za-z]+$/.test(v) && v.length > 0)
+
+    let headers
+    if (looksLikeData) {
+      headers = firstRow.map((_, i) => `col_${i}`)
+    } else {
+      headers = firstRow
+    }
+
+    const startIdx = looksLikeData ? 0 : 1
+    return lines.slice(startIdx).map(line => {
+      const values = line.split(delimiter).map(v => v.replace(/^"|"$/g, '').trim())
+      const obj = {}
+      headers.forEach((h, i) => { obj[h] = values[i] })
+      return obj
+    })
+  }
+
+  const detectFormat = (data, ext) => {
+    if (!data.length) return 'mubis'
+    const cols = Object.keys(data[0]).map(c => c.toLowerCase().trim())
+    const colSet = new Set(cols)
+
+    if (ext === 'csv' || colSet.has('sgk sistem sifresi') || colSet.has('isyeri kodu')) return 'sgk'
+    if (colSet.has('kullanici adi') && colSet.has('parola')) return 'gib'
+    if (colSet.has('kisa ad') || colSet.has('kisaltma') || colSet.has('uzun ad')) return 'luca'
+    return 'mubis'
+  }
+
+  const mapMubisRow = (row) => ({
+    name: row['Ad Soyad / Unvan'] || row['Ad Soyad'] || row['Unvan'] || '',
+    shortName: row['Kisa Ad'] || '',
+    tc: row['TC'] || '',
+    vkn: row['VKN'] || '',
+    type: String(row['Musteri Turu'] || 'individual').toLowerCase().includes('sirket') ? 'company' : 'individual',
+    phone: row['Telefon'] || '',
+    email: row['Email'] || '',
+    city: row['Sehir'] || '',
+    district: row['Ilce'] || '',
+    address: row['Adres'] || '',
+    taxOffice: row['Vergi Dairesi'] || '',
+    companyType: row['Sirket Turu'] || 'ltd',
+    taxType: row['Vergi Turu'] || 'Gelir Vergisi',
+    capital: row['Sermaye'] || '',
+    openDate: row['Acilis Tarihi'] || '',
+    naceCode: row['NACE Kodu'] || '',
+    naceDesc: row['NACE Aciklama'] || '',
+    musteriSinifi: row['Musteri Sinifi'] || '',
+    efatura: row['e-Fatura'] || 'hayir',
+    earsiv: row['e-Arsiv'] || 'hayir',
+    esmm: row['e-SMM'] || 'hayir',
+    edefter: row['e-Defter'] || 'hayir',
+    edefterPeriod: row['e-Defter Periyodu'] || 'aylik',
+    serbestMeslek: row['Serbest Meslek'] || 'hayir',
+    sgkIsyeriKodu: row['SGK Isyeri No'] || '',
+    sgkUser: row['SGK Kullanici'] || '',
+    sgkSistemSifre: row['SGK Sistem Sifre'] || '',
+    sgkIsyeriSifre: row['SGK Isyeri Sifre'] || '',
+    dvsUsername: row['DVS Kullanici'] || '',
+    dvsPassword: row['DVS Sifre'] || '',
+    earsivUser: row['e-Arsiv Kullanici'] || '',
+    earsivPass: row['e-Arsiv Sifre'] || '',
+    edevletUser: row['e-Devlet Kullanici'] || '',
+    edevletPass: row['e-Devlet Sifre'] || '',
+    ticaretSicilNo: row['Ticaret Sicil No'] || '',
+    kdvBeyan: row['KDV Beyan'] || 'aylik',
+    kdv2Beyan: row['KDV2 Beyan'] || 'aylik',
+    muhtasarBeyan: row['Muhtasar Beyan'] || 'yok',
+    sgkBeyan: row['SGK Beyan'] || 'aylik',
+    geciciVergi: row['Gecici Vergi'] || 'evet',
+    yillikVergi: row['Yillik Vergi'] || 'evet',
+    kiraBilgisi: row['Kira Bilgisi'] || '',
+    kiraKontratBitis: row['Kira Kontrat Bitis'] || '',
+    password: '123456'
+  })
+
+  const importLucaClients = async (data) => {
+    const mapped = data.map(row => ({
+      name: row['Uzun Ad'] || row['Kısa Ad'] || row['Kisa Ad'] || '',
+      shortName: row['Kısa Ad'] || row['Kisa Ad'] || '',
+      tc: row['T.C. Kimlik Numarası'] || row['T.C. Kimlik'] || row['T.C.'] || row['TC'] || '',
+      vkn: row['Vergi No'] || '',
+      taxNo: row['Vergi No'] || '',
+      type: (() => {
+        const tcVal = row['T.C. Kimlik Numarası'] || row['T.C. Kimlik'] || row['T.C.'] || row['TC'] || ''
+        const vknVal = row['Vergi No'] || ''
+        const nameVal = row['Uzun Ad'] || row['Kısa Ad'] || row['Kisa Ad'] || ''
+        const isDernekByName = /\b(DERNEĞİ|DERNEK|DERNEGI|DERNEKİ)\b/i.test(nameVal)
+        const isApartmentByName = /\b(APARTMAN\s+YÖNETİMİ|APARTMAN\s+YONETIMI|SİTE\s+YÖNETİMİ|SITE\s+YONETIMI|APARTMAN|SİTESİ|SITESI)\b/i.test(nameVal)
+        const isCompanyByName = /\b(LTD|A\.Ş|A\.S|ŞTİ|STI|TİC|TIC|SAN|HOLDİNG|GROUP|KOOP|KOLL)\b/i.test(nameVal)
+        const isAdiOrtaklikByName = /(\bve\s+ort\b|\bve\s+ort\.|\bort\b|\badi\s+ortaklik\b|\bortaklığı\b|\bortakligi\b)/i.test(nameVal)
+        // Unvana gore ozel turler once
+        if (isDernekByName) return 'dernek'
+        if (isApartmentByName) return 'apartman_yonetimi'
+        if (isAdiOrtaklikByName) return 'adi_ortaklik'
+        if (tcVal.length === 11) return 'individual'
+        if (vknVal.length === 10 || isCompanyByName) return 'company'
+        return 'individual'
+      })(),
+      taxType: (() => {
+        const tcVal = row['T.C. Kimlik Numarası'] || row['T.C. Kimlik'] || row['T.C.'] || row['TC'] || ''
+        const vknVal = row['Vergi No'] || ''
+        const nameVal = row['Uzun Ad'] || row['Kısa Ad'] || row['Kisa Ad'] || ''
+        const isDernekByName = /\b(DERNEĞİ|DERNEK|DERNEGI|DERNEKİ)\b/i.test(nameVal)
+        const isApartmentByName = /\b(APARTMAN\s+YÖNETİMİ|APARTMAN\s+YONETIMI|SİTE\s+YÖNETİMİ|SITE\s+YONETIMI|APARTMAN|SİTESİ|SITESI)\b/i.test(nameVal)
+        const isCompanyByName = /\b(LTD|A\.Ş|A\.S|ŞTİ|STI|TİC|TIC|SAN|HOLDİNG|GROUP|KOOP|KOLL)\b/i.test(nameVal)
+        if (isDernekByName) return 'Dernek'
+        if (isApartmentByName) return 'Apartman Yonetimi'
+        if (tcVal.length === 11) return 'Gelir Vergisi'
+        if (vknVal.length === 10 || isCompanyByName) return 'Kurumlar Vergisi'
+        return 'Gelir Vergisi'
+      })(),
+      musteriSinifi: (() => {
+        const nameVal = row['Uzun Ad'] || row['Kısa Ad'] || row['Kisa Ad'] || ''
+        if (/\b(DERNEĞİ|DERNEK|DERNEGI|DERNEKİ)\b/i.test(nameVal)) return 'Dernek'
+        if (/\b(APARTMAN\s+YÖNETİMİ|APARTMAN\s+YONETIMI|SİTE\s+YÖNETİMİ|SITE\s+YONETIMI|APARTMAN|SİTESİ|SITESI)\b/i.test(nameVal)) return 'Apartman Yonetimi'
+        return ''
+      })(),
+      email: '',
+      city: '',
+      district: '',
+      address: '',
+      taxOffice: row['Vergi Dairesi'] ? String(row['Vergi Dairesi']).split(' ')[0] : '',
+      companyType: 'ltd',
+      capital: '',
+      openDate: row['Kuruluş Tarihi'] || row['Kurulus Tarihi'] || '',
+      naceCode: '',
+      naceDesc: row['Açıklama'] || row['Aciklama'] || '',
+      musteriSinifi: '',
+      efatura: 'hayir',
+      earsiv: 'hayir',
+      esmm: 'hayir',
+      edefter: 'hayir',
+      edefterPeriod: 'aylik',
+      serbestMeslek: 'hayir',
+      sgkIsyeriKodu: '',
+      sgkUser: '',
+      sgkSistemSifre: '',
+      sgkIsyeriSifre: '',
+      dvsUsername: '',
+      dvsPassword: '',
+      earsivUser: '',
+      earsivPass: '',
+      edevletUser: '',
+      edevletPass: '',
+      ticaretSicilNo: '',
+      kdvBeyan: 'aylik',
+      kdv2Beyan: 'yok',
+      muhtasarBeyan: 'yok',
+      sgkBeyan: 'yok',
+      geciciVergi: 'hayir',
+      yillikVergi: 'hayir',
+      kiraBilgisi: '',
+      kiraKontratBitis: '',
+      password: '123456'
+    })).filter(c => c.name)
+    await bulkAddClients(mapped)
+    return { count: mapped.length }
+  }
+
+  const importGibPasswords = async (data) => {
+    let count = 0
+    const { data: allClients } = await supabase.from('clients').select('id, name, company')
+    for (const row of data) {
+      const company = row['Şirket'] || row['Sirket'] || row['Şirket '] || ''
+      const user = row['Kullanıcı Adı'] || row['Kullanici Adi'] || ''
+      const pass = row['Parola'] || row['Şifre'] || row['Sifre'] || ''
+      if (!company || !user) continue
+      const found = allClients.find(c => 
+        (c.name && c.name.toLowerCase().trim() === company.toLowerCase().trim()) ||
+        (c.company && c.company.toLowerCase().trim() === company.toLowerCase().trim())
+      )
+      if (found) {
+        await supabase.from('clients').update({
+          dvs_username: user,
+          dvs_password: pass
+        }).eq('id', found.id)
+        count++
+      }
+    }
+    return { count }
+  }
+
+  const importSgkPasswords = async (data) => {
+    let count = 0
+    const { data: allClients } = await supabase.from('clients').select('id, name, vkn, tc')
+    for (const row of data) {
+      // CSV format (basliksiz): isyeri_sicil;sgk_user;tc/vkn;sube;sgk_sistem_sifre;sgk_isyeri_sifre
+      const values = Object.values(row)
+      const tcOrVkn = values.find(v => v && /^[0-9]{10,11}$/.test(v.toString().trim())) || ''
+      const sgkUser = values.find((v, i) => v && /^[0-9]{5,}$/.test(v.toString().trim()) && i > 0 && i < values.length - 2) || ''
+      const lastTwo = values.slice(-2)
+      const sistemSifre = lastTwo[0] || ''
+      const isyeriSifre = lastTwo[1] || ''
+
+      if (!tcOrVkn) continue
+      const found = allClients.find(c => 
+        (c.tc && c.tc.toString().trim() === tcOrVkn.toString().trim()) ||
+        (c.vkn && c.vkn.toString().trim() === tcOrVkn.toString().trim())
+      )
+      if (found) {
+        await supabase.from('clients').update({
+          sgk_user: sgkUser,
+          sgk_isyeri_kodu: values[0] || '',
+          sgk_sistem_sifre: sistemSifre,
+          sgk_isyeri_sifre: isyeriSifre
+        }).eq('id', found.id)
+        count++
+      }
+    }
+    return { count }
+  }
+
   if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -140,13 +476,37 @@ export default function MusteriListesi() {
             </p>
           </div>
         </div>
-        <Link 
-          to="/admin/clients/new"
-          className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-6 py-2 rounded-lg font-semibold hover:shadow-lg hover:shadow-yellow-500/30 transition-all duration-300 flex items-center space-x-2 mt-4 md:mt-0"
-        >
-          <Plus className="w-5 h-5" />
-          <span>Yeni Musteri</span>
-        </Link>
+        <div className="flex flex-col sm:flex-row gap-2 mt-4 md:mt-0">
+          <button
+            onClick={downloadTemplate}
+            className="bg-blue-500/20 text-blue-400 px-4 py-2 rounded-lg font-semibold hover:bg-blue-500/30 transition-all duration-300 flex items-center justify-center space-x-2"
+          >
+            <Download className="w-5 h-5" />
+            <span>Sablon Indir</span>
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="bg-green-500/20 text-green-400 px-4 py-2 rounded-lg font-semibold hover:bg-green-500/30 transition-all duration-300 flex items-center justify-center space-x-2 disabled:opacity-50"
+          >
+            <Upload className="w-5 h-5" />
+            <span>{uploading ? 'Yukleniyor...' : 'Excel Yükle'}</span>
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
+          <Link 
+            to="/admin/clients/new"
+            className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-6 py-2 rounded-lg font-semibold hover:shadow-lg hover:shadow-yellow-500/30 transition-all duration-300 flex items-center justify-center space-x-2"
+          >
+            <Plus className="w-5 h-5" />
+            <span>Yeni Musteri</span>
+          </Link>
+        </div>
       </div>
 
       {/* Istatistikler */}
@@ -308,10 +668,31 @@ export default function MusteriListesi() {
 
       {/* Musteri Listesi */}
       <div className="bg-blue-800/20 rounded-2xl border border-blue-700/30 overflow-hidden">
+        {selectedIds.length > 0 && (
+          <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-3 flex items-center justify-between">
+            <span className="text-red-400 font-medium">{selectedIds.length} musteri secildi</span>
+            <button
+              onClick={handleBulkDelete}
+              disabled={uploading}
+              className="bg-red-500/20 hover:bg-red-500/30 text-red-400 px-4 py-1.5 rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center space-x-2"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>Secilenleri Sil</span>
+            </button>
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-blue-900/30">
               <tr className="text-left text-gray-400 text-sm">
+                <th className="px-4 py-4">
+                  <input
+                    type="checkbox"
+                    checked={filteredClients.length > 0 && selectedIds.length === filteredClients.length}
+                    onChange={toggleAll}
+                    className="w-4 h-4 rounded border-gray-500 text-yellow-500 focus:ring-yellow-500"
+                  />
+                </th>
                 <th className="px-6 py-4">#</th>
                 <th className="px-6 py-4">Musteri</th>
                 <th className="px-6 py-4">Adres</th>
@@ -323,7 +704,7 @@ export default function MusteriListesi() {
             <tbody>
               {filteredClients.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="text-center py-8 text-gray-400">
+                  <td colSpan="7" className="text-center py-8 text-gray-400">
                     {isFilterActive() ? 'Filtrelere uygun musteri bulunamadi' : 'Henuz musteri eklenmemis'}
                   </td>
                 </tr>
@@ -333,6 +714,14 @@ export default function MusteriListesi() {
                     key={client.id} 
                     className="border-t border-blue-700/30 hover:bg-blue-800/20 transition-colors"
                   >
+                    <td className="px-4 py-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(client.id)}
+                        onChange={() => toggleSelection(client.id)}
+                        className="w-4 h-4 rounded border-gray-500 text-yellow-500 focus:ring-yellow-500"
+                      />
+                    </td>
                     <td className="px-6 py-4 text-gray-400">{index + 1}</td>
                     <td className="px-6 py-4 cursor-pointer" onClick={() => navigate(`/admin/client/${client.id}`)}>
                       <div>

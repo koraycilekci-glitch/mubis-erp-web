@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { ArrowLeft, Save, User, Building, MapPin, Calendar, FileText, X, Globe, Users, Newspaper, Eye, EyeOff } from 'lucide-react'
+import { ArrowLeft, Save, User, Building, MapPin, Calendar, FileText, X, Globe, Users, Newspaper, Eye, EyeOff, Plus } from 'lucide-react'
 
 export default function NewClient() {
   const navigate = useNavigate()
@@ -18,6 +18,8 @@ export default function NewClient() {
     email: '',
     phone: '',
     whatsapp: '',
+    phoneNumbers: [{ name: '', phone: '', isWhatsapp: true }],
+    emails: [{ email: '' }],
     taxOffice: '',
     city: '',
     address: '',
@@ -208,6 +210,123 @@ export default function NewClient() {
                 placeholder="Telefondan otomatik gelir"
               />
               <p className="text-gray-500 text-xs mt-1">Telefon numarasi otomatik yansir, istege bagli degistirebilirsiniz</p>
+            </div>
+
+            {/* Birden Fazla Telefon / WhatsApp */}
+            <div className="md:col-span-2">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-gray-400 text-sm">Iletisim Numaralari</label>
+                <button
+                  type="button"
+                  onClick={() => setFormData(prev => ({
+                    ...prev,
+                    phoneNumbers: [...prev.phoneNumbers, { name: '', phone: '', isWhatsapp: true }]
+                  }))}
+                  className="text-xs text-yellow-400 hover:text-yellow-300 flex items-center gap-1"
+                >
+                  <Plus className="w-3 h-3" /> Yeni Ekle
+                </button>
+              </div>
+              <div className="space-y-2">
+                {formData.phoneNumbers.map((item, idx) => (
+                  <div key={idx} className="flex gap-2 items-center">
+                    <input
+                      type="text"
+                      placeholder="Ad Soyad"
+                      value={item.name}
+                      onChange={(e) => {
+                        const next = [...formData.phoneNumbers]
+                        next[idx] = { ...next[idx], name: e.target.value }
+                        setFormData(prev => ({ ...prev, phoneNumbers: next }))
+                      }}
+                      className="flex-1 bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-yellow-400"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Telefon"
+                      value={item.phone}
+                      onChange={(e) => {
+                        const next = [...formData.phoneNumbers]
+                        next[idx] = { ...next[idx], phone: e.target.value }
+                        setFormData(prev => ({ ...prev, phoneNumbers: next }))
+                      }}
+                      className="flex-1 bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-yellow-400"
+                    />
+                    <label className="flex items-center gap-1 text-xs text-gray-400 whitespace-nowrap cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={item.isWhatsapp}
+                        onChange={(e) => {
+                          const next = [...formData.phoneNumbers]
+                          next[idx] = { ...next[idx], isWhatsapp: e.target.checked }
+                          setFormData(prev => ({ ...prev, phoneNumbers: next }))
+                        }}
+                        className="rounded border-blue-700/50"
+                      />
+                      WhatsApp
+                    </label>
+                    
+                    {formData.phoneNumbers.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = formData.phoneNumbers.filter((_, i) => i !== idx)
+                          setFormData(prev => ({ ...prev, phoneNumbers: next }))
+                        }}
+                        className="p-1.5 text-gray-500 hover:text-red-400 transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Birden Fazla E-posta */}
+            <div className="md:col-span-2">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-gray-400 text-sm">E-posta Adresleri</label>
+                <button
+                  type="button"
+                  onClick={() => setFormData(prev => ({
+                    ...prev,
+                    emails: [...prev.emails, { email: '' }]
+                  }))}
+                  className="text-xs text-yellow-400 hover:text-yellow-300 flex items-center gap-1"
+                >
+                  <Plus className="w-3 h-3" /> Yeni Ekle
+                </button>
+              </div>
+              <div className="space-y-2">
+                {formData.emails.map((item, idx) => (
+                  <div key={idx} className="flex gap-2 items-center">
+                    <input
+                      type="email"
+                      placeholder="ornek@email.com"
+                      value={item.email}
+                      onChange={(e) => {
+                        const next = [...formData.emails]
+                        next[idx] = { email: e.target.value }
+                        setFormData(prev => ({ ...prev, emails: next }))
+                      }}
+                      className="flex-1 bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-yellow-400"
+                    />
+                    {formData.emails.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = formData.emails.filter((_, i) => i !== idx)
+                          setFormData(prev => ({ ...prev, emails: next }))
+                        }}
+                        className="p-1.5 text-gray-500 hover:text-red-400 transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>

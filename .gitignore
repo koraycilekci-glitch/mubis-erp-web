@@ -1,3 +1,13 @@
 node_modules 
 dist 
 .vercel
+api/analyze-document.js
+api/analyze-tahakkuk.js
+.env
+.env.local
+.env.production
+.env.staging
+mubis-automation/.env
+mubis-automation/downloads
+mubis-automation/__pycache__
+

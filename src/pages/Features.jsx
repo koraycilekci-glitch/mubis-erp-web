@@ -2,8 +2,10 @@ import {
   LayoutDashboard, Users, UserCheck, FileCheck, BookOpen, 
   Receipt, FolderOpen, CheckSquare, Bell, Shield, 
   PenTool, Building, Search, BarChart3, Globe, 
-  Smartphone, Bot, FileUp, Database, Sparkles
+  Smartphone, Bot, FileUp, Database, Sparkles,
+  MapPin, Phone, Mail, ExternalLink
 } from 'lucide-react'
+import { OFIS, HARITA_URL, HARITA_EMBED_URL } from '../data/ofisBilgi'
 
 export default function Features() {
   const modules = [
@@ -52,6 +54,90 @@ export default function Features() {
           </div>
         ))}
       </div>
+
+      {/* ==================== HAKKIMIZDA / ILETISIM ==================== */}
+      <section id="hakkimizda" className="mt-20 scroll-mt-24">
+        <div className="text-center mb-10">
+          <h2 className="text-3xl sm:text-4xl font-black text-white mb-3">
+            Hakkımızda
+          </h2>
+          <p className="text-gray-400 max-w-2xl mx-auto">
+            MUBİS ERP, {OFIS.unvan} tarafından mali müşavirlik süreçlerini
+            uçtan uca dijitalleştirmek için geliştirilmiştir.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Iletisim bilgileri */}
+          <div className="bg-blue-950/30 backdrop-blur-sm rounded-2xl p-6 sm:p-8 border border-blue-800/30 space-y-4">
+            <div className="flex items-start gap-4">
+              <div className="bg-gradient-to-br from-blue-500/20 to-yellow-500/20 p-3 rounded-xl flex-shrink-0">
+                <Building className="w-6 h-6 text-yellow-500" />
+              </div>
+              <div>
+                <div className="text-gray-400 text-sm">Yetkili</div>
+                <div className="text-white font-semibold">{OFIS.unvan}</div>
+              </div>
+            </div>
+
+            <a
+              href={HARITA_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-start gap-4 group"
+            >
+              <div className="bg-gradient-to-br from-blue-500/20 to-yellow-500/20 p-3 rounded-xl flex-shrink-0">
+                <MapPin className="w-6 h-6 text-yellow-500" />
+              </div>
+              <div>
+                <div className="text-gray-400 text-sm">Adres</div>
+                <div className="text-white group-hover:text-yellow-400 transition-colors">
+                  {OFIS.adres}
+                </div>
+                <span className="inline-flex items-center gap-1 text-yellow-500 text-xs mt-1">
+                  Haritada aç <ExternalLink className="w-3 h-3" />
+                </span>
+              </div>
+            </a>
+
+            <a href={OFIS.telefonHref} className="flex items-start gap-4 group">
+              <div className="bg-gradient-to-br from-blue-500/20 to-yellow-500/20 p-3 rounded-xl flex-shrink-0">
+                <Phone className="w-6 h-6 text-yellow-500" />
+              </div>
+              <div>
+                <div className="text-gray-400 text-sm">Telefon</div>
+                <div className="text-white group-hover:text-yellow-400 transition-colors">
+                  {OFIS.telefon}
+                </div>
+              </div>
+            </a>
+
+            <a href={OFIS.emailHref} className="flex items-start gap-4 group">
+              <div className="bg-gradient-to-br from-blue-500/20 to-yellow-500/20 p-3 rounded-xl flex-shrink-0">
+                <Mail className="w-6 h-6 text-yellow-500" />
+              </div>
+              <div>
+                <div className="text-gray-400 text-sm">E-posta</div>
+                <div className="text-white group-hover:text-yellow-400 transition-colors">
+                  {OFIS.email}
+                </div>
+              </div>
+            </a>
+          </div>
+
+          {/* Harita */}
+          <div className="bg-blue-950/30 backdrop-blur-sm rounded-2xl border border-blue-800/30 overflow-hidden min-h-[320px]">
+            <iframe
+              title="Ofis konumu"
+              src={HARITA_EMBED_URL}
+              className="w-full h-full min-h-[320px] border-0"
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+              allowFullScreen
+            />
+          </div>
+        </div>
+      </section>
     </div>
   )
 }

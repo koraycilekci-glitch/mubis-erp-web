@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useClients } from '../hooks/useClients'
-import { ArrowLeft, FileText, CheckCircle, Clock, Send, ThumbsUp } from 'lucide-react'
+import { supabase } from '../lib/supabase'
+import { ArrowLeft, FileText, CheckCircle, Clock, Send, ThumbsUp, AlertTriangle } from 'lucide-react'
 
 const MONTHS = ['Ocak', 'Subat', 'Mart', 'Nisan', 'Mayis', 'Haziran', 'Temmuz', 'Agustos', 'Eylul', 'Ekim', 'Kasim', 'Aralik']
 
@@ -19,7 +20,7 @@ const BEYAN_TYPES = [
 ]
 
 const STATUS_MAP = {
-  yapilmadi: { label: 'Yapilmadi', cls: 'bg-yellow-500/20 text-yellow-400' },
+  yapilamadi: { label: 'Yapilmadi', cls: 'bg-red-500/20 text-red-400' },
   hazir: { label: 'Hazir', cls: 'bg-blue-500/20 text-blue-400' },
   onaylandi: { label: 'Onaylandi', cls: 'bg-green-500/20 text-green-400' },
   tahakkuk_gonderildi: { label: 'Tahakkuk', cls: 'bg-purple-500/20 text-purple-400' },
@@ -28,7 +29,7 @@ const STATUS_MAP = {
 export default function ClientBeyanTakip() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { updateClient } = useAuth()
+  const { updateClient, user, profile } = useAuth()
   const { clients } = useClients()
   const [client, setClient] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -36,7 +37,9 @@ export default function ClientBeyanTakip() {
 
   useEffect(() => {
     const found = clients.find(c => c.id === parseInt(id))
-    if (found) setClient(found)
+    if (found) {
+      setClient(found)
+    }
     setLoading(false)
   }, [id, clients])
 
@@ -48,11 +51,30 @@ export default function ClientBeyanTakip() {
     BEYAN_TYPES.forEach(bt => {
       const activeMonths = []
       for (let m = 0; m < 12; m++) {
+        let isActive = false
+        let period = 'aylik'
         const config = profile[bt.id]?.[m]
-        if (config?.active) {
+        if (config) {
+          isActive = config.active && config.period !== 'yok'
+          period = config.period || 'aylik'
+        } else if (!client.beyanProfile) {
+          // Beyan profili tanimli degilse varsayilan davranis
+          if (bt.id === 'gecici_vergi') {
+            isActive = [1, 4, 7, 10].includes(m)
+          } else if (bt.id === 'kurumlar_vergi') {
+            isActive = m === 3
+          } else if (bt.id === 'gelir_vergi') {
+            isActive = m === 2
+          } else if (bt.id === 'muhtasar_3aylik') {
+            isActive = [3, 6, 9, 0].includes(m)
+          } else {
+            isActive = true
+          }
+        }
+        if (isActive) {
           const statusKey = `${selectedYear}_${m}_${bt.id}`
-          const status = (client.beyanDurumlari || {})[statusKey] || 'yapilmadi'
-          activeMonths.push({ month: m, status, period: config.period || 'aylik' })
+          const status = (client.beyanDurumlari || {})[statusKey] || 'yapilamadi'
+          activeMonths.push({ month: m, status, period })
         }
       }
       if (activeMonths.length > 0) {
@@ -67,10 +89,27 @@ export default function ClientBeyanTakip() {
     const durumlari = { ...(client.beyanDurumlari || {}) }
     const statusKey = `${selectedYear}_${month}_${beyanId}`
     durumlari[statusKey] = newStatus
+    durumlari[`${statusKey}_personel`] = profile?.name || user?.email || 'Admin'
+    durumlari[`${statusKey}_tarih`] = new Date().toISOString()
 
+    // Once local state guncelle (kullanici aninda gorsun)
     const updated = { ...client, beyanDurumlari: durumlari }
-    await updateClient(parseInt(id), updated)
     setClient(updated)
+
+    // Sonra Supabase'e kaydet
+    try {
+      const { error } = await supabase
+        .from('clients')
+        .update({ beyan_durumlari: durumlari })
+        .eq('id', parseInt(id))
+      if (error) throw error
+    } catch (err) {
+      console.error('Beyan durumu kaydetme hatasi:', err)
+      alert('Durum kaydedilemedi: ' + err.message)
+      // Hata olursa eski haline geri al
+      setClient(client)
+      return
+    }
   }
 
   if (loading) {
@@ -90,14 +129,15 @@ export default function ClientBeyanTakip() {
     )
   }
 
-  let totalBeyan = 0, yapilmadi = 0, hazirCount = 0, onaylandiCount = 0, tahakkukCount = 0
+  let totalBeyan = 0, yapilamadi = 0, hazirCount = 0, onaylandiCount = 0, tahakkukCount = 0
+
   activeBeyanlar.forEach(bt => {
     bt.activeMonths.forEach(m => {
       totalBeyan++
       if (m.status === 'hazir') hazirCount++
       else if (m.status === 'onaylandi') onaylandiCount++
       else if (m.status === 'tahakkuk_gonderildi') tahakkukCount++
-      else yapilmadi++
+      else yapilamadi++
     })
   })
 
@@ -126,7 +166,7 @@ export default function ClientBeyanTakip() {
           <div className="text-gray-400 text-xs">Toplam</div>
         </div>
         <div className="bg-yellow-500/10 rounded-xl p-3 border border-yellow-500/20 text-center">
-          <div className="text-xl font-bold text-yellow-400">{yapilmadi}</div>
+          <div className="text-xl font-bold text-yellow-400">{yapilamadi}</div>
           <div className="text-gray-400 text-xs">Yapilmadi</div>
         </div>
         <div className="bg-blue-500/10 rounded-xl p-3 border border-blue-500/20 text-center">
@@ -176,19 +216,33 @@ export default function ClientBeyanTakip() {
                       if (!monthData) {
                         return <td key={mi} className="px-2 py-3 text-center"><span className="text-gray-700 text-xs">-</span></td>
                       }
-                      const info = STATUS_MAP[monthData.status] || STATUS_MAP.yapilmadi
+                      const info = STATUS_MAP[monthData.status] || STATUS_MAP.yapilamadi
+                      
+                      // Tahakkuk tutarini al
+                      const statusKey = `${selectedYear}_${mi}_${bt.id}`
+                      const tahakkukTutar = client?.beyan_durumlari?.[`${statusKey}_tutar`] || 0
+                      const hasTahakkuk = tahakkukTutar > 0
+                      
                       return (
                         <td key={mi} className="px-1 py-2 text-center">
-                          <select
-                            value={monthData.status}
-                            onChange={(e) => handleStatusChange(bt.id, mi, e.target.value)}
-                            className={`w-full rounded px-1 py-1 text-[10px] font-medium border-0 focus:outline-none focus:ring-1 focus:ring-yellow-400 cursor-pointer ${info.cls}`}
-                          >
-                            <option value="yapilmadi">Yapilmadi</option>
-                            <option value="hazir">Hazir</option>
-                            <option value="onaylandi">Onaylandi</option>
-                            <option value="tahakkuk_gonderildi">Tahakkuk</option>
-                          </select>
+                          <div className="space-y-1">
+                            <select
+                              value={monthData.status}
+                              onChange={(e) => handleStatusChange(bt.id, mi, e.target.value)}
+                              className={`w-full rounded px-1 py-1 text-[10px] font-medium border-0 focus:outline-none focus:ring-1 focus:ring-yellow-400 cursor-pointer ${info.cls}`}
+                            >
+                              <option value="yapilamadi">Yapilmadi</option>
+                              <option value="hazir">Hazir</option>
+                              <option value="onaylandi">Onaylandi</option>
+                              <option value="tahakkuk_gonderildi">Tahakkuk</option>
+                            </select>
+                            
+                            {hasTahakkuk && (
+                              <div className="text-[9px] text-green-400 font-medium">
+                                {tahakkukTutar.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL
+                              </div>
+                            )}
+                          </div>
                         </td>
                       )
                     })}

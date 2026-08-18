@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { LogIn, User, Lock, AlertCircle, Eye, EyeOff, CheckCircle, ArrowLeft, Mail } from 'lucide-react'
 
@@ -63,10 +63,14 @@ export default function Login() {
     <div className="min-h-[80vh] flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="w-32 h-32 mx-auto mb-4 rounded-2xl overflow-hidden bg-[#0a1628] p-2">
-            <img src="/logo.png" alt="MUBiS ERP" className="w-full h-full object-contain" />
-          </div>
-          <p className="text-gray-400 mt-2">Mali Musavirin Dijital Calisma Masasi</p>
+          <Link to="/" className="block">
+            <img
+              src="/logo-text.png"
+              alt="MUBiS ERP"
+              className="w-full max-w-[320px] mx-auto object-contain drop-shadow-[0_10px_30px_rgba(0,0,0,0.45)]"
+            />
+          </Link>
+          <p className="text-gray-400 mt-3">Mali Müşavirin Dijital Çalışma Masası</p>
         </div>
 
         <div className="bg-blue-950/30 backdrop-blur-sm rounded-2xl p-8 border border-blue-800/30">
@@ -100,8 +104,8 @@ export default function Login() {
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
                     <input type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)}
-                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-3 pl-10 pr-12 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500 transition-colors"
-                      placeholder="********" required />
+                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-3 pl-10 pr-12 text-white placeholder-yellow-400/60 focus:outline-none focus:border-yellow-500 transition-colors"
+                      placeholder="İlk şifreniz: 123456" required />
                     <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
                       {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                     </button>

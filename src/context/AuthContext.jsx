@@ -1,26 +1,59 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import * as clientService from '../services/clientService'
+import { getMyOffice, clearOfficeCache, buildClientLoginEmail } from '../services/officeService'
 
 const AuthContext = createContext()
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
+  const [office, setOffice] = useState(null)
   const [loading, setLoading] = useState(true)
   const [needsPasswordChange, setNeedsPasswordChange] = useState(false)
 
   // Profil bilgisini cek
   const fetchProfile = async (authUser) => {
-    if (!authUser) { setProfile(null); return null }
+    if (!authUser) { setProfile(null); setOffice(null); return null }
     try {
       const { data } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', authUser.id)
         .single()
+
+      // Ofis bilgisini yukle (hata olursa akis bozulmasin)
+      getMyOffice(true).then(o => setOffice(o)).catch(() => {})
+
+      // Eger musteri ise, client_id'yi clients tablosundan bul
+      if (data?.role === 'musteri' || data?.role === 'client') {
+        const emailPrefix = authUser.email?.split('@')[0]
+        const { data: clientData } = await supabase
+          .from('clients')
+          .select('id, name, company, phone, email, city, office_id')
+          .or(`auth_user_id.eq.${authUser.id},username.eq.${emailPrefix},email.eq.${authUser.email}`)
+          .limit(1)
+          .maybeSingle()
+
+        if (clientData) {
+          const merged = {
+            ...data,
+            clientId: clientData.id,
+            officeId: clientData.office_id,
+            name: clientData.name || clientData.company || data.name,
+            phone: clientData.phone,
+            email: clientData.email,
+            city: clientData.city,
+            // Uygulama genelinde musteri rolu 'musteri' olarak beklenir
+            role: 'musteri'
+          }
+          setProfile(merged)
+          return merged
+        }
+      }
+
       setProfile(data)
-      return data
+      return { ...data, officeId: data?.office_id || null }
     } catch {
       return null
     }
@@ -42,6 +75,22 @@ export function AuthProvider({ children }) {
         }
         setUser(session.user)
         fetchProfile(session.user).then((prof) => {
+          setUser(prev => ({
+            ...session.user,
+            ...(prev || {}),
+            role: prof?.role || prev?.role,
+            name: prof?.name || prev?.name || session.user.email,
+            clientId: prof?.clientId || prev?.clientId || null,
+            officeId: prof?.officeId || prev?.officeId || null
+          }))
+          if (prof?.clientId) {
+            setUser(prev => ({
+              ...prev,
+              clientId: prof.clientId,
+              role: prof.role,
+              name: prof.name
+            }))
+          }
           if (prof?.temp_password) setNeedsPasswordChange(true)
           setLoading(false)
         })
@@ -55,6 +104,22 @@ export function AuthProvider({ children }) {
         if (session?.user) {
           setUser(session.user)
           const prof = await fetchProfile(session.user)
+          setUser(prev => ({
+            ...session.user,
+            ...(prev || {}),
+            role: prof?.role || prev?.role,
+            name: prof?.name || prev?.name || session.user.email,
+            clientId: prof?.clientId || prev?.clientId || null,
+            officeId: prof?.officeId || prev?.officeId || null
+          }))
+          if (prof?.clientId) {
+            setUser(prev => ({
+              ...prev,
+              clientId: prof.clientId,
+              role: prof.role,
+              name: prof.name
+            }))
+          }
           if (prof?.temp_password) setNeedsPasswordChange(true)
         } else {
           setUser(null)
@@ -100,6 +165,7 @@ export function AuthProvider({ children }) {
         tempPassword: prof?.temp_password || false,
         user: { 
           ...data.user, 
+          clientId: prof?.clientId || null,
           name: prof?.name || email,
           role: prof?.role || 'personel',
           permissions: prof?.permissions || {}
@@ -113,8 +179,10 @@ export function AuthProvider({ children }) {
   // Cikis yap
   const logout = async () => {
     await supabase.auth.signOut()
+    clearOfficeCache()
     setUser(null)
     setProfile(null)
+    setOffice(null)
     setNeedsPasswordChange(false)
   }
 
@@ -202,52 +270,63 @@ export function AuthProvider({ children }) {
       const result = await clientService.updateClient(id, data)
       return { success: true, client: clientService.dbToFrontend(result) }
     } catch (err) {
-      return { success: false, error: err.message }
+      console.error('updateClient hatasi:', err)
+      const detail = err?.message || err?.error_description || err?.details || err?.hint || JSON.stringify(err)
+      return { success: false, error: detail }
     }
   }
 
   // Musteri icin Supabase Auth hesabi olustur (admin tarafindan)
+  // Giris adi ofise gore uretilir: ana ofis 'vkn@mubis.app',
+  // diger ofisler 'ofiskodu-vkn@mubis.app'
   const createClientAuth = async (identifier, tempPassword, name, clientEmail) => {
     try {
-      const authEmail = `${identifier}@mubis.app`
-      
+      const ofis = office || await getMyOffice()
+      const authEmail = buildClientLoginEmail(identifier, ofis)
+
       const { data, error } = await supabase.auth.signUp({
         email: authEmail,
         password: tempPassword || '123456',
         options: {
-          data: { name: name, role: 'client' }
+          data: { name: name, role: 'client', office_id: String(ofis?.id || 1) }
         }
       })
-      
+
       if (error) return { success: false, error: error.message }
-      
-      // Profili guncelle - temp_password ve gercek email
+
+      // Profili guncelle - temp_password, gercek email ve ofis
       if (data.user) {
         await supabase
           .from('profiles')
-          .update({ 
-            role: 'client', 
+          .update({
+            role: 'client',
             name: name,
             temp_password: true,
-            email: clientEmail || authEmail
+            email: clientEmail || authEmail,
+            office_id: ofis?.id || 1
           })
           .eq('id', data.user.id)
       }
 
-      return { success: true, authUser: data.user }
+      return { success: true, authUser: data.user, loginEmail: authEmail }
     } catch (err) {
       return { success: false, error: err.message }
     }
   }
 
   const currentUser = user ? {
-    id: user.id,
+    id: user.clientId || user.id,
+    authUserId: user.id,
     email: user.email,
     name: profile?.name || user.email,
     role: profile?.role || 'personel',
     permissions: profile?.permissions || {},
     username: user.email,
     tempPassword: profile?.temp_password || false,
+    officeId: office?.id || profile?.office_id || null,
+    officeCode: office?.code || null,
+    officeName: office?.name || null,
+    isSuperAdmin: profile?.role === 'super_admin',
   } : null
 
   return (
@@ -264,7 +343,8 @@ export function AuthProvider({ children }) {
       deleteClient, 
       updateClient,
       createClientAuth,
-      profile
+      profile,
+      office
     }}>
       {children}
     </AuthContext.Provider>

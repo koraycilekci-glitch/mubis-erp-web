@@ -8,14 +8,17 @@ import { hesaplaIsGunu, hesaplaIzinHakki, IZIN_GUNLERI, fmt } from '../data/defa
 import { 
   Calendar, Users, Plus, Trash2, Edit3, Download, FileSpreadsheet, Upload,
   ChevronDown, ChevronRight, Save, X, FileText, Clock, CheckCircle, AlertTriangle,
-  User, Briefcase, Search
+  User, Briefcase, Search, Calculator, FileCheck
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import * as XLSX from 'xlsx'
+import PersonelKidemIhbar from '../components/PersonelKidemIhbar'
+import PersonelIbraname from '../components/PersonelIbraname'
 
-export default function IzinTakip() {
+export default function IzinTakip({ clientId: propClientId, clientInfo: propClientInfo } = {}) {
   const { clients } = useClients()
-  const [selectedClientId, setSelectedClientId] = useState('')
+  const [selectedClientId, setSelectedClientId] = useState(propClientId || '')
+  const [subTab, setSubTab] = useState('personel')
   const [employees, setEmployees] = useState([])
   const [selectedEmployee, setSelectedEmployee] = useState(null)
   const [leaveRecords, setLeaveRecords] = useState([])
@@ -282,7 +285,7 @@ export default function IzinTakip() {
   const generateIzinBelgesi = (emp, records) => {
     if (!emp) return
     const doc = new jsPDF()
-    const client = clients.find(c => String(c.id) === String(selectedClientId))
+    const client = propClientInfo || clients.find(c => String(c.id) === String(selectedClientId))
     const ozet = getIzinOzeti(emp)
     
     doc.setFont('helvetica', 'bold')
@@ -428,7 +431,7 @@ export default function IzinTakip() {
   )
 
   // Sirket/1.sinif kontrolu
-  const selectedClient = clients.find(c => String(c.id) === String(selectedClientId))
+  const selectedClient = propClientInfo || clients.find(c => String(c.id) === String(selectedClientId))
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -444,6 +447,7 @@ export default function IzinTakip() {
       </div>
 
       {/* Musteri Secimi */}
+      {!propClientId && (
       <div className="bg-blue-800/20 rounded-2xl p-6 border border-blue-700/30 mb-6">
         <div className="flex flex-col md:flex-row gap-4 items-start md:items-center">
           <div className="flex-1">
@@ -473,9 +477,51 @@ export default function IzinTakip() {
           </div>
         </div>
       </div>
+      )}
+      {propClientId && (
+      <div className="bg-blue-800/20 rounded-2xl p-6 border border-blue-700/30 mb-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-white font-semibold">{propClientInfo?.name || propClientInfo?.company || 'Personel Yonetimi'}</h3>
+            <p className="text-gray-400 text-sm">Personel yillik izin yonetimi ve takibi</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-1">Yil</label>
+            <select
+              value={selectedYil}
+              onChange={(e) => setSelectedYil(Number(e.target.value))}
+              className="bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400"
+            >
+              {[2024, 2025, 2026, 2027].map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+      )}
 
       {selectedClientId && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <>
+          {/* Alt Menu */}
+          <div className="flex space-x-1 bg-blue-950/40 rounded-xl p-1 mb-6 overflow-x-auto">
+            {[
+              { id: 'personel', label: 'Personel & Izin', icon: Users },
+              { id: 'kidem', label: 'Kidem / Ihbar', icon: Calculator },
+              { id: 'ibraname', label: 'Ibraname', icon: FileCheck },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setSubTab(tab.id)}
+                className={`relative flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${subTab === tab.id ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+              >
+                <tab.icon className="w-4 h-4" /><span>{tab.label}</span>
+              </button>
+            ))}
+          </div>
+
+          {subTab === 'personel' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Sol Panel - Personel Listesi */}
           <div className="lg:col-span-1">
             <div className="bg-blue-800/20 rounded-2xl border border-blue-700/30 overflow-hidden">
@@ -830,6 +876,16 @@ export default function IzinTakip() {
             )}
           </div>
         </div>
+          )}
+
+          {subTab === 'kidem' && (
+            <PersonelKidemIhbar employees={employees} clientInfo={selectedClient} />
+          )}
+
+          {subTab === 'ibraname' && (
+            <PersonelIbraname employees={employees} clientInfo={selectedClient} />
+          )}
+        </>
       )}
 
       {!selectedClientId && (

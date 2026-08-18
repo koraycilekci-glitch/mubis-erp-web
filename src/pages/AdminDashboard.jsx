@@ -8,9 +8,11 @@ import {
   Users, Building2, UserCheck, TrendingUp, Bell, Shield, Mail,
   FileCheck, FolderOpen, Landmark, PenTool, BarChart3, ArrowRight,
   Zap, Star, CircleDot, Timer, CalendarDays, BookOpen, Receipt,
-  ShieldCheck, FileSearch, Briefcase, Settings, Activity
+  ShieldCheck, FileSearch, Briefcase, Settings, Activity, Send,
+  Megaphone, DollarSign, Menu as MenuIcon, ChevronLeft, LayoutDashboard,
+  Calculator, MessageSquareText
 } from 'lucide-react'
-import { getMonthName } from '../utils/dateUtils'
+import { getMonthName, getFormattedBeyanDeadline } from '../utils/dateUtils'
 
 // ── Beyan tipleri ve son tarih gunleri ──
 const BEYAN_TYPES = [
@@ -56,6 +58,154 @@ function getUrgencyColor(daysLeft) {
   if (daysLeft <= 7) return { bg: 'bg-orange-500/10', text: 'text-orange-400', border: 'border-orange-500/20', badge: 'bg-orange-500', label: `${daysLeft} gun` }
   if (daysLeft <= 15) return { bg: 'bg-yellow-500/10', text: 'text-yellow-400', border: 'border-yellow-500/20', badge: 'bg-yellow-500', label: `${daysLeft} gun` }
   return { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20', badge: 'bg-blue-500', label: `${daysLeft} gun` }
+}
+
+// ── Resmi vergi takvimi: bir ayin son tarihleri ──
+// month: 0-based. SGK odemesi ayin son gunu, gecici vergi 17'si (Sub/May/Agu/Kas)
+function getAyinSonTarihleri(yil, ay) {
+  const ayinSonGunu = new Date(yil, ay + 1, 0).getDate()
+
+  const kalemler = [
+    { gun: 25, ad: 'KDV2 (tevkifat)' },
+    { gun: 26, ad: 'Muhtasar ve Prim Hizmet' },
+    { gun: 26, ad: 'Damga Vergisi' },
+    { gun: 28, ad: 'KDV' },
+    { gun: ayinSonGunu, ad: 'SGK Prim Ödemesi' }
+  ]
+
+  const geciciDonem = { 1: '4. Dönem', 4: '1. Dönem', 7: '2. Dönem', 10: '3. Dönem' }[ay]
+  if (geciciDonem) kalemler.push({ gun: 17, ad: `Geçici Vergi (${geciciDonem})` })
+  if (ay === 2) kalemler.push({ gun: 31, ad: 'Gelir Vergisi Beyannamesi' })
+  if (ay === 3) kalemler.push({ gun: 30, ad: 'Kurumlar Vergisi Beyannamesi' })
+
+  // Hafta sonu / resmi tatil ertelemesi uygula, gune gore grupla
+  const map = new Map()
+  kalemler.forEach(k => {
+    const iso = getFormattedBeyanDeadline(yil, ay, k.gun)
+    const d = new Date(iso + 'T00:00:00')
+    // Erteleme sonraki aya tasarsa ayin son is gununde goster
+    if (d.getMonth() !== ay) return
+    const gun = d.getDate()
+    if (!map.has(gun)) map.set(gun, [])
+    map.get(gun).push(k.ad)
+  })
+  return map
+}
+
+// ── Mini vergi takvimi ──
+function MiniTakvim({ isaretliGunler = [] }) {
+  const bugun = new Date()
+  const [gosterilen, setGosterilen] = useState(new Date(bugun.getFullYear(), bugun.getMonth(), 1))
+
+  const yil = gosterilen.getFullYear()
+  const ay = gosterilen.getMonth()
+  const ilkGun = new Date(yil, ay, 1)
+  const gunSayisi = new Date(yil, ay + 1, 0).getDate()
+  const basSirasi = (ilkGun.getDay() + 6) % 7 // Pazartesi = 0
+
+  const hucreler = []
+  for (let i = 0; i < basSirasi; i++) hucreler.push(null)
+  for (let g = 1; g <= gunSayisi; g++) hucreler.push(g)
+
+  // Resmi vergi takvimi + musteri beyan son tarihleri birlikte isaretlenir
+  const resmiTarihler = useMemo(() => getAyinSonTarihleri(yil, ay), [yil, ay])
+
+  const isaretli = new Set(resmiTarihler.keys())
+  isaretliGunler
+    .filter(d => d.getFullYear() === yil && d.getMonth() === ay)
+    .forEach(d => isaretli.add(d.getDate()))
+
+  const listelenecek = [...resmiTarihler.entries()].sort((a, b) => a[0] - b[0])
+
+  return (
+    <div className="bg-blue-800/20 rounded-2xl border border-blue-700/30 overflow-hidden">
+      <div className="px-5 py-4 border-b border-blue-700/30 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center">
+            <Calendar className="w-4 h-4 text-blue-400" />
+          </div>
+          <h2 className="text-white font-semibold text-sm">Vergi Takvimi</h2>
+        </div>
+        <Link to="/admin/tax-calendar" className="text-xs text-yellow-400 hover:text-yellow-300 font-medium">
+          Tüm takvim
+        </Link>
+      </div>
+
+      <div className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <button
+            onClick={() => setGosterilen(new Date(yil, ay - 1, 1))}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-blue-800/40"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <span className="text-white text-sm font-semibold">{getMonthName(ay)} {yil}</span>
+          <button
+            onClick={() => setGosterilen(new Date(yil, ay + 1, 1))}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-blue-800/40"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-7 gap-1 mb-1">
+          {['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'].map(g => (
+            <div key={g} className="text-center text-[10px] text-gray-500 font-medium py-1">{g}</div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-7 gap-1">
+          {hucreler.map((g, i) => {
+            if (!g) return <div key={i} />
+            const buGun = g === bugun.getDate() && ay === bugun.getMonth() && yil === bugun.getFullYear()
+            const sonTarih = isaretli.has(g)
+            const aciklama = resmiTarihler.get(g)
+            return (
+              <div
+                key={i}
+                title={aciklama ? `${g} ${getMonthName(ay)}: ${aciklama.join(', ')}` : undefined}
+                className={`h-8 flex items-center justify-center rounded-lg text-xs font-medium relative ${
+                  buGun
+                    ? 'bg-blue-500 text-white font-bold'
+                    : sonTarih
+                      ? 'bg-red-500/15 text-red-300'
+                      : 'text-gray-400'
+                }`}
+              >
+                {g}
+                {sonTarih && !buGun && (
+                  <span className="absolute bottom-1 w-1 h-1 rounded-full bg-red-400" />
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Bu ayin resmi son tarihleri */}
+        {listelenecek.length > 0 && (
+          <div className="mt-4 pt-3 border-t border-blue-700/30 space-y-1.5">
+            {listelenecek.map(([gun, adlar]) => {
+              const tarih = new Date(yil, ay, gun)
+              const kalan = getDaysUntil(tarih)
+              return (
+                <div key={gun} className="flex items-start gap-2.5 text-xs">
+                  <span className={`flex-shrink-0 w-7 h-6 rounded-md flex items-center justify-center font-bold ${
+                    kalan < 0 ? 'bg-gray-700/50 text-gray-500'
+                      : kalan <= 3 ? 'bg-red-500/20 text-red-300'
+                        : kalan <= 10 ? 'bg-orange-500/20 text-orange-300'
+                          : 'bg-blue-500/15 text-blue-300'
+                  }`}>{gun}</span>
+                  <span className={`flex-1 leading-6 ${kalan < 0 ? 'text-gray-500' : 'text-gray-300'}`}>
+                    {adlar.join(' • ')}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 // ── Ana Dashboard Bileşeni ──
@@ -250,7 +400,9 @@ export default function AdminDashboard() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <div className="flex min-h-screen">
+      {/* ═══════════ ICERIK (sol menu global AdminSidebar'da) ═══════════ */}
+      <div className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 py-6 pt-16 lg:pt-6">
 
       {/* ═══════════════════════════════════════════ */}
       {/* MUBİS AI KARŞILAMA */}
@@ -296,7 +448,7 @@ export default function AdminDashboard() {
             )}
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
             <div className="text-right hidden md:block">
               <div className="text-3xl font-bold text-white tabular-nums">
                 {currentTime.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
@@ -305,6 +457,11 @@ export default function AdminDashboard() {
                 {getMonthName(currentTime.getMonth())} {currentTime.getFullYear()}
               </div>
             </div>
+            <img
+              src="/mascot-kalem.png"
+              alt="MUBiS"
+              className="hidden md:block h-28 w-auto object-contain drop-shadow-[0_8px_18px_rgba(0,0,0,0.45)] animate-float-soft"
+            />
           </div>
         </div>
       </div>
@@ -619,7 +776,10 @@ export default function AdminDashboard() {
 
         {/* ── SAĞ KOLON (1/3) ── */}
         <div className="space-y-6">
-          
+
+          {/* VERGİ TAKVİMİ (mini) */}
+          <MiniTakvim isaretliGunler={dashboardData.groupedDeadlines.map(g => g.deadline)} />
+
           {/* HIZLI ERİŞİM */}
           <div className="bg-blue-800/20 rounded-2xl border border-blue-700/30 overflow-hidden">
             <div className="px-5 py-4 border-b border-blue-700/30 flex items-center gap-2.5">
@@ -633,7 +793,10 @@ export default function AdminDashboard() {
                 { to: '/admin/musteriler', icon: Users, label: 'Musteriler', color: 'from-blue-500 to-blue-600' },
                 { to: '/admin/clients/new', icon: Plus, label: 'Yeni Musteri', color: 'from-yellow-400 to-yellow-600' },
                 { to: '/admin/aylik-beyan-takip', icon: CalendarDays, label: 'Aylik Beyan', color: 'from-emerald-500 to-emerald-600' },
-                { to: '/admin/beyan-takip', icon: FileCheck, label: 'Beyan Takip', color: 'from-teal-500 to-teal-600' },
+                { to: '/admin/aylik-beyan-takip', icon: FileCheck, label: 'Beyan Takip', color: 'from-teal-500 to-teal-600' },
+                { to: '/admin/gonderim-merkezi', icon: Send, label: 'Gonderim Merkezi', color: 'from-pink-500 to-pink-600' },
+                { to: '/admin/duyuru-merkezi', icon: Megaphone, label: 'Duyuru Merkezi', color: 'from-purple-500 to-purple-600' },
+                { to: '/admin/borc-bildirim', icon: DollarSign, label: 'Borc Bildirim', color: 'from-red-500 to-red-600' },
                 { to: '/admin/all-beyan', icon: BarChart3, label: 'Beyan Rapor', color: 'from-cyan-500 to-cyan-600' },
                 { to: '/admin/smart-import', icon: Brain, label: 'AI Import', color: 'from-purple-500 to-purple-600' },
                 { to: '/admin/e-invoice', icon: Receipt, label: 'e-Fatura', color: 'from-indigo-500 to-indigo-600' },
@@ -763,6 +926,7 @@ export default function AdminDashboard() {
             </div>
           )}
         </div>
+      </div>
       </div>
     </div>
   )

@@ -25,8 +25,11 @@ export function isWeekend(date) {
 
 // Resmi tatil mi kontrol et
 export function isResmiTatil(date) {
-  const dateStr = date.toISOString().split('T')[0]
-  return RESMI_TATILLER[dateStr] !== undefined
+  // toISOString() UTC'ye cevirir ve Turkiye (UTC+3) icin 1 gun geriye kayar; yerel tarih kullan
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return RESMI_TATILLER[`${y}-${m}-${d}`] !== undefined
 }
 
 // Bir sonraki iş gününü bul
@@ -53,21 +56,27 @@ export function getBeyanDeadline(year, month, day) {
 // Beyan son tarihini formatlı döndür
 export function getFormattedBeyanDeadline(year, month, day) {
   const date = getBeyanDeadline(year, month, day)
-  return date.toISOString().split('T')[0]
+  // toISOString() UTC'ye cevirir ve 1 gun eksik gosterebilir; yerel tarih kullan
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }
 
 // Beyan türüne göre son tarihi hesapla
-export function getBeyanDeadlineByType(beyanType, year, month) {
+// mukellefTipi: 'individual' (gelir vergisi mükellefi) | 'company' (kurumlar vergisi mükellefi)
+export function getBeyanDeadlineByType(beyanType, year, month, mukellefTipi = 'company') {
   const deadlines = {
     'kdv': { day: 28 },
     'kdv2': { day: 25 },
     'muhtasar': { day: 26 },
     'sgk': { day: 26 },
   }
-  
+
+  const sahis = mukellefTipi === 'individual'
+
   // e-Defter son tarihleri (GIB takvimi)
   // Aylik: takip eden 3. ayin sonu (ornek: Ocak defteri -> Nisan 30)
-  // 3 Aylik: ceyrek sonrasi 3. ayin sonu (ornek: Ocak-Mart -> Haziran 30)
   const eDefterAylik = {
     0: { submitMonth: 3, day: 30 },  // Ocak -> Nisan 30
     1: { submitMonth: 4, day: 31 },  // Subat -> Mayis 31
@@ -83,11 +92,17 @@ export function getBeyanDeadlineByType(beyanType, year, month) {
     11: { submitMonth: 2, day: 31, yearOffset: 1 }, // Aralik -> Mart 31
   }
 
+  // 3 Aylik e-Defter berat takvimi (anahtar: ceyregin SON ayi)
+  // Gelir vergisi mukellefi ayin 10'u, kurumlar vergisi mukellefi ayin 14'u
+  //   Ocak-Mart     -> 10 / 14 Haziran
+  //   Nisan-Haziran -> 10 / 14 Eylul
+  //   Temmuz-Eylul  -> 10 / 14 Aralik
+  //   Ekim-Aralik   -> yillik beyannameyi takip eden ay: sahis 10 Nisan, sirket 14 Mayis
   const eDefter3Aylik = {
-    2: { submitMonth: 5, day: 30 },  // Ocak-Mart -> Haziran 30
-    5: { submitMonth: 8, day: 30 },  // Nisan-Haziran -> Eylul 30
-    8: { submitMonth: 11, day: 31 }, // Temmuz-Eylul -> Aralik 31
-    11: { submitMonth: 2, day: 31, yearOffset: 1 }, // Ekim-Aralik -> Mart 31
+    2:  { submitMonth: 5,  day: sahis ? 10 : 14 },
+    5:  { submitMonth: 8,  day: sahis ? 10 : 14 },
+    8:  { submitMonth: 11, day: sahis ? 10 : 14 },
+    11: { submitMonth: sahis ? 3 : 4, day: sahis ? 10 : 14, yearOffset: 1 },
   }
 
   const specialDeadlines = {
@@ -173,6 +188,71 @@ export function getBeyanAitAy(selectedMonth) {
   return { aitMonth, aitYear }
 }
 
+/**
+ * Vergi takvimindeki son tarih ayına gore beyan_durumlari anahtarini uret.
+ * Admin panelindeki AylikBeyanTakip ile ayni key formatini kullanir.
+ */
+export function getBeyanStorageKey(beyanType, filingYear, filingMonth) {
+  if (beyanType === 'sgk') {
+    return {
+      belongYear: filingYear,
+      belongMonth: filingMonth,
+      statusKey: `${filingYear}_${filingMonth}_${beyanType}`
+    }
+  }
+
+  if (['kdv', 'kdv2', 'muhtasar'].includes(beyanType)) {
+    const { aitMonth, aitYear } = getBeyanAitAy(filingMonth)
+    const belongYear = filingYear + aitYear
+    return {
+      belongYear,
+      belongMonth: aitMonth,
+      statusKey: `${belongYear}_${aitMonth}_${beyanType}`
+    }
+  }
+
+  if (beyanType === 'gecici_vergi') {
+    const geciciMap = {
+      1: { belongMonth: 9, yearAdj: -1 },
+      4: { belongMonth: 0, yearAdj: 0 },
+      7: { belongMonth: 3, yearAdj: 0 },
+      10: { belongMonth: 6, yearAdj: 0 }
+    }
+    const cfg = geciciMap[filingMonth]
+    if (!cfg) return null
+    const belongYear = filingYear + cfg.yearAdj
+    return {
+      belongYear,
+      belongMonth: cfg.belongMonth,
+      statusKey: `${belongYear}_${cfg.belongMonth}_${beyanType}`
+    }
+  }
+
+  if (beyanType === 'gelir_vergi') {
+    const belongYear = filingYear - 1
+    return {
+      belongYear,
+      belongMonth: 0,
+      statusKey: `${belongYear}_0_${beyanType}`
+    }
+  }
+
+  if (beyanType === 'kurumlar_vergi') {
+    const belongYear = filingYear - 1
+    return {
+      belongYear,
+      belongMonth: 0,
+      statusKey: `${belongYear}_0_${beyanType}`
+    }
+  }
+
+  return {
+    belongYear: filingYear,
+    belongMonth: filingMonth,
+    statusKey: `${filingYear}_${filingMonth}_${beyanType}`
+  }
+}
+
 // Beyan türüne göre açıklama getir
 export function getBeyanAciklama(beyanType) {
   const aciklamalar = {
@@ -180,7 +260,8 @@ export function getBeyanAciklama(beyanType) {
     'kdv2': 'Her ayın 25\'i (bir önceki ay beyanı)',
     'muhtasar': 'Her ayın 26\'sı (bir önceki ay beyanı)',
     'sgk': 'Her ayın 26\'sı (bir önceki ay beyanı)',
-    'edefter': 'Her ayın 30\'u (bir önceki ay beyanı)',
+    'edefter': 'Aylık: ilgili ayı takip eden 3. ayın sonu · 3 Aylık: dönemi takip eden 3. ayın 10/14\'ü',
+    'edefter_3aylik': 'Ocak-Mart 10/14 Haziran, Nisan-Haziran 10/14 Eylül, Temmuz-Eylül 10/14 Aralık, Ekim-Aralık 10 Nisan / 14 Mayıs',
     'gecici_vergi': 'Şubat 17, Mayıs 17, Ağustos 17, Kasım 17',
     'kurumlar_vergi': 'Nisan 30',
     'gelir_vergi': 'Mart 31',

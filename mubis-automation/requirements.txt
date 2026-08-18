@@ -1,0 +1,34 @@
+# MUBiS Automation - Python bağımlılıkları
+# Kurulum: pip install -r requirements.txt
+
+# Web framework
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+python-multipart==0.0.9
+
+# Görev kuyruğu
+celery==5.4.0
+redis==5.0.6
+
+# Tarayıcı otomasyonu
+playwright==1.45.0
+
+# Veritabanı
+supabase==2.5.1
+psycopg2-binary==2.9.9
+
+# Şifreleme
+cryptography==42.0.8
+
+# PDF / OCR
+pypdf==4.2.0
+pdf2image==1.17.0
+pytesseract==0.3.10
+pillow==10.3.0
+requests==2.32.3
+
+# Yardımcı
+pydantic==2.7.4
+pydantic-settings==2.3.4
+python-dotenv==1.0.1
+croniter==2.0.5

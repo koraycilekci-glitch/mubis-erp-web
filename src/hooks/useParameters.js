@@ -49,12 +49,19 @@ export function useParameters() {
     return defaults.GMS_ISTISNA[yil] || defaults.GMS_ISTISNA[2025]
   }
 
-  // Kira artis orani
+  // Kira artis orani (istenen ay yoksa en yakin gecmis aya geri doner)
   const getKiraArtisOrani = (yil, ay) => {
     const dbKey = `kira_artis_${yil}_${ay}_oran`
     if (dbParams[dbKey]) return Number(dbParams[dbKey])
-    const key = `${yil}-${String(ay).padStart(2, '0')}`
-    return defaults.KIRA_ARTIS_ORANLARI[key] || null
+    const detay = defaults.getKiraArtisOraniDetay(yil, ay)
+    return detay ? detay.oran : null
+  }
+
+  // Kira artis orani + ait oldugu donem bilgisi
+  const getKiraArtisOraniDetay = (yil, ay) => {
+    const dbKey = `kira_artis_${yil}_${ay}_oran`
+    if (dbParams[dbKey]) return { oran: Number(dbParams[dbKey]), yil, ay }
+    return defaults.getKiraArtisOraniDetay(yil, ay)
   }
 
   // Kidem tavani
@@ -104,6 +111,7 @@ export function useParameters() {
 
   return {
     loading, getYiUfe, getDakIstisna, getGmsIstisna, getKiraArtisOrani,
+    getKiraArtisOraniDetay,
     getKidemTavani, saveParam, saveCalculation, updateCalculation,
     deleteCalculation, getCalculations, dbParams, loadParams
   }

@@ -3,7 +3,7 @@ import { useClients } from '../hooks/useClients'
 import { getAllAccountingFees, getAllPayments, hesaplaBorcOzeti } from '../services/paymentService'
 import { 
   DollarSign, Users, TrendingUp, TrendingDown, Search,
-  FileSpreadsheet, Filter, CheckCircle, AlertTriangle, Clock
+  FileSpreadsheet, Filter, CheckCircle, AlertTriangle, Clock, X
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
@@ -14,6 +14,7 @@ export default function OdemeTakip() {
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [filter, setFilter] = useState('all') // all, borcu_var, borcu_yok
+  const [selectedClient, setSelectedClient] = useState(null)
 
   useEffect(() => { loadData() }, [])
 
@@ -163,7 +164,7 @@ export default function OdemeTakip() {
                 <tr><td colSpan="8" className="text-center py-8 text-gray-500">Kayit bulunamadi</td></tr>
               ) : (
                 musteriOzetleri.map((c, i) => (
-                  <tr key={c.id} className="border-t border-blue-700/20 hover:bg-blue-800/20 transition-colors">
+                  <tr key={c.id} onClick={() => setSelectedClient(c)} className="border-t border-blue-700/20 hover:bg-blue-800/20 transition-colors cursor-pointer">
                     <td className="px-4 py-3 text-gray-500 text-sm">{i + 1}</td>
                     <td className="px-4 py-3 text-white text-sm font-medium">{c.name || c.company || '-'}</td>
                     <td className="px-4 py-3 text-right text-gray-300 text-sm">{c.ozet.aylikUcret > 0 ? `${fmt(c.ozet.aylikUcret)} TL` : '-'}</td>
@@ -207,6 +208,78 @@ export default function OdemeTakip() {
           </table>
         </div>
       </div>
+
+      {/* Odeme Detay Modal */}
+      {selectedClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setSelectedClient(null)}>
+          <div className="bg-blue-900 rounded-2xl border border-blue-700/50 shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-6 border-b border-blue-700/30">
+              <div>
+                <h2 className="text-xl font-bold text-white">{selectedClient.name || selectedClient.company || 'Musteri'}</h2>
+                <p className="text-gray-400 text-sm">Muhasebe Detay Odeme Listesi</p>
+              </div>
+              <button onClick={() => setSelectedClient(null)} className="text-gray-400 hover:text-white p-1"><X className="w-6 h-6" /></button>
+            </div>
+            <div className="p-6 overflow-y-auto max-h-[70vh]">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                <div className="bg-blue-800/30 rounded-xl p-3 text-center">
+                  <p className="text-xs text-gray-400">Toplam Borc</p>
+                  <p className="text-lg font-bold text-yellow-400">{fmt(selectedClient.ozet.toplamBorc)} TL</p>
+                </div>
+                <div className="bg-blue-800/30 rounded-xl p-3 text-center">
+                  <p className="text-xs text-gray-400">Toplam Odeme</p>
+                  <p className="text-lg font-bold text-green-400">{fmt(selectedClient.ozet.toplamOdeme)} TL</p>
+                </div>
+                <div className="bg-blue-800/30 rounded-xl p-3 text-center">
+                  <p className="text-xs text-gray-400">Kalan Borc</p>
+                  <p className={`text-lg font-bold ${selectedClient.ozet.kalanBorc > 0 ? 'text-red-400' : 'text-green-400'}`}>{fmt(selectedClient.ozet.kalanBorc)} TL</p>
+                </div>
+                <div className="bg-blue-800/30 rounded-xl p-3 text-center">
+                  <p className="text-xs text-gray-400">Aylik Ucret</p>
+                  <p className="text-lg font-bold text-blue-400">{fmt(selectedClient.ozet.aylikUcret)} TL</p>
+                </div>
+              </div>
+
+              <h3 className="text-white font-semibold mb-3">Odeme Gecmisi</h3>
+              {selectedClient.payments.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-blue-800/40">
+                      <tr className="text-left text-gray-400 text-xs">
+                        <th className="px-4 py-2">Tarih</th>
+                        <th className="px-4 py-2">Donem</th>
+                        <th className="px-4 py-2 text-right">Tutar</th>
+                        <th className="px-4 py-2">Odeme Tipi</th>
+                        <th className="px-4 py-2">Aciklama</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedClient.payments.slice().sort((a, b) => new Date(b.odeme_tarihi) - new Date(a.odeme_tarihi)).map((p) => (
+                        <tr key={p.id} className="border-t border-blue-700/20">
+                          <td className="px-4 py-2 text-white text-sm">{new Date(p.odeme_tarihi).toLocaleDateString('tr-TR')}</td>
+                          <td className="px-4 py-2 text-gray-300 text-sm">{p.donem || '-'}</td>
+                          <td className="px-4 py-2 text-right text-green-400 text-sm font-medium">{fmt(p.tutar)} TL</td>
+                          <td className="px-4 py-2 text-gray-300 text-sm">
+                            <span className={`px-2 py-0.5 rounded text-xs ${p.odeme_tipi === 'eft' ? 'bg-blue-500/20 text-blue-400' : p.odeme_tipi === 'kredi_karti' ? 'bg-purple-500/20 text-purple-400' : 'bg-gray-500/20 text-gray-400'}`}>
+                              {p.odeme_tipi === 'eft' ? 'EFT/Havale' : p.odeme_tipi === 'kredi_karti' ? 'Kredi Karti' : 'Nakit'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-gray-400 text-sm">{p.aciklama || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-gray-500 text-sm text-center py-6">Henüz odeme kaydi bulunmuyor</p>
+              )}
+            </div>
+            <div className="p-4 border-t border-blue-700/30 text-right">
+              <button onClick={() => setSelectedClient(null)} className="bg-yellow-500 text-blue-950 px-4 py-2 rounded-lg text-sm font-semibold">Kapat</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

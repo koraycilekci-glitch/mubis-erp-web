@@ -2,7 +2,8 @@
 // Yil bazli vergi, SGK, Yi-UFE, istisna degerleri
 // Admin Ayarlar'dan guncellenebilir (Supabase parameters tablosu)
 
-// Gelir Vergisi Dilimleri (yil bazli)
+// Gelir Vergisi Dilimleri (yil bazli, ucret disi)
+// Kaynak: 332 seri no.lu GV Genel Tebligi (2026), 330 seri no.lu (2025)
 export const GV_DILIMLERI = {
   2024: [
     { limit: 110000, rate: 0.15 },
@@ -12,35 +13,42 @@ export const GV_DILIMLERI = {
     { limit: Infinity, rate: 0.40 }
   ],
   2025: [
-    { limit: 110000, rate: 0.15 },
-    { limit: 230000, rate: 0.20 },
-    { limit: 580000, rate: 0.27 },
-    { limit: 3000000, rate: 0.35 },
-    { limit: Infinity, rate: 0.40 }
-  ],
-  2026: [
     { limit: 158000, rate: 0.15 },
     { limit: 330000, rate: 0.20 },
     { limit: 800000, rate: 0.27 },
     { limit: 4300000, rate: 0.35 },
+    { limit: Infinity, rate: 0.40 }
+  ],
+  2026: [
+    { limit: 190000, rate: 0.15 },
+    { limit: 400000, rate: 0.20 },
+    { limit: 1000000, rate: 0.27 },
+    { limit: 5300000, rate: 0.35 },
     { limit: Infinity, rate: 0.40 }
   ]
 }
 
 // Ucret Geliri GV Dilimleri (ayri tarifesi var)
 export const GV_UCRET_DILIMLERI = {
-  2025: [
+  2024: [
     { limit: 110000, rate: 0.15 },
     { limit: 230000, rate: 0.20 },
-    { limit: 580000, rate: 0.27 },
+    { limit: 870000, rate: 0.27 },
     { limit: 3000000, rate: 0.35 },
     { limit: Infinity, rate: 0.40 }
   ],
-  2026: [
+  2025: [
     { limit: 158000, rate: 0.15 },
     { limit: 330000, rate: 0.20 },
-    { limit: 800000, rate: 0.27 },
+    { limit: 1200000, rate: 0.27 },
     { limit: 4300000, rate: 0.35 },
+    { limit: Infinity, rate: 0.40 }
+  ],
+  2026: [
+    { limit: 190000, rate: 0.15 },
+    { limit: 400000, rate: 0.20 },
+    { limit: 1500000, rate: 0.27 },
+    { limit: 5300000, rate: 0.35 },
     { limit: Infinity, rate: 0.40 }
   ]
 }
@@ -56,19 +64,36 @@ export const KV_ORANLARI = {
 export const ASGARI_UCRET = {
   2024: { brut: 20002.50, net: 17002.12 },
   2025: { brut: 26005.50, net: 22104.67 },
-  2026: { brut: 32500.00, net: 27625.00 }
+  2026: { brut: 33030.00, net: 28075.50 }
 }
 
 // SGK Oranlari
+// 2026: isveren hissesi %21,75 (7566 s. Kanun); tavan asgari ucretin 9 kati
 export const SGK = {
   isci: 0.14,
   issizlik_isci: 0.01,
   isveren: 0.205,
+  isveren_2026: 0.2175,
   issizlik_isveren: 0.02,
   tavan: {
     2024: 150018.75,
     2025: 195041.25,
-    2026: 243750.00
+    2026: 297270.00
+  }
+}
+
+// Yil bazli SGK isveren hissesi
+export function getSgkIsverenOrani(yil) {
+  return yil >= 2026 ? SGK.isveren_2026 : SGK.isveren
+}
+
+// Gunluk prime esas kazanc (PEK) sinirlari
+export function getGunlukPekSinirlari(yil) {
+  const asgari = ASGARI_UCRET[yil] || ASGARI_UCRET[2026]
+  const tavanAylik = SGK.tavan[yil] || SGK.tavan[2026]
+  return {
+    asgari: Math.round((asgari.brut / 30) * 100) / 100,
+    tavan: Math.round((tavanAylik / 30) * 100) / 100
   }
 }
 
@@ -101,8 +126,8 @@ export const GMS_ISTISNA = {
   2022: 9500,
   2023: 21000,
   2024: 33000,
-  2025: 33000,
-  2026: 43000
+  2025: 47000,
+  2026: 58000
 }
 
 // Deger Artis Kazanci Istisna Tutarlari
@@ -139,12 +164,30 @@ export const YIUFE = {
 }
 
 // Kira Artis Orani (12 aylik TUFE ortalamalari, ay bazli)
+// Kaynak: TUIK; anahtar = sozlesme yenileme ayi
 export const KIRA_ARTIS_ORANLARI = {
   '2024-01': 64.77, '2024-02': 67.07, '2024-03': 68.50, '2024-04': 69.80,
   '2024-05': 73.50, '2024-06': 71.60, '2024-07': 61.78, '2024-08': 57.30,
   '2024-09': 52.52, '2024-10': 48.58, '2024-11': 44.38, '2024-12': 41.50,
   '2025-01': 39.05, '2025-02': 36.80, '2025-03': 34.50, '2025-04': 32.10,
-  '2025-05': 29.45, '2025-06': 27.80, '2025-07': 25.50
+  '2025-05': 29.45, '2025-06': 27.80, '2025-07': 25.50,
+  '2025-09': 39.62, '2025-10': 38.36, '2025-11': 37.15, '2025-12': 35.91,
+  '2026-01': 34.88, '2026-02': 33.98, '2026-03': 33.39, '2026-04': 32.82,
+  '2026-05': 32.43, '2026-06': 32.24, '2026-07': 32.03, '2026-08': 31.90
+}
+
+// Kira artis oranini bul; istenen ay yoksa en yakin gecmis aya geri don
+export function getKiraArtisOraniDetay(yil, ay) {
+  let y = yil, a = ay
+  for (let i = 0; i < 36; i++) {
+    const key = `${y}-${String(a).padStart(2, '0')}`
+    if (KIRA_ARTIS_ORANLARI[key] != null) {
+      return { oran: KIRA_ARTIS_ORANLARI[key], yil: y, ay: a, key }
+    }
+    a--
+    if (a <= 0) { a = 12; y-- }
+  }
+  return null
 }
 
 // Ihbar Tazminati Sureleri (Is Kanunu Md.17)
@@ -312,7 +355,7 @@ export function bruttenNete(brut, yil = 2025) {
   const aylikGv = gv / 12
   const damga = brut * DAMGA_VERGISI
   const net = brut - sgkIsci - issizlikIsci - aylikGv - damga
-  const sgkIsveren = sgkMatrah * SGK.isveren
+  const sgkIsveren = sgkMatrah * getSgkIsverenOrani(yil)
   const issizlikIsveren = sgkMatrah * SGK.issizlik_isveren
   const toplamMaliyet = brut + sgkIsveren + issizlikIsveren
   return { sgkIsci, issizlikIsci, gvMatrah, aylikGv, damga, net, sgkIsveren, issizlikIsveren, toplamMaliyet }

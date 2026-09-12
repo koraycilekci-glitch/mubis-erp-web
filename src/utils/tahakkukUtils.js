@@ -1,3 +1,64 @@
+const DOCUMENT_TYPE_LABELS = {
+  sigorta_tahakkuk: 'Tahakkuk Fişi',
+  tahakkuk: 'Tahakkuk Fişi',
+  hizmet_listesi: 'Hizmet Listesi',
+  bordro: 'Bordro',
+}
+
+export const getDocumentTypeLabel = (documentType) =>
+  DOCUMENT_TYPE_LABELS[documentType] || documentType || 'Evrak'
+
+export const normalizeTahakkukDocument = (document, fallbackType = 'tahakkuk') => {
+  if (!document) return null
+  if (typeof document === 'string') {
+    return {
+      url: document,
+      documentType: fallbackType,
+      label: getDocumentTypeLabel(fallbackType),
+    }
+  }
+
+  const documentType = document.documentType || document.type || document.belge_turu || fallbackType
+  return {
+    ...document,
+    documentType,
+    label: document.label || getDocumentTypeLabel(documentType),
+    url: document.url || document.publicUrl || document.storage_url || document.link || '',
+    name: document.name || document.fileName || document.file_name || getDocumentTypeLabel(documentType),
+  }
+}
+
+export const getTahakkukDocuments = (beyanDurumlari = {}) => {
+  const documents = []
+  const add = (value, type) => {
+    const values = Array.isArray(value) ? value : value ? [value] : []
+    values.forEach((item) => {
+      const normalized = normalizeTahakkukDocument(item, type)
+      if (normalized?.url || normalized?.storagePath || normalized?.path) documents.push(normalized)
+    })
+  }
+
+  add(beyanDurumlari._tahakkuk_url, 'tahakkuk')
+  add(beyanDurumlari._tahakkuklar, 'tahakkuk')
+  add(beyanDurumlari._documents, 'tahakkuk')
+
+  return documents.filter((document, index, all) => {
+    const key = document.url || document.storagePath || document.path
+    return all.findIndex((candidate) => (candidate.url || candidate.storagePath || candidate.path) === key) === index
+  })
+}
+
+export const getVisiblePortalDocuments = (documents = [], taxType = '') => {
+  const normalizedTaxType = String(taxType).toLowerCase()
+  const isSgk = normalizedTaxType.includes('sgk') || normalizedTaxType.includes('sigorta')
+  return documents
+    .map((document) => normalizeTahakkukDocument(document))
+    .filter((document) => {
+      if (document.documentType === 'bordro') return false
+      if (isSgk) return ['tahakkuk', 'sigorta_tahakkuk', 'hizmet_listesi'].includes(document.documentType)
+      return ['tahakkuk', 'sigorta_tahakkuk'].includes(document.documentType)
+    })
+}
 // Coklu tahakkuk/beyanname yardimcilari
 // Veri modeli (geriye uyumlu):
 //   `${baseKey}_tahakkuklar` = [{ url, name, uploadedAt, tutar, analiz_durumu, son_odeme, vergi_turu }]

@@ -3,18 +3,25 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useClients } from '../hooks/useClients'
 import { searchNace, formatNaceCode, getNaceDesc } from '../utils/naceCodes'
+import { KIRA_STOPAJ_ORANI, kiraGecmisi, paraTR, tarihTR } from '../utils/kiraUtils'
 import * as XLSX from 'xlsx'
 import { 
   ArrowLeft, Building2, User, Phone, Mail, MapPin, 
-  FileText, Calendar, Edit3, Plus, Trash2, Save, X,
+  FileText, Calendar, Edit3, Plus, Trash2, Save, X, History,
   Globe, CreditCard, Hash, ListChecks, Shield,
   Briefcase, Tag, Upload, Search, Home, ExternalLink,
-  Eye, EyeOff, Lock, Landmark, KeyRound, Receipt, Users, AlertTriangle, DollarSign, CreditCard as CreditCardIcon,
-  Send, MessageCircle, Download, Camera
+  Eye, EyeOff, Lock, Landmark, KeyRound, Receipt, Users, AlertTriangle, DollarSign,
+  Send, MessageCircle, Download, Camera, CheckCircle
 } from 'lucide-react'
-import { getAccountPlans, saveAccountPlans, getEmployees, addEmployee, updateEmployee, deleteEmployee, saveEmployeesFromExcel, getPartners, addPartner, updatePartner, deletePartner } from '../services/clientService'
-import { getAccountingFee, saveAccountingFee, getPayments, addPayment, deletePayment, hesaplaBorcOzeti, BANKA_BILGILERI } from '../services/paymentService'
-import { uploadGelirBeyanDocument, uploadGeciciVergiDocument, uploadVergiLevhasi, uploadMaliEvrak } from '../services/documentService'
+import { getAccountPlans, saveAccountPlans, getEmployees, addEmployee, updateEmployee, deleteEmployee, saveEmployeesFromExcel, getPartners, addPartner, updatePartner, deletePartner, setEdevletAktifPartner } from '../services/clientService'
+import { getAccountingFee, saveAccountingFee, getPayments, addPayment, deletePayment, hesaplaBorcOzeti, openReceipt, applyPaymentToDebt, rejectPayment } from '../services/paymentService'
+import { createNotification } from '../services/notificationService'
+import { uploadGelirBeyanDocument, uploadGeciciVergiDocument, uploadVergiLevhasi, uploadMaliEvrak, uploadAdminDocument, uploadMakbuz, analyzePersonnelDocument } from '../services/documentService'
+import { etebligatlariGetirVeYukle } from '../services/gibIndirmeService'
+import { gibYardimciIs, edevletKimlikGetir } from '../utils/gibOdemeHelper'
+import { ASGARI_UCRET, nettenBrute } from '../data/defaults'
+import { formatTurkishInput, parseTurkishNumber, parseMoneyInput, formatMoney } from '../utils/numberFormat'
+import { formatDateTR } from '../utils/dateUtils'
 import { supabase } from '../lib/supabase'
 import ZReportManager from '../components/ZReportManager'
 import ExpenseUploader from '../components/ExpenseUploader'
@@ -33,6 +40,9 @@ export default function ClientDetail() {
   const [activeTab, setActiveTab] = useState('info')
   const [uploadDocType, setUploadDocType] = useState(null)
   const [editData, setEditData] = useState({})
+  // e-Devlet islemleri (e-Tebligat getir / SGK prim ode)
+  const [edevletIslem, setEdevletIslem] = useState(null) // 'etebligat' | 'sgk' | null
+  const [edevletDurum, setEdevletDurum] = useState('')
   const [hesapKodlari, setHesapKodlari] = useState([])
   const [hesapSearch, setHesapSearch] = useState('')
   const [naceResults, setNaceResults] = useState([])
@@ -43,17 +53,31 @@ export default function ClientDetail() {
   const [personelList, setPersonelList] = useState([])
   const [showPersonelForm, setShowPersonelForm] = useState(false)
   const [editPersonelId, setEditPersonelId] = useState(null)
-  const [personelForm, setPersonelForm] = useState({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '', dogum_tarihi: '' })
+  const [personelForm, setPersonelForm] = useState({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '', dogum_tarihi: '', sgk_durumu: 'calisan', ise_giris_bildirge_url: '', isten_cikis_bildirge_url: '' })
+  const [personelUcretTipi, setPersonelUcretTipi] = useState('brut')
+  const [personelAsgariUcret, setPersonelAsgariUcret] = useState(false)
+  // Personel bildirge yukleme (AI ile oku)
+  const [bildirgeYukleniyor, setBildirgeYukleniyor] = useState(null) // 'ise_giris' | 'isten_cikis' | null
+  const [bildirgeHata, setBildirgeHata] = useState('')
+  const iseGirisBildirgeRef = useRef(null)
+  const istenCikisBildirgeRef = useRef(null)
   // Muhasebe ucreti
   const [accountingFee, setAccountingFee] = useState(null)
   const [feeForm, setFeeForm] = useState({ onceki_donem_borc: '', defter_tasdik_ucreti: '', aylik_ucret: '', baslangic_ay: '1', baslangic_yil: '2025', notlar: '' })
   const [clientPayments, setClientPayments] = useState([])
   const [showPaymentForm, setShowPaymentForm] = useState(false)
   const [paymentForm, setPaymentForm] = useState({ tutar: '', odeme_tipi: 'eft', donem: '', aciklama: '', odeme_tarihi: new Date().toISOString().split('T')[0] })
+  // Borctan dusme modal (online odemeler icin)
+  const [borcDusModal, setBorcDusModal] = useState(null) // { payment }
+  const [borcDusSecim, setBorcDusSecim] = useState('')
+  // Serbest meslek makbuzu yukleme
+  const [makbuzForm, setMakbuzForm] = useState({ name: '', tutar: '', donem: '' })
+  const [makbuzFile, setMakbuzFile] = useState(null)
+  const makbuzFileRef = useRef(null)
 
   // Yeni yetkili/ortak formu (partners tablosu)
   const [partners, setPartners] = useState([])
-  const [newPartner, setNewPartner] = useState({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', address: '' })
+  const [newPartner, setNewPartner] = useState({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', sermaye: '', paySayisi: '', address: '', edevletSifre: '' })
   const [showPartnerForm, setShowPartnerForm] = useState(false)
   const [editPartnerId, setEditPartnerId] = useState(null)
   // Yeni banka formu
@@ -70,6 +94,13 @@ export default function ClientDetail() {
   const [maliEvrakName, setMaliEvrakName] = useState('')
   // Sifre gorunurluk
   const [showPasswords, setShowPasswords] = useState({})
+  // Kira gecmisi duzenleme
+  const [editingHistoryIndex, setEditingHistoryIndex] = useState(null)
+  const [historyEditData, setHistoryEditData] = useState({})
+  // Kira guncelleme modal
+  const [kiraUpdateModalOpen, setKiraUpdateModalOpen] = useState(false)
+  const [kiraUpdateIndex, setKiraUpdateIndex] = useState(null)
+  const [kiraUpdateData, setKiraUpdateData] = useState({ kiraTutarTipi: 'net', netKira: '', brutKira: '' })
   // MUBiS Proxy durumu
   const [proxyReady, setProxyReady] = useState(false)
   const [proxyLoading, setProxyLoading] = useState(false)
@@ -176,7 +207,8 @@ export default function ClientDetail() {
     if (found) {
       setClient(found)
       setClientDocuments(found.client_documents || {})
-      setEditData(found)
+      // Duzenleme surerken formu sifirlama (yazilan sehir/sermaye kaybolmasin)
+      if (!isEditing) setEditData(found)
     }
     // Hesap kodlarini Supabase'den yukle
     loadHesapKodlari()
@@ -193,7 +225,29 @@ export default function ClientDetail() {
     try {
       const data = await getPartners(parseInt(id))
       setPartners(data)
-    } catch (e) { console.error('Ortak yukleme hatasi:', e) }
+      return data
+    } catch (e) { console.error('Ortak yukleme hatasi:', e); return [] }
+  }
+
+  // Ortaklarin sermaye tutarlarinin toplamini musterinin Sermaye alanina yazar.
+  // Yalniz ortak sermayesi degistiginde calisir; Bilgiler'de elle duzeltme yapilabilir.
+  const syncSermayeToplami = async (liste) => {
+    try {
+      const toplam = (liste || []).reduce((t, p) => {
+        const v = typeof p.sermaye === 'number' ? p.sermaye : parseMoneyInput(p.sermaye)
+        return t + (Number.isFinite(v) && v != null ? v : 0)
+      }, 0)
+      if (!(toplam > 0)) return
+      const { error } = await supabase
+        .from('clients')
+        .update({ capital: toplam })
+        .eq('id', parseInt(id))
+      if (error) throw error
+      setClient(prev => prev ? { ...prev, capital: toplam } : prev)
+      setEditData(prev => ({ ...prev, capital: toplam }))
+    } catch (e) {
+      console.error('Sermaye toplami guncellenemedi:', e)
+    }
   }
 
   const updateClientDocuments = async (nextDocs) => {
@@ -330,6 +384,57 @@ export default function ClientDetail() {
     }
   }
 
+  // Serbest meslek makbuzu yukle (musteri "Faturalarim" bolumunde gorur)
+  const handleMakbuzUpload = async () => {
+    if (!makbuzForm.name.trim()) {
+      alert('Lutfen makbuz adi / donemi girin.')
+      return
+    }
+    if (!makbuzFile) {
+      alert('Lutfen makbuz PDF dosyasi secin.')
+      return
+    }
+    setDocLoading(true)
+    try {
+      const uploaded = await uploadMakbuz({ client, name: makbuzForm.name, file: makbuzFile })
+      const tutar = makbuzForm.tutar ? parseTurkishNumber(makbuzForm.tutar) : null
+      const yeni = {
+        id: `makbuz_${Date.now()}`,
+        name: makbuzForm.name.trim(),
+        donem: makbuzForm.donem || '',
+        tutar: Number.isFinite(tutar) ? tutar : null,
+        url: uploaded.url,
+        size: uploaded.size,
+        uploaded_at: uploaded.uploaded_at
+      }
+      const next = { ...clientDocuments }
+      next.makbuzlar = [yeni, ...(next.makbuzlar || [])]
+      await updateClientDocuments(next)
+      setMakbuzForm({ name: '', tutar: '', donem: '' })
+      setMakbuzFile(null)
+      if (makbuzFileRef.current) makbuzFileRef.current.value = ''
+      alert('Makbuz yuklendi.')
+    } catch (err) {
+      console.error('Makbuz yukleme hatasi:', err)
+      alert('Yukleme basarisiz: ' + (err.message || 'Bilinmeyen hata'))
+      setDocLoading(false)
+    }
+  }
+
+  const handleMakbuzDelete = async (makbuzId) => {
+    if (!window.confirm('Bu makbuzu silmek istediginize emin misiniz?')) return
+    setDocLoading(true)
+    try {
+      const next = { ...clientDocuments }
+      next.makbuzlar = (next.makbuzlar || []).filter(m => m.id !== makbuzId)
+      await updateClientDocuments(next)
+    } catch (err) {
+      console.error('Makbuz silme hatasi:', err)
+      alert('Silme basarisiz: ' + (err.message || 'Bilinmeyen hata'))
+      setDocLoading(false)
+    }
+  }
+
   const loadHesapKodlari = async () => {
     try {
       const plans = await getAccountPlans(parseInt(id))
@@ -387,12 +492,65 @@ export default function ClientDetail() {
     }
   }
 
+  // e-Tebligatlari e-Devlet uzerinden indirip musteri klasorune yukler
+  const handleEtebligatGetir = async () => {
+    setEdevletIslem('etebligat')
+    setEdevletDurum('Yardimci program kontrol ediliyor...')
+    try {
+      await etebligatlariGetirVeYukle({
+        clientId: client.id,
+        client,
+        kaynak: 'tumu',
+        onDurum: (d) => setEdevletDurum(
+          d === 'gib-aciliyor' ? 'e-Devlet aciliyor; guvenlik kodunu girip giris yapin...'
+            : d === 'dosya-bekleniyor' ? 'Belgeler indiriliyor; e-Devlet penceresinde giris yapmaniz bekleniyor...'
+              : d === 'yukleniyor' ? 'Belgeler musteri klasorune yukleniyor...' : d
+        )
+      })
+      alert('e-Tebligatlar indirildi ve musteri klasorune yuklendi.')
+      setEdevletDurum('')
+    } catch (err) {
+      alert('e-Tebligat getirme basarisiz: ' + (err.message || 'Bilinmeyen hata'))
+      setEdevletDurum('')
+    }
+    setEdevletIslem(null)
+  }
+
+  // SGK prim odemesi: e-Devlet uzerinden (turkiye.gov.tr)
+  const handleSgkPrimOde = async () => {
+    setEdevletIslem('sgk')
+    setEdevletDurum('e-Devlet aciliyor...')
+    try {
+      const kimlik = await edevletKimlikGetir(client.id)
+      const tc = kimlik.tc || client.vkn || client.tc || ''
+      const edevletSifre = kimlik.edevletPass || ''
+      if (!edevletSifre) {
+        alert('e-Devlet sifresi yok. Once profilde "e-Devlet Sifresi" alanini doldurup kaydedin (sirketlerde ortak secin).')
+        setEdevletIslem(null)
+        setEdevletDurum('')
+        return
+      }
+      const sonuc = await gibYardimciIs('sgk-odeme', { tc, edevletSifre })
+      if (sonuc.ok) {
+        setEdevletDurum('e-Devlet giris ekrani acildi; guvenlik kodunu girip giris yapin, sonraki adimlar otomatik yapilir.')
+      } else {
+        alert('Yardimci programa ulasilamadi. Yardimci programin kurulu ve calisir oldugundan emin olun.')
+        setEdevletDurum('')
+        setEdevletIslem(null)
+      }
+    } catch (err) {
+      alert('SGK odeme baslatma hatasi: ' + (err.message || 'Bilinmeyen hata'))
+      setEdevletDurum('')
+      setEdevletIslem(null)
+    }
+  }
+
   const handleSave = async () => {
     // clients tablosuna gidecek izin verilen alanlar
     const allowedFields = [
       'name','shortName','company','vkn','tc','taxNo','email','phone','whatsapp','taxOffice','address','city',
       'type','companyType','taxType','capital','openDate','closeDate','musteriSinifi',
-      'naceCode','naceDesc','efatura','earsiv','esmm','edefter','edefterPeriod','serbestMeslek',
+      'naceCode','naceDesc','faaliyetKodu','activityField','faaliyetAlani','efatura','earsiv','esmm','edefter','edefterPeriod','serbestMeslek',
       'eimzaStart','eimzaEnd','kartTipi','kartSifre','kiraBilgisi','kiraKontratBitis',
       'dvsUsername','dvsPassword','sgkUser','sgkIsyeriKodu','sgkSistemSifre','sgkIsyeriSifre',
       'earsivUser','earsivPass','edevletUser','edevletPass','ticaretSicilNo','beyanProfile',
@@ -404,7 +562,7 @@ export default function ClientDetail() {
       if (key in editData) cleanData[key] = editData[key]
     })
     // Tarih alanlarini yyyy-aa-gg formatinda normalize et
-    const dateFields = ['isAcilisTarihi','openDate','eimzaStart','eimzaEnd','kiraBaslangic','kiraBitis']
+    const dateFields = ['isAcilisTarihi','openDate','closeDate','eimzaStart','eimzaEnd','kiraBaslangic','kiraBitis']
     dateFields.forEach(df => {
       if (cleanData[df] && typeof cleanData[df] === 'string' && cleanData[df].match(/^\d{2}\.\d{2}\.\d{4}$/)) {
         const [g, a, y] = cleanData[df].split('.')
@@ -420,11 +578,35 @@ export default function ClientDetail() {
           kb[df] = `${y}-${a}-${g}`
         }
       })
+      // Isyeri sahiplerinde net/brut hesaplamasini kaydetmeden once uygula
+      if (Array.isArray(kb.isyeriSahipleri)) {
+        kb.isyeriSahipleri = kb.isyeriSahipleri.map(sahip => {
+          const tip = sahip.kiraTutarTipi === 'brut' ? 'brut' : 'net'
+          const girilen = tip === 'brut' ? sahip.brutKira : sahip.netKira
+          const stopajOrani = sahip.stopaj === 'var' ? KIRA_STOPAJ_ORANI : 0
+          if (girilen === '' || girilen === null || girilen === undefined) {
+            return { ...sahip, netKira: '', brutKira: '' }
+          }
+          const numericValue = parseTurkishNumber(girilen)
+          if (tip === 'net') {
+            return { ...sahip, netKira: formatTurkishInput(girilen), brutKira: (numericValue / (1 - stopajOrani)).toFixed(2) }
+          }
+          return { ...sahip, brutKira: formatTurkishInput(girilen), netKira: (numericValue * (1 - stopajOrani)).toFixed(2) }
+        })
+      }
+      delete kb.evSahipleri
       cleanData.kiraBilgisi = kb
     }
     // Eger isAcilisTarihi varsa openDate'e de yaz (geriye uyumluluk)
     if (cleanData.isAcilisTarihi && !cleanData.openDate) {
       cleanData.openDate = cleanData.isAcilisTarihi
+    }
+    if (cleanData.faaliyetKodu) {
+      cleanData.naceCode = cleanData.faaliyetKodu
+      delete cleanData.faaliyetKodu
+    }
+    if (cleanData.activityField && !cleanData.naceDesc) {
+      cleanData.naceDesc = cleanData.activityField
     }
     const result = await saveClient(cleanData)
     if (result.success) setIsEditing(false)
@@ -434,7 +616,14 @@ export default function ClientDetail() {
   const getKiraBilgisi = (source) => {
     const raw = source?.kiraBilgisi || source?.kira_bilgisi || {}
     if (typeof raw === 'string') {
-      try { return JSON.parse(raw) } catch { return {} }
+      try {
+        const parsed = JSON.parse(raw)
+        // Cift katmanli string JSON icin
+        if (typeof parsed === 'string') {
+          try { return JSON.parse(parsed) } catch { return {} }
+        }
+        return parsed
+      } catch { return {} }
     }
     return raw || {}
   }
@@ -444,24 +633,291 @@ export default function ClientDetail() {
     setEditData({ ...editData, kiraBilgisi: kb })
   }
 
+  // Kira gecmisi silme / guncelleme
+  const saveKiraHistoryChanges = async (nextHistory) => {
+    const kb = { ...getKiraBilgisi(client), kiraGecmisi: nextHistory }
+    const { error } = await supabase
+      .from('clients')
+      .update({ kira_bilgisi: kb })
+      .eq('id', id)
+    if (error) {
+      console.error('Kira gecmisi kaydedilemedi:', error)
+      alert('Kira gecmisi kaydedilemedi: ' + error.message)
+      return false
+    }
+    setClient(prev => ({ ...prev, kiraBilgisi: kb, kira_bilgisi: kb }))
+    return true
+  }
+
+  const deleteKiraHistoryItem = async (originalIndex) => {
+    if (!window.confirm('Bu kira gecmisi kaydini silmek istediginize emin misiniz?')) return
+    const kb = getKiraBilgisi(client)
+    const history = Array.isArray(kb.kiraGecmisi) ? [...kb.kiraGecmisi] : []
+    history.splice(originalIndex, 1)
+    await saveKiraHistoryChanges(history)
+  }
+
+  const updateKiraHistoryItem = async (originalIndex) => {
+    const kb = getKiraBilgisi(client)
+    const history = Array.isArray(kb.kiraGecmisi) ? [...kb.kiraGecmisi] : []
+    history[originalIndex] = { ...history[originalIndex], ...historyEditData }
+    const ok = await saveKiraHistoryChanges(history)
+    if (ok) {
+      setEditingHistoryIndex(null)
+      setHistoryEditData({})
+    }
+  }
+
+  const startEditHistoryItem = (originalIndex, donem) => {
+    setEditingHistoryIndex(originalIndex)
+    setHistoryEditData({
+      kiraBaslangic: donem.kiraBaslangic || '',
+      kiraBitis: donem.kiraBitis || '',
+      netKira: donem.netKira || '',
+      brutKira: donem.brutKira || '',
+      aciklama: donem.aciklama || ''
+    })
+  }
+
+  const addOneDay = (dateStr) => {
+    if (!dateStr) return ''
+    const d = new Date(dateStr)
+    if (isNaN(d.getTime())) return ''
+    d.setDate(d.getDate() + 1)
+    return d.toISOString().split('T')[0]
+  }
+
+  const addOneYear = (dateStr) => {
+    if (!dateStr) return ''
+    const baslangic = new Date(dateStr)
+    if (isNaN(baslangic.getTime())) return ''
+    const d = new Date(dateStr)
+    d.setFullYear(d.getFullYear() + 1)
+    // 29 Subat gibi durumlarda ayin son gunune cek
+    if (d.getMonth() !== baslangic.getMonth()) {
+      d.setDate(0)
+    }
+    return d.toISOString().split('T')[0]
+  }
+
+  const openKiraUpdateModal = (index, sahip) => {
+    setKiraUpdateIndex(index)
+    setKiraUpdateData({
+      kiraTutarTipi: sahip.kiraTutarTipi === 'brut' ? 'brut' : 'net',
+      netKira: sahip.netKira || '',
+      brutKira: sahip.brutKira || ''
+    })
+    setKiraUpdateModalOpen(true)
+  }
+
+  const closeKiraUpdateModal = () => {
+    setKiraUpdateModalOpen(false)
+    setKiraUpdateIndex(null)
+    setKiraUpdateData({ kiraTutarTipi: 'net', netKira: '', brutKira: '' })
+  }
+
+  const handleKiraUpdateTutarChange = (tip, value) => {
+    const next = { ...kiraUpdateData, kiraTutarTipi: tip }
+    if (tip === 'net') next.netKira = value
+    else next.brutKira = value
+    setKiraUpdateData(next)
+  }
+
+  const finalizeKiraUpdateTutar = () => {
+    const tip = kiraUpdateData.kiraTutarTipi === 'brut' ? 'brut' : 'net'
+    const girilen = tip === 'brut' ? kiraUpdateData.brutKira : kiraUpdateData.netKira
+    if (!girilen || girilen === '') {
+      setKiraUpdateData(prev => ({ ...prev, netKira: '', brutKira: '' }))
+      return
+    }
+    const kb = getKiraBilgisi(client)
+    const sahip = kb.isyeriSahipleri?.[kiraUpdateIndex] || {}
+    const stopajOrani = sahip.stopaj === 'var' ? KIRA_STOPAJ_ORANI : 0
+    const numericValue = parseTurkishNumber(girilen)
+    if (tip === 'net') {
+      setKiraUpdateData(prev => ({
+        ...prev,
+        netKira: formatTurkishInput(girilen),
+        brutKira: (numericValue / (1 - stopajOrani)).toFixed(2)
+      }))
+    } else {
+      setKiraUpdateData(prev => ({
+        ...prev,
+        brutKira: formatTurkishInput(girilen),
+        netKira: (numericValue * (1 - stopajOrani)).toFixed(2)
+      }))
+    }
+  }
+
+  const applyKiraUpdate = async () => {
+    if (kiraUpdateIndex === null) return
+    const kb = getKiraBilgisi(client)
+    const sahip = kb.isyeriSahipleri?.[kiraUpdateIndex]
+    if (!sahip) return
+
+    const tip = kiraUpdateData.kiraTutarTipi === 'brut' ? 'brut' : 'net'
+    const girilen = tip === 'brut' ? kiraUpdateData.brutKira : kiraUpdateData.netKira
+    if (!girilen || parseTurkishNumber(girilen) <= 0) {
+      return alert('Lutfen gecerli bir kira tutari girin.')
+    }
+
+    // Mevcut donemi arsivle
+    const history = Array.isArray(kb.kiraGecmisi) ? [...kb.kiraGecmisi] : []
+    const eskiNetSayi = parseTurkishNumber(sahip.netKira)
+    const eskiBrutSayi = parseTurkishNumber(sahip.brutKira)
+    history.push({
+      kiraBaslangic: sahip.kiraBaslangic,
+      kiraBitis: sahip.kiraBitis,
+      netKira: Number.isFinite(eskiNetSayi) && eskiNetSayi > 0 ? String(eskiNetSayi.toFixed(2)) : '0.00',
+      brutKira: Number.isFinite(eskiBrutSayi) && eskiBrutSayi > 0 ? String(eskiBrutSayi.toFixed(2)) : '0.00',
+      aciklama: `${sahip.adSoyad || 'Mal sahibi'} - ${new Date().toLocaleDateString('tr-TR')} kira guncelleme`,
+      kayitTarihi: new Date().toISOString()
+    })
+
+    // Yeni donem hesapla
+    const eskiBitisIso = normalizeDateForInput(sahip.kiraBitis)
+    const yeniBaslangic = eskiBitisIso ? addOneDay(eskiBitisIso) : new Date().toISOString().split('T')[0]
+    const yeniBitis = addOneYear(yeniBaslangic)
+
+    // Yeni tutarlari hesapla
+    const stopajOrani = sahip.stopaj === 'var' ? KIRA_STOPAJ_ORANI : 0
+    const numericValue = parseTurkishNumber(girilen)
+    let yeniNet, yeniBrut
+    if (tip === 'net') {
+      yeniNet = formatTurkishInput(girilen)
+      yeniBrut = (numericValue / (1 - stopajOrani)).toFixed(2)
+    } else {
+      yeniBrut = formatTurkishInput(girilen)
+      yeniNet = (numericValue * (1 - stopajOrani)).toFixed(2)
+    }
+
+    const yeniSahip = {
+      ...sahip,
+      kiraBaslangic: yeniBaslangic,
+      kiraBitis: yeniBitis,
+      kiraTutarTipi: tip,
+      netKira: yeniNet,
+      brutKira: yeniBrut
+    }
+
+    const list = [...(kb.isyeriSahipleri || [])]
+    list[kiraUpdateIndex] = yeniSahip
+
+    const newKb = { ...kb, isyeriSahipleri: list, kiraGecmisi: history }
+    const result = await saveClient({ ...client, kira_bilgisi: newKb, kiraBilgisi: newKb })
+    if (result.success) {
+      closeKiraUpdateModal()
+      alert('Kira guncellendi.')
+    }
+  }
+
+  const fixKiraDates = async (index) => {
+    if (!window.confirm('Kira bitis tarihi baslangic tarihine gore 1 yil uzatilacak. Onayliyor musunuz?')) return
+    const kb = getKiraBilgisi(client)
+    const sahip = kb.isyeriSahipleri?.[index]
+    if (!sahip?.kiraBaslangic) return alert('Baslangic tarihi bulunamadi.')
+
+    const baslangicIso = normalizeDateForInput(sahip.kiraBaslangic)
+    const yeniBitis = addOneYear(baslangicIso)
+    if (!yeniBitis) return alert('Bitis tarihi hesaplanamadi.')
+
+    const list = [...(kb.isyeriSahipleri || [])]
+    list[index] = { ...sahip, kiraBitis: yeniBitis }
+
+    const newKb = { ...kb, isyeriSahipleri: list }
+    const result = await saveClient({ ...client, kira_bilgisi: newKb, kiraBilgisi: newKb })
+    if (result.success) alert('Kira bitis tarihi duzeltildi.')
+  }
+
   const addEvSahibi = () => {
-    const kb = getKiraBilgisi(editData)
-    const list = [...(kb.evSahipleri || []), { tc: '', adSoyad: '', adres: '', hisseOrani: '' }]
-    setKiraField('evSahipleri', list)
+    addIsyeriSahibi()
   }
 
   const updateEvSahibi = (index, field, value) => {
-    const kb = getKiraBilgisi(editData)
-    const list = [...(kb.evSahipleri || [])]
-    list[index] = { ...list[index], [field]: value }
-    setKiraField('evSahipleri', list)
+    updateIsyeriSahibi(index, field, value)
   }
 
   const removeEvSahibi = (index) => {
+    removeIsyeriSahibi(index)
+  }
+
+  const addIsyeriSahibi = () => {
     const kb = getKiraBilgisi(editData)
-    const list = [...(kb.evSahipleri || [])]
+    const list = [...(kb.isyeriSahipleri || []), { tc: '', adSoyad: '', adres: '', hisseOrani: '', kiraTutarTipi: 'net', netKira: '', brutKira: '', kiraBaslangic: kb.kiraBaslangic || '', kiraBitis: kb.kiraBitis || '', stopaj: kb.stopaj || '' }]
+    setKiraField('isyeriSahipleri', list)
+  }
+
+  const updateIsyeriSahibi = (index, field, value) => {
+    const kb = getKiraBilgisi(editData)
+    const list = [...(kb.isyeriSahipleri || [])]
+    list[index] = { ...list[index], [field]: value }
+    setKiraField('isyeriSahipleri', list)
+  }
+
+  const updateIsyeriSahibiTutar = (index, tip, value) => {
+    const kb = getKiraBilgisi(editData)
+    const list = [...(kb.isyeriSahipleri || [])]
+    // Yazarken ham degeri tut; format ve karsi taraf hesabi alandan cikinca (blur) yapilir
+    list[index] = { ...list[index], kiraTutarTipi: tip, [tip === 'brut' ? 'brutKira' : 'netKira']: value }
+    setKiraField('isyeriSahipleri', list)
+  }
+
+  const finalizeIsyeriSahibiTutar = (index) => {
+    const kb = getKiraBilgisi(editData)
+    const list = [...(kb.isyeriSahipleri || [])]
+    const sahip = { ...list[index] }
+    const tip = sahip.kiraTutarTipi === 'brut' ? 'brut' : 'net'
+    const girilen = tip === 'brut' ? sahip.brutKira : sahip.netKira
+    const stopajOrani = sahip.stopaj === 'var' ? KIRA_STOPAJ_ORANI : 0
+
+    if (girilen === '' || girilen === null || girilen === undefined) {
+      sahip.netKira = ''
+      sahip.brutKira = ''
+    } else {
+      const numericValue = parseTurkishNumber(girilen)
+      if (tip === 'net') {
+        sahip.netKira = formatTurkishInput(girilen)
+        sahip.brutKira = (numericValue / (1 - stopajOrani)).toFixed(2)
+      } else {
+        sahip.brutKira = formatTurkishInput(girilen)
+        sahip.netKira = (numericValue * (1 - stopajOrani)).toFixed(2)
+      }
+    }
+
+    list[index] = sahip
+    setKiraField('isyeriSahipleri', list)
+  }
+
+  const updateIsyeriSahibiStopaj = (index, value) => {
+    const kb = getKiraBilgisi(editData)
+    const list = [...(kb.isyeriSahipleri || [])]
+    const sahip = { ...list[index], stopaj: value }
+    const tip = sahip.kiraTutarTipi === 'brut' ? 'brut' : 'net'
+    const girilenTutar = tip === 'brut' ? sahip.brutKira : sahip.netKira
+
+    if (girilenTutar !== '' && girilenTutar !== null && girilenTutar !== undefined) {
+      const numericValue = parseTurkishNumber(girilenTutar)
+      const stopajOrani = value === 'var' ? KIRA_STOPAJ_ORANI : 0
+      if (Number.isFinite(numericValue)) {
+        if (tip === 'net') {
+          sahip.netKira = formatTurkishInput(girilenTutar)
+          sahip.brutKira = (numericValue / (1 - stopajOrani)).toFixed(2)
+        } else {
+          sahip.brutKira = formatTurkishInput(girilenTutar)
+          sahip.netKira = (numericValue * (1 - stopajOrani)).toFixed(2)
+        }
+      }
+    }
+
+    list[index] = sahip
+    setKiraField('isyeriSahipleri', list)
+  }
+
+  const removeIsyeriSahibi = (index) => {
+    const kb = getKiraBilgisi(editData)
+    const list = [...(kb.isyeriSahipleri || [])]
     list.splice(index, 1)
-    setKiraField('evSahipleri', list)
+    setKiraField('isyeriSahipleri', list)
   }
 
   const handlePhoneChange = (e) => {
@@ -534,13 +990,19 @@ export default function ClientDetail() {
   const handleSavePartner = async () => {
     if (!newPartner.name) return
     try {
-      if (editPartnerId) {
-        await updatePartner(editPartnerId, newPartner)
-      } else {
-        await addPartner(parseInt(id), newPartner)
+      const payload = {
+        ...newPartner,
+        sermaye: parseMoneyInput(newPartner.sermaye),
+        paySayisi: newPartner.paySayisi ? parseInt(newPartner.paySayisi, 10) || null : null
       }
-      await loadPartners()
-      setNewPartner({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', address: '' })
+      if (editPartnerId) {
+        await updatePartner(editPartnerId, payload)
+      } else {
+        await addPartner(parseInt(id), payload)
+      }
+      const liste = await loadPartners()
+      await syncSermayeToplami(liste)
+      setNewPartner({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', sermaye: '', paySayisi: '', address: '', edevletSifre: '' })
       setShowPartnerForm(false)
       setEditPartnerId(null)
     } catch (err) {
@@ -558,7 +1020,10 @@ export default function ClientDetail() {
       vkn: partner.vkn || '',
       vergi_dairesi: partner.vergi_dairesi || '',
       hisse_orani: partner.hisse_orani || '',
+      sermaye: partner.sermaye != null ? String(partner.sermaye) : '',
+      paySayisi: partner.pay_sayisi != null ? String(partner.pay_sayisi) : '',
       address: partner.address || '',
+      edevletSifre: partner.edevlet_sifre || '',
     })
     setEditPartnerId(partner.id)
     setShowPartnerForm(true)
@@ -568,9 +1033,26 @@ export default function ClientDetail() {
     if (!confirm('Bu ortagi silmek istiyor musunuz?')) return
     try {
       await deletePartner(partnerId)
-      await loadPartners()
+      const liste = await loadPartners()
+      await syncSermayeToplami(liste)
     } catch (err) {
       alert('Ortak silinemedi: ' + (err.message || 'Bilinmeyen hata'))
+    }
+  }
+
+  // e-Tebligat / SGK odemesinin hangi ortak uzerinden yapilacagini isaretler
+  const handlePartnerEdevletToggle = async (partner) => {
+    const yeni = !partner.edevlet_aktif
+    if (yeni && !(partner.tc && partner.edevlet_sifre)) {
+      alert('Bu ortagin TC Kimlik No ve e-Devlet Sifresi kayitli olmali. Once duzenleyip doldurun.')
+      return
+    }
+    try {
+      await setEdevletAktifPartner(parseInt(id), partner.id, yeni)
+      await loadPartners()
+    } catch (err) {
+      const msg = err.message || 'Bilinmeyen hata'
+      alert('e-Devlet ortak secimi kaydedilemedi: ' + msg + (msg.includes('edevlet_aktif') ? '\n\nOnce SQL calistirin:\nALTER TABLE partners ADD COLUMN IF NOT EXISTS edevlet_aktif BOOLEAN DEFAULT false;' : ''))
     }
   }
 
@@ -639,24 +1121,60 @@ export default function ClientDetail() {
     const file = e.target.files[0]
     if (!file) return
     try {
-      const data = await new Promise((resolve, reject) => {
+      const rows = await new Promise((resolve, reject) => {
         const reader = new FileReader()
         reader.onload = (ev) => {
           try {
             const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array' })
             const sheet = wb.Sheets[wb.SheetNames[0]]
-            resolve(XLSX.utils.sheet_to_json(sheet))
+            resolve(XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false }))
           } catch (err) { reject(err) }
         }
         reader.readAsArrayBuffer(file)
       })
-      const parsed = data.map(row => {
-        const adSoyad = row['Ad Soyad'] || row['Ad'] || row['Personel'] || row['ADI SOYADI'] || row['AD SOYAD'] || ''
-        const tc = String(row['TC Kimlik'] || row['TC'] || row['TC No'] || row['TCKN'] || '').trim()
-        const iseGiris = parseExcelDate(row['Ise Giris'] || row['İşe Giriş'] || row['ISE GIRIS'] || row['İŞE GİRİŞ TARİHİ'] || '')
-        const brut = parseFloat(String(row['Brut Ucret'] || row['Brüt Ücret'] || row['BRÜT ÜCRET'] || row['Brüt'] || 0).replace(',', '.')) || 0
-        return { ad_soyad: String(adSoyad).trim(), tc_kimlik: tc, ise_giris: iseGiris, brut_ucret: brut }
-      }).filter(e => e.ad_soyad)
+      const norm = (s) => String(s || '')
+        .replace(/i̇/g, 'I')
+        .replace(/ı/g, 'I').replace(/İ/g, 'I').replace(/i/g, 'I')
+        .replace(/ş/g, 'S').replace(/Ş/g, 'S')
+        .replace(/ğ/g, 'G').replace(/Ğ/g, 'G')
+        .replace(/ü/g, 'U').replace(/Ü/g, 'U')
+        .replace(/ö/g, 'O').replace(/Ö/g, 'O')
+        .replace(/ç/g, 'C').replace(/Ç/g, 'C')
+        .toUpperCase()
+        .replace(/[.,_\-()]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      const matchCol = (h) => {
+        if (!h) return null
+        if (h.includes('AD SOYAD') || h.includes('ADI SOYADI') || h.includes('PERSONEL ADI') || h === 'PERSONEL' || h === 'CALISAN') return 'ad'
+        if (h === 'TC' || h === 'TCKN' || h.includes('TC KIMLIK') || h.includes('KIMLIK NO')) return 'tc'
+        if (h.includes('ISE GIRIS') || h.includes('GIRIS TARIHI') || h.includes('ISE BASLAMA')) return 'ise'
+        if (h.includes('BRUT')) return 'brut'
+        return null
+      }
+      let headerIdx = -1
+      let colMap = {}
+      for (let r = 0; r < Math.min(rows.length, 15); r++) {
+        const map = {}
+        ;(rows[r] || []).forEach((cell, c) => {
+          const k = matchCol(norm(cell))
+          if (k && map[k] === undefined) map[k] = c
+        })
+        if (map.ad !== undefined && (map.tc !== undefined || map.brut !== undefined)) { headerIdx = r; colMap = map; break }
+      }
+      if (headerIdx === -1) return alert('Excel dosyasinda personel bilgisi bulunamadi! (baslik satiri tanimlanamadi)')
+      const parsed = rows.slice(headerIdx + 1).map(cols => {
+        const get = (idx) => idx === undefined ? '' : (cols[idx] ?? '')
+        return {
+          ad_soyad: String(get(colMap.ad)).trim(),
+          tc_kimlik: String(get(colMap.tc)).trim(),
+          ise_giris: parseExcelDate(get(colMap.ise)),
+          brut_ucret: parseTurkishNumber(get(colMap.brut) || 0)
+        }
+      }).filter(e => {
+        const n = norm(e.ad_soyad)
+        return e.ad_soyad && !n.includes('TOPLAM') && !n.includes('AD SOYAD') && !n.includes('ADI SOYADI')
+      })
       if (parsed.length === 0) return alert('Excel dosyasinda personel bilgisi bulunamadi!')
       if (confirm(`${parsed.length} personel bulundu. Kaydetmek istiyor musunuz?`)) {
         await saveEmployeesFromExcel(parseInt(id), parsed)
@@ -705,15 +1223,57 @@ export default function ClientDetail() {
   }
 
   // Personel CRUD
+  const yil = new Date().getFullYear()
+
+  const handlePersonelUcretChange = (value) => {
+    const formatted = formatTurkishInput(value)
+    const num = parseTurkishNumber(formatted)
+    if (!value || isNaN(num)) {
+      setPersonelForm(prev => ({ ...prev, brut_ucret: '' }))
+      return
+    }
+    if (personelUcretTipi === 'net') {
+      const brut = Math.round(nettenBrute(num, yil))
+      setPersonelForm(prev => ({ ...prev, brut_ucret: String(brut) }))
+    } else {
+      setPersonelForm(prev => ({ ...prev, brut_ucret: formatted }))
+    }
+  }
+
+  const handlePersonelAsgariChange = (checked) => {
+    setPersonelAsgariUcret(checked)
+    if (checked) {
+      const asgari = ASGARI_UCRET[yil]?.brut || ASGARI_UCRET[2026]?.brut || 33030
+      setPersonelForm(prev => ({ ...prev, brut_ucret: formatTurkishInput(String(asgari)) }))
+    } else {
+      setPersonelForm(prev => ({ ...prev, brut_ucret: '' }))
+    }
+  }
+
+  const resetPersonelForm = () => {
+    setPersonelForm({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '', dogum_tarihi: '', sgk_durumu: 'calisan', ise_giris_bildirge_url: '', isten_cikis_bildirge_url: '' })
+    setPersonelUcretTipi('brut')
+    setPersonelAsgariUcret(false)
+    setBildirgeHata('')
+  }
+
   const handleSavePersonel = async () => {
     if (!personelForm.ad_soyad.trim()) return alert('Ad Soyad zorunlu!')
     try {
-      if (editPersonelId) {
-        await updateEmployee(editPersonelId, personelForm)
-      } else {
-        await addEmployee(parseInt(id), personelForm)
+      const payload = {
+        ...personelForm,
+        ise_giris: personelForm.ise_giris || null,
+        isten_cikis: personelForm.isten_cikis || null,
+        dogum_tarihi: personelForm.dogum_tarihi || null,
+        sgk_durumu: personelForm.sgk_durumu || 'calisan',
+        ucret_tipi: personelUcretTipi
       }
-      setPersonelForm({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '' })
+      if (editPersonelId) {
+        await updateEmployee(editPersonelId, payload)
+      } else {
+        await addEmployee(parseInt(id), payload)
+      }
+      resetPersonelForm()
       setShowPersonelForm(false)
       setEditPersonelId(null)
       await loadPersonel()
@@ -723,6 +1283,39 @@ export default function ClientDetail() {
   const handleDeletePersonel = async (empId) => {
     if (!confirm('Bu personeli silmek istiyor musunuz?')) return
     try { await deleteEmployee(empId); await loadPersonel() } catch (err) { alert('Hata: ' + err.message) }
+  }
+
+  // Ise Giris / Isten Cikis Bildirgesi yukle + AI ile oku + formu doldur
+  const handleBildirgeUpload = async (e, bildirgeTipi) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setBildirgeHata('')
+    setBildirgeYukleniyor(bildirgeTipi)
+    try {
+      const klasorAdi = bildirgeTipi === 'ise_giris' ? 'ise-giris-bildirgeleri' : 'isten-cikis-bildirgeleri'
+      const yuklenen = await uploadAdminDocument({ client, folderPath: `personel/${klasorAdi}`, file })
+      const okunan = await analyzePersonnelDocument({ fileUrl: yuklenen.url, bildirgeTipi })
+
+      setShowPersonelForm(true)
+      setEditPersonelId(null)
+      setPersonelForm(prev => ({
+        ...prev,
+        ad_soyad: okunan.ad_soyad || prev.ad_soyad,
+        tc_kimlik: okunan.tc_kimlik || prev.tc_kimlik,
+        dogum_tarihi: okunan.dogum_tarihi || prev.dogum_tarihi,
+        ise_giris: bildirgeTipi === 'ise_giris' ? (okunan.ise_giris_tarihi || prev.ise_giris) : prev.ise_giris,
+        isten_cikis: bildirgeTipi === 'isten_cikis' ? (okunan.isten_cikis_tarihi || prev.isten_cikis) : prev.isten_cikis,
+        sgk_durumu: bildirgeTipi === 'isten_cikis' ? 'emekli' : prev.sgk_durumu,
+        ise_giris_bildirge_url: bildirgeTipi === 'ise_giris' ? yuklenen.url : prev.ise_giris_bildirge_url,
+        isten_cikis_bildirge_url: bildirgeTipi === 'isten_cikis' ? yuklenen.url : prev.isten_cikis_bildirge_url
+      }))
+    } catch (err) {
+      setBildirgeHata('Belge okunamadı: ' + err.message + ' — bilgileri elle girebilirsiniz.')
+      setShowPersonelForm(true)
+    } finally {
+      setBildirgeYukleniyor(null)
+      e.target.value = ''
+    }
   }
 
   const handleClearHesapKodlari = async () => {
@@ -741,9 +1334,10 @@ export default function ClientDetail() {
 
   // Odeme kaydet
   const handleSavePayment = async () => {
-    if (!paymentForm.tutar || Number(paymentForm.tutar) <= 0) return alert('Tutar giriniz!')
+    const tutarSayi = parseTurkishNumber(paymentForm.tutar)
+    if (!tutarSayi || tutarSayi <= 0) return alert('Tutar giriniz!')
     try {
-      await addPayment({ client_id: parseInt(id), ...paymentForm })
+      await addPayment({ client_id: parseInt(id), ...paymentForm, tutar: tutarSayi, odeme_kanali: 'manuel', durum: 'onaylandi' })
       setPaymentForm({ tutar: '', odeme_tipi: 'eft', donem: '', aciklama: '', odeme_tarihi: new Date().toISOString().split('T')[0] })
       setShowPaymentForm(false)
       await loadAccounting()
@@ -753,6 +1347,85 @@ export default function ClientDetail() {
   const handleDeletePayment = async (payId) => {
     if (!confirm('Bu odeme kaydini silmek istiyor musunuz?')) return
     try { await deletePayment(payId); await loadAccounting() } catch (err) { alert('Hata: ' + err.message) }
+  }
+
+  // Borc kalemleri: onceki donem, defter tasdik ve aylik donemler
+  const getBorcKalemleri = () => {
+    const secenekler = []
+    const fee = accountingFee
+    if (Number(fee?.onceki_donem_borc) > 0) {
+      secenekler.push({ value: 'Onceki Donem', label: `Onceki Donem Borcu (${Number(fee.onceki_donem_borc).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} TL)` })
+    }
+    if (Number(fee?.defter_tasdik_ucreti) > 0) {
+      secenekler.push({ value: 'Defter Tasdik', label: `Defter Tasdik Ucreti (${Number(fee.defter_tasdik_ucreti).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} TL)` })
+    }
+    if (fee) {
+      const basYil = Number(fee.baslangic_yil) || new Date().getFullYear()
+      const basAy = Number(fee.baslangic_ay) || 1
+      const simdi = new Date()
+      for (let y = simdi.getFullYear(); y >= basYil; y--) {
+        const ayUst = y === simdi.getFullYear() ? simdi.getMonth() + 1 : 12
+        const ayAlt = y === basYil ? basAy : 1
+        for (let a = ayUst; a >= ayAlt; a--) {
+          secenekler.push({ value: `${y}-${String(a).padStart(2, '0')}`, label: `${y}-${String(a).padStart(2, '0')} Muhasebe Ucreti` })
+        }
+      }
+    }
+    return secenekler
+  }
+
+  const openBorcDusModal = (payment) => {
+    setBorcDusSecim('')
+    setBorcDusModal({ payment })
+  }
+
+  // Secilen borc kalemine online odemeyi isle
+  const handleApplyToDebt = async () => {
+    const payment = borcDusModal?.payment
+    if (!payment) return
+    if (!borcDusSecim) return alert('Borc kalemi secin!')
+    try {
+      await applyPaymentToDebt(payment.id, borcDusSecim)
+      setBorcDusModal(null)
+      await loadAccounting()
+      // Musteriye bildirim gonder
+      try {
+        await createNotification({
+          client_id: parseInt(id),
+          audience: 'client',
+          type: 'odeme',
+          title: 'Odemeniz Borctan Dusuldu',
+          message: `${Number(payment.tutar).toLocaleString('tr-TR')} TL tutarindaki odemeniz ${borcDusSecim} borcundan dusuldu.`,
+          route: '/portal?tab=borc'
+        })
+      } catch (notifErr) { console.error('Musteri odeme bildirimi hatasi:', notifErr) }
+      alert('Odeme borctan dusuldu.')
+    } catch (err) { alert('Hata: ' + err.message) }
+  }
+
+  const handleRejectPayment = async (payment) => {
+    const reason = window.prompt('Odeme reddedilme sebebini yazin:')
+    if (reason === null) return
+    try {
+      await rejectPayment(payment.id, reason)
+      await loadAccounting()
+      // Musteriye red bildirimi gonder
+      try {
+        await createNotification({
+          client_id: parseInt(id),
+          audience: 'client',
+          type: 'odeme',
+          title: 'Odeme Reddedildi',
+          message: `${Number(payment.tutar).toLocaleString('tr-TR')} TL tutarindaki online odemeniz reddedildi. Sebep: ${reason}`,
+          route: '/portal?tab=borc'
+        })
+      } catch (notifErr) { console.error('Musteri odeme bildirimi hatasi:', notifErr) }
+      alert('Odeme reddedildi.')
+    } catch (err) { alert('Hata: ' + err.message) }
+  }
+
+  const handleOpenReceipt = (payment) => {
+    openReceipt(payment, client, { name: user?.company || 'MUBiS ERP' })
   }
 
   if (loading) {
@@ -855,8 +1528,46 @@ export default function ClientDetail() {
                   <InfoRow label="Sirket Unvani" value={client.name} editKey="name" isEditing={isEditing} editData={editData} setEditData={setEditData} />
                   <InfoRow label="Kisa Ad" value={client.shortName} editKey="shortName" isEditing={isEditing} editData={editData} setEditData={setEditData} />
                   <InfoRow label="VKN" value={client.vkn} editKey="vkn" isEditing={isEditing} editData={editData} setEditData={setEditData} />
-                  <InfoRow label="Sermaye" value={client.capital} editKey="capital" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                  {/* Sermaye - ozel format ve input yonetimi */}
+                  <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                    <span className="text-gray-400 text-sm">Sermaye</span>
+                    {isEditing ? (
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={editData._capitalDisplay !== undefined ? editData._capitalDisplay : formatMoney(client.capital)}
+                        onChange={(e) => {
+                          const raw = e.target.value
+                          const numeric = parseMoneyInput(raw)
+                          setEditData({
+                            ...editData,
+                            capital: numeric !== null ? numeric : raw,
+                            _capitalDisplay: raw
+                          })
+                        }}
+                        onBlur={() => {
+                          const numeric = typeof editData.capital === 'number' ? editData.capital : parseMoneyInput(editData.capital)
+                          setEditData(prev => ({
+                            ...prev,
+                            capital: numeric,
+                            _capitalDisplay: undefined
+                          }))
+                        }}
+                        onFocus={() => {
+                          const numeric = typeof editData.capital === 'number' ? editData.capital : parseMoneyInput(editData.capital)
+                          setEditData(prev => ({
+                            ...prev,
+                            _capitalDisplay: numeric != null ? numeric.toString().replace('.', ',') : ''
+                          }))
+                        }}
+                        className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400 text-right"
+                      />
+                    ) : (
+                      <span className="text-white text-sm font-medium text-right max-w-[200px] truncate">{formatMoney(client.capital)} TL</span>
+                    )}
+                  </div>
                   <InfoRow label="Vergi Dairesi" value={client.taxOffice} editKey="taxOffice" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                  <InfoRow label="Sehir" value={client.city} editKey="city" isEditing={isEditing} editData={editData} setEditData={setEditData} />
                   {/* Musteri Turu - Dropdown (sirket/adi ortaklik/apartman yonetimi) */}
                   <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
                     <span className="text-gray-400 text-sm">Musteri Turu</span>
@@ -876,10 +1587,11 @@ export default function ClientDetail() {
               ) : (
                 <>
                   <InfoRow label="Ad Soyad" value={client.name} editKey="name" isEditing={isEditing} editData={editData} setEditData={setEditData} />
-                  <InfoRow label="Kisa Ad" value={client.shortName} editKey="shortName" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                  <InfoRow label="Kisa Ad" value={client.shortName || client.short_name} editKey="shortName" isEditing={isEditing} editData={editData} setEditData={setEditData} />
                   <InfoRow label="TC Kimlik No" value={client.tc} editKey="tc" isEditing={isEditing} editData={editData} setEditData={setEditData} />
                   <InfoRow label="Vergi No" value={client.taxNo} editKey="taxNo" isEditing={isEditing} editData={editData} setEditData={setEditData} />
-                  <InfoRow label="Vergi Dairesi" value={client.taxOffice} editKey="taxOffice" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                  <InfoRow label="Vergi Dairesi" value={client.taxOffice || client.tax_office} editKey="taxOffice" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+                  <InfoRow label="Sehir" value={client.city} editKey="city" isEditing={isEditing} editData={editData} setEditData={setEditData} />
                   {/* Musteri Sinifi - Dropdown */}
                   <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
                     <span className="text-gray-400 text-sm">Musteri Sinifi</span>
@@ -965,18 +1677,161 @@ export default function ClientDetail() {
                     )}
                   </div>
                 ) : (
-                  <span className="text-white text-sm font-medium font-mono">{client.faaliyetKodu ? formatNaceCode(client.faaliyetKodu) : '-'}</span>
+                  <span className="text-white text-sm font-medium font-mono">{client.faaliyetKodu ? formatNaceCode(client.faaliyetKodu) : client.naceCode ? formatNaceCode(client.naceCode) : '-'}</span>
                 )}
               </div>
-              {/* Faaliyet Konusu - kod secimine gore otomatik gelir */}
+              {/* Faaliyet Konusu - kod secimine gore otomatik gelir, kayitli kod yoksa manuel girilebilir */}
               <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
                 <span className="text-gray-400 text-sm">Faaliyet Konusu</span>
-                <span className="text-white text-sm font-medium text-right max-w-[60%]">
-                  {isEditing 
-                    ? (editData.activityField || getNaceDesc(editData.faaliyetKodu) || '-')
-                    : (client.activityField || getNaceDesc(client.faaliyetKodu) || '-')
-                  }
-                </span>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={editData.activityField || getNaceDesc(editData.faaliyetKodu || editData.naceCode) || ''}
+                    onChange={(e) => setEditData({ ...editData, activityField: e.target.value })}
+                    placeholder="Faaliyet konusunu yazin"
+                    className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 text-right focus:outline-none focus:border-yellow-400"
+                  />
+                ) : (
+                  <span className="text-white text-sm font-medium text-right max-w-[60%]">
+                    {client.activityField || client.naceDesc || getNaceDesc(client.faaliyetKodu || client.naceCode) || '-'}
+                  </span>
+                )}
+              </div>
+              {/* e-Devlet Sifresi - musteri portalda kendisi girer; admin burada gorup degistirebilir */}
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm">e-Devlet Şifresi</span>
+                {isEditing ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type={showPasswords.edevlet ? 'text' : 'password'}
+                      value={editData.edevletPass ?? client.edevletPass ?? client.edevlet_pass ?? ''}
+                      onChange={(e) => setEditData({ ...editData, edevletPass: e.target.value })}
+                      placeholder="e-Devlet sifresi"
+                      autoComplete="new-password"
+                      className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-40 focus:outline-none focus:border-yellow-400"
+                    />
+                    <button
+                      onClick={() => setShowPasswords(p => ({ ...p, edevlet: !p.edevlet }))}
+                      title={showPasswords.edevlet ? 'Gizle' : 'Göster'}
+                      className="p-1 text-gray-400 hover:text-white transition-colors"
+                    >
+                      {showPasswords.edevlet ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-white text-sm font-medium">
+                      {showPasswords.edevlet
+                        ? (client.edevletPass || client.edevlet_pass || 'Kayıtlı değil')
+                        : (client.edevletPass || client.edevlet_pass) ? '••••••••' : 'Kayıtlı değil'}
+                    </span>
+                    {(client.edevletPass || client.edevlet_pass) && (
+                      <button
+                        onClick={() => setShowPasswords(p => ({ ...p, edevlet: !p.edevlet }))}
+                        title={showPasswords.edevlet ? 'Gizle' : 'Göster'}
+                        className="p-1 text-gray-400 hover:text-white transition-colors"
+                      >
+                        {showPasswords.edevlet ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* e-Devlet Islemleri */}
+          <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <KeyRound className="w-5 h-5 text-yellow-400" />
+              e-Devlet İşlemleri
+            </h3>
+            <p className="text-xs text-gray-400 mb-3">
+              Yardımcı program TC ve e-Devlet şifresini otomatik doldurur; siz yalnızca güvenlik kodunu girip girersiniz. Sonraki adımlar otomatik yapılır.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                onClick={handleEtebligatGetir}
+                disabled={edevletIslem !== null}
+                className="flex items-center justify-center gap-2 bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 text-indigo-200 py-2.5 rounded-xl font-medium text-sm transition-colors disabled:opacity-50"
+              >
+                <Download className="w-4 h-4" />
+                {edevletIslem === 'etebligat' ? 'Bekleniyor...' : 'e-Tebligatlari Getir (SGK / Vergi / PTT)'}
+              </button>
+              <button
+                onClick={handleSgkPrimOde}
+                disabled={edevletIslem !== null}
+                className="flex items-center justify-center gap-2 bg-teal-600/30 hover:bg-teal-600/50 border border-teal-500/40 text-teal-200 py-2.5 rounded-xl font-medium text-sm transition-colors disabled:opacity-50"
+              >
+                <CreditCard className="w-4 h-4" />
+                {edevletIslem === 'sgk' ? 'Aciliyor...' : 'SGK Primi Öde (e-Devlet)'}
+              </button>
+            </div>
+            {edevletDurum && (
+              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300 mt-3">
+                {edevletDurum}
+              </div>
+            )}
+          </div>
+
+          {/* Onemli Tarihler */}
+          <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+            <div className="flex items-center gap-2 mb-4">
+              <Calendar className="w-5 h-5 text-yellow-400" />
+              <h3 className="text-lg font-semibold text-white">Onemli Tarihler</h3>
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm">Isyeri Acilis</span>
+                {isEditing ? (
+                  <input
+                    type="date"
+                    value={editData.openDate || client.openDate || ''}
+                    onChange={(e) => setEditData({ ...editData, openDate: e.target.value })}
+                    className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
+                  />
+                ) : (
+                  <span className="text-white text-sm font-medium">{formatDateTR(client.openDate) || client.openDate || client.open_date || '-'}</span>
+                )}
+              </div>
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm">Isyeri Kapanis</span>
+                {isEditing ? (
+                  <input
+                    type="date"
+                    value={editData.closeDate || client.closeDate || ''}
+                    onChange={(e) => setEditData({ ...editData, closeDate: e.target.value })}
+                    className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
+                  />
+                ) : (
+                  <span className="text-white text-sm font-medium">{formatDateTR(client.closeDate) || client.closeDate || client.close_date || '-'}</span>
+                )}
+              </div>
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm">e-Imza Baslangic</span>
+                {isEditing ? (
+                  <input
+                    type="date"
+                    value={editData.eimzaStart || client.eimzaStart || ''}
+                    onChange={(e) => setEditData({ ...editData, eimzaStart: e.target.value })}
+                    className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
+                  />
+                ) : (
+                  <span className="text-white text-sm font-medium">{formatDateTR(client.eimzaStart) || client.eimzaStart || client.eimza_start || '-'}</span>
+                )}
+              </div>
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm">e-Imza Bitis</span>
+                {isEditing ? (
+                  <input
+                    type="date"
+                    value={editData.eimzaEnd || client.eimzaEnd || ''}
+                    onChange={(e) => setEditData({ ...editData, eimzaEnd: e.target.value })}
+                    className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
+                  />
+                ) : (
+                  <span className="text-white text-sm font-medium">{formatDateTR(client.eimzaEnd) || client.eimzaEnd || client.eimza_end || '-'}</span>
+                )}
               </div>
             </div>
           </div>
@@ -1171,6 +2026,92 @@ export default function ClientDetail() {
               client={client}
               onGuncellendi={() => refreshClients?.()}
             />
+            {kiraGecmisi(getKiraBilgisi(client)).length > 0 && (
+              <div className="mb-4 rounded-xl border border-blue-700/40 bg-blue-950/30 p-4">
+                <h4 className="mb-3 text-sm font-semibold text-white">Kira Geçmişi</h4>
+                <div className="space-y-2">
+                  {kiraGecmisi(getKiraBilgisi(client)).slice().reverse().map((donem, index) => {
+                    const originalIndex = kiraGecmisi(getKiraBilgisi(client)).length - 1 - index
+                    const isEditingHistory = editingHistoryIndex === originalIndex
+                    return (
+                      <div key={`${donem.kayitTarihi || 'donem'}-${originalIndex}`} className="rounded-lg bg-blue-900/30 p-3 text-xs">
+                        {isEditingHistory ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <label className="text-gray-400">
+                              Başlangıç
+                              <input type="date" value={normalizeDateForInput(historyEditData.kiraBaslangic)} onChange={(e) => setHistoryEditData(prev => ({ ...prev, kiraBaslangic: e.target.value }))} className="mt-1 w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-2 py-1 text-white text-sm" />
+                            </label>
+                            <label className="text-gray-400">
+                              Bitiş
+                              <input type="date" value={normalizeDateForInput(historyEditData.kiraBitis)} onChange={(e) => setHistoryEditData(prev => ({ ...prev, kiraBitis: e.target.value }))} className="mt-1 w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-2 py-1 text-white text-sm" />
+                            </label>
+                            <label className="text-gray-400">
+                              Net Kira
+                              <input type="text" inputMode="decimal" value={historyEditData.netKira} onChange={(e) => setHistoryEditData(prev => ({ ...prev, netKira: e.target.value }))} className="mt-1 w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-2 py-1 text-white text-sm" />
+                            </label>
+                            <label className="text-gray-400">
+                              Brüt Kira
+                              <input type="text" inputMode="decimal" value={historyEditData.brutKira} onChange={(e) => setHistoryEditData(prev => ({ ...prev, brutKira: e.target.value }))} className="mt-1 w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-2 py-1 text-white text-sm" />
+                            </label>
+                            <label className="text-gray-400 sm:col-span-2">
+                              Açıklama
+                              <input type="text" value={historyEditData.aciklama} onChange={(e) => setHistoryEditData(prev => ({ ...prev, aciklama: e.target.value }))} className="mt-1 w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-2 py-1 text-white text-sm" />
+                            </label>
+                            <div className="flex gap-2 sm:col-span-2 justify-end">
+                              <button onClick={() => { setEditingHistoryIndex(null); setHistoryEditData({}) }} className="px-3 py-1.5 rounded-lg bg-blue-900/40 text-gray-300 hover:bg-blue-800/50">Vazgeç</button>
+                              <button onClick={() => updateKiraHistoryItem(originalIndex)} className="px-3 py-1.5 rounded-lg bg-yellow-500 text-blue-950 font-medium hover:bg-yellow-400">Kaydet</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 items-center">
+                            <span className="text-slate-400">
+                              Dönem<br />
+                              <b className="text-slate-200">{tarihTR(donem.kiraBaslangic)} - {tarihTR(donem.kiraBitis)}</b>
+                            </span>
+                            <span className="text-slate-400">
+                              Net kira<br />
+                              <b className="text-slate-200">{
+                                (() => {
+                                  const net = parseTurkishNumber(donem.netKira)
+                                  const brut = parseTurkishNumber(donem.brutKira)
+                                  if (Number.isFinite(net) && net > 0) return paraTR(net)
+                                  if (Number.isFinite(brut) && brut > 0) return paraTR(brut * (1 - KIRA_STOPAJ_ORANI))
+                                  return '0,00'
+                                })()
+                              } TL</b>
+                            </span>
+                            <span className="text-slate-400">
+                              Brüt kira<br />
+                              <b className="text-slate-200">{
+                                (() => {
+                                  const net = parseTurkishNumber(donem.netKira)
+                                  const brut = parseTurkishNumber(donem.brutKira)
+                                  if (Number.isFinite(brut) && brut > 0) return paraTR(brut)
+                                  if (Number.isFinite(net) && net > 0) return paraTR(net / (1 - KIRA_STOPAJ_ORANI))
+                                  return '0,00'
+                                })()
+                              } TL</b>
+                            </span>
+                            <span className="text-slate-400">
+                              Kayıt tarihi<br />
+                              <b className="text-slate-200">{tarihTR(donem.kayitTarihi)}</b>
+                            </span>
+                            <div className="flex gap-2 justify-end sm:col-span-1">
+                              <button onClick={() => startEditHistoryItem(originalIndex, donem)} className="p-1.5 rounded-lg bg-blue-900/40 text-yellow-400 hover:bg-blue-800/50" title="Düzenle">
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button onClick={() => deleteKiraHistoryItem(originalIndex)} className="p-1.5 rounded-lg bg-blue-900/40 text-red-400 hover:bg-red-500/20" title="Sil">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="space-y-3">
               {/* Kira Tipi */}
@@ -1193,7 +2134,7 @@ export default function ClientDetail() {
                 )}
               </div>
               {/* Isyeri Kirasi (sadece kiraci) */}
-              {getKiraBilgisi(isEditing ? editData : client).kiraTipi === 'kiraci' && (
+              {false && getKiraBilgisi(isEditing ? editData : client).kiraTipi === 'kiraci' && (
                 <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
                   <span className="text-gray-400 text-sm">Isyeri Kirasi (Aylik)</span>
                   {isEditing ? (
@@ -1209,96 +2150,91 @@ export default function ClientDetail() {
                   )}
                 </div>
               )}
-              {/* Kira Baslangic / Bitis Tarihleri (sadece kiraci) */}
-              {getKiraBilgisi(isEditing ? editData : client).kiraTipi === 'kiraci' && (
-                <>
-                  <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
-                    <span className="text-gray-400 text-sm">Kira Baslangic Tarihi</span>
-                    {isEditing ? (
-                      <input
-                        type="date"
-                        value={normalizeDateForInput(getKiraBilgisi(editData).kiraBaslangic)}
-                        onChange={(e) => setKiraField('kiraBaslangic', e.target.value)}
-                        className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
-                      />
-                    ) : (
-                      <span className="text-white text-sm font-medium">{formatDisplayDate(getKiraBilgisi(client).kiraBaslangic)}</span>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
-                    <span className="text-gray-400 text-sm">Kira Bitis Tarihi</span>
-                    {isEditing ? (
-                      <input
-                        type="date"
-                        value={normalizeDateForInput(getKiraBilgisi(editData).kiraBitis)}
-                        onChange={(e) => setKiraField('kiraBitis', e.target.value)}
-                        className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
-                      />
-                    ) : (
-                      <span className="text-white text-sm font-medium">{formatDisplayDate(getKiraBilgisi(client).kiraBitis)}</span>
-                    )}
-                  </div>
-                  {getKiraBilgisi(client).kiraBitis && !isEditing && (() => {
-                    const diff = Math.ceil((new Date(getKiraBilgisi(client).kiraBitis) - new Date()) / (1000 * 60 * 60 * 24))
-                    if (diff <= 60 && diff > 0) return <div className="p-3 bg-yellow-500/10 rounded-xl border border-yellow-500/30"><span className="text-yellow-400 text-sm font-medium">Kontrat bitisine {diff} gun kaldi!</span></div>
-                    if (diff <= 0) return <div className="p-3 bg-red-500/10 rounded-xl border border-red-500/30"><span className="text-red-400 text-sm font-medium">Kontrat suresi dolmus!</span></div>
-                    return null
-                  })()}
-                </>
-              )}
-              {/* Stopaj (sadece kiraci) */}
-              {getKiraBilgisi(isEditing ? editData : client).kiraTipi === 'kiraci' && (
-                <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
-                  <span className="text-gray-400 text-sm">Stopaj</span>
-                  {isEditing ? (
-                    <select
-                      value={getKiraBilgisi(editData).stopaj || ''}
-                      onChange={(e) => setKiraField('stopaj', e.target.value)}
-                      className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
-                    >
-                      <option value="">Seciniz</option>
-                      <option value="var">Var</option>
-                      <option value="yok">Yok</option>
-                    </select>
-                  ) : (
-                    <span className="text-white text-sm font-medium">{getKiraBilgisi(client).stopaj === 'var' ? 'Var' : getKiraBilgisi(client).stopaj === 'yok' ? 'Yok' : '-'}</span>
-                  )}
-                </div>
-              )}
-              {/* Ev Sahipleri (sadece kiraci) */}
+              {/* Isyeri Sahipleri; kira tarihleri ve stopaj bu bolumun icindedir */}
               {getKiraBilgisi(isEditing ? editData : client).kiraTipi === 'kiraci' && (
                 <div className="p-3 bg-blue-900/20 rounded-xl">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-gray-400 text-sm">Ev Sahipleri</span>
+                    <span className="text-gray-400 text-sm">Isyeri Kirasi - Mal Sahipleri</span>
                     {isEditing && (
-                      <button onClick={addEvSahibi} className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> Ev Sahibi Ekle</button>
+                      <button onClick={addIsyeriSahibi} className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> Mal Sahibi Ekle</button>
                     )}
                   </div>
-                  {(getKiraBilgisi(isEditing ? editData : client).evSahipleri || []).length === 0 ? (
-                    <p className="text-gray-500 text-xs">Ev sahibi kaydi yok</p>
+                  {(getKiraBilgisi(isEditing ? editData : client).isyeriSahipleri || []).length === 0 ? (
+                    <p className="text-gray-500 text-xs">Isyeri mal sahibi kaydi yok</p>
                   ) : (
                     <div className="space-y-2">
-                      {(getKiraBilgisi(isEditing ? editData : client).evSahipleri || []).map((es, i) => (
+                      {(getKiraBilgisi(isEditing ? editData : client).isyeriSahipleri || []).map((es, i) => (
                         <div key={i} className="bg-blue-950/40 rounded-lg p-3 border border-blue-700/30">
                           {isEditing ? (
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                              <input type="text" value={es.tc || ''} onChange={(e) => updateEvSahibi(i, 'tc', e.target.value)} placeholder="TC Kimlik No" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                              <input type="text" value={es.adSoyad || ''} onChange={(e) => updateEvSahibi(i, 'adSoyad', e.target.value)} placeholder="Ad Soyad" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                              <input type="text" value={es.hisseOrani || ''} onChange={(e) => updateEvSahibi(i, 'hisseOrani', e.target.value)} placeholder="Hisse Orani (%)" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                              <input type="text" value={es.adres || ''} onChange={(e) => updateEvSahibi(i, 'adres', e.target.value)} placeholder="Adres" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                              <input type="text" value={es.tc || ''} onChange={(e) => updateIsyeriSahibi(i, 'tc', e.target.value)} placeholder="TC Kimlik No" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                              <input type="text" value={es.adSoyad || ''} onChange={(e) => updateIsyeriSahibi(i, 'adSoyad', e.target.value)} placeholder="Ad Soyad" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                              <input type="text" value={es.hisseOrani || ''} onChange={(e) => updateIsyeriSahibi(i, 'hisseOrani', e.target.value)} placeholder="Hisse Orani (%)" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                              <input type="text" value={es.adres || ''} onChange={(e) => updateIsyeriSahibi(i, 'adres', e.target.value)} placeholder="Adres" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                               <label className="text-gray-400 text-xs sm:col-span-2">
+                                 Kira Tutarı Giriş Türü
+                                 <select value={es.kiraTutarTipi === 'brut' ? 'brut' : 'net'} onChange={(e) => updateIsyeriSahibiTutar(i, e.target.value, e.target.value === 'brut' ? es.brutKira || '' : es.netKira || '')} className="mt-1 w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400">
+                                   <option value="net">Net kira girilecek</option>
+                                   <option value="brut">Brüt kira girilecek</option>
+                                 </select>
+                               </label>
+                               <label className="text-gray-400 text-xs">
+                                 Net Kira (TL) {es.kiraTutarTipi === 'brut' ? '(hesaplanan)' : '(giriş)'}
+                                 <input type="text" inputMode="decimal" value={es.netKira || ''} readOnly={es.kiraTutarTipi === 'brut'} onChange={(e) => updateIsyeriSahibiTutar(i, 'net', e.target.value)} onBlur={() => finalizeIsyeriSahibiTutar(i)} placeholder="Net Kira" className={`mt-1 w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400 ${es.kiraTutarTipi === 'brut' ? 'cursor-not-allowed opacity-70' : ''}`} />
+                               </label>
+                               <label className="text-gray-400 text-xs">
+                                 Brüt Kira (TL) {es.kiraTutarTipi === 'brut' ? '(giriş)' : '(hesaplanan)'}
+                                 <input type="text" inputMode="decimal" value={es.brutKira || ''} readOnly={es.kiraTutarTipi !== 'brut'} onChange={(e) => updateIsyeriSahibiTutar(i, 'brut', e.target.value)} onBlur={() => finalizeIsyeriSahibiTutar(i)} placeholder="Brüt Kira" className={`mt-1 w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400 ${es.kiraTutarTipi !== 'brut' ? 'cursor-not-allowed opacity-70' : ''}`} />
+                               </label>
+                              <label className="text-gray-400 text-xs">
+                                Kira Baslangic Tarihi
+                                <input type="date" value={normalizeDateForInput(es.kiraBaslangic)} onChange={(e) => updateIsyeriSahibi(i, 'kiraBaslangic', e.target.value)} className="mt-1 w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                              </label>
+                              <label className="text-gray-400 text-xs">
+                                Kira Bitis Tarihi
+                                <input type="date" value={normalizeDateForInput(es.kiraBitis)} onChange={(e) => updateIsyeriSahibi(i, 'kiraBitis', e.target.value)} className="mt-1 w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                              </label>
+                              <label className="text-gray-400 text-xs">
+                                Stopaj
+                                 <select value={es.stopaj || ''} onChange={(e) => updateIsyeriSahibiStopaj(i, e.target.value)} className="mt-1 w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400">
+                                  <option value="">Seciniz</option>
+                                  <option value="var">Var</option>
+                                  <option value="yok">Yok</option>
+                                </select>
+                              </label>
                               <div className="sm:col-span-2 text-right">
-                                <button onClick={() => removeEvSahibi(i)} className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1 ml-auto"><Trash2 className="w-3 h-3" /> Kaldir</button>
+                                <button onClick={() => removeIsyeriSahibi(i)} className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1 ml-auto"><Trash2 className="w-3 h-3" /> Kaldir</button>
                               </div>
                             </div>
                           ) : (
                             <div className="text-sm">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-white font-medium">{es.adSoyad || '-'}</span>
-                                {es.hisseOrani && <span className="text-blue-400 text-xs">%{es.hisseOrani}</span>}
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-white font-medium">{es.adSoyad || '-'}</span>
+                                  {es.hisseOrani && <span className="text-blue-400 text-xs">%{es.hisseOrani}</span>}
+                                </div>
+                                <button onClick={() => openKiraUpdateModal(i, es)} className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded flex items-center gap-1 hover:bg-yellow-500/30">
+                                  <Edit3 className="w-3 h-3" /> Kirayi Guncelle
+                                </button>
+                                {(() => {
+                                  const baslangicIso = normalizeDateForInput(es.kiraBaslangic)
+                                  const bitisIso = normalizeDateForInput(es.kiraBitis)
+                                  const beklenenBitis = baslangicIso ? addOneYear(baslangicIso) : ''
+                                  const hatali = baslangicIso && bitisIso && bitisIso !== beklenenBitis
+                                  return hatali ? (
+                                    <button onClick={() => fixKiraDates(i)} className="text-xs bg-red-500/20 text-red-400 px-2 py-1 rounded flex items-center gap-1 hover:bg-red-500/30">
+                                      <Calendar className="w-3 h-3" /> Tarih Duzelt
+                                    </button>
+                                  ) : null
+                                })()}
                               </div>
                               <div className="text-gray-400 text-xs mt-1 grid grid-cols-1 sm:grid-cols-2 gap-1">
                                 {es.tc && <span>TC: {es.tc}</span>}
                                 {es.adres && <span className="sm:col-span-2">Adres: {es.adres}</span>}
+                                {(es.netKira || es.brutKira) && <span className="sm:col-span-2 text-yellow-400">Net: {es.netKira ? parseTurkishNumber(es.netKira).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' TL' : '-'} / Brut: {es.brutKira ? parseTurkishNumber(es.brutKira).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' TL' : '-'}</span>}
+                                <span>{es.kiraBaslangic ? `Baslangic: ${formatDisplayDate(es.kiraBaslangic)}` : 'Baslangic: -'}</span>
+                                <span>{es.kiraBitis ? `Bitis: ${formatDisplayDate(es.kiraBitis)}` : 'Bitis: -'}</span>
+                                <span>Stopaj: {es.stopaj === 'var' ? 'Var' : es.stopaj === 'yok' ? 'Yok' : '-'}</span>
                               </div>
                             </div>
                           )}
@@ -1310,6 +2246,85 @@ export default function ClientDetail() {
               )}
             </div>
           </div>
+
+          {/* Kira Gecmisi */}
+          {(getKiraBilgisi(client).kiraGecmisi || []).length > 0 && (
+            <div className="md:col-span-2 bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2"><History className="w-5 h-5 text-yellow-400" /> Kira Gecmisi</h3>
+              <div className="space-y-3">
+                {(getKiraBilgisi(client).kiraGecmisi || []).map((donem, idx) => {
+                  const isEditingHistory = editingHistoryIndex === idx
+                  return (
+                    <div key={idx} className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/30">
+                      {isEditingHistory ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                          <div>
+                            <label className="text-xs text-gray-400">Baslangic</label>
+                            <input type="date" value={historyEditData.kiraBaslangic || ''} onChange={e => setHistoryEditData({...historyEditData, kiraBaslangic: e.target.value})} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                          </div>
+                          <div>
+                            <label className="text-xs text-gray-400">Bitis</label>
+                            <input type="date" value={historyEditData.kiraBitis || ''} onChange={e => setHistoryEditData({...historyEditData, kiraBitis: e.target.value})} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                          </div>
+                          <div>
+                            <label className="text-xs text-gray-400">Net Kira</label>
+                            <input type="text" value={historyEditData.netKira || ''} onChange={e => setHistoryEditData({...historyEditData, netKira: e.target.value})} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                          </div>
+                          <div>
+                            <label className="text-xs text-gray-400">Brut Kira</label>
+                            <input type="text" value={historyEditData.brutKira || ''} onChange={e => setHistoryEditData({...historyEditData, brutKira: e.target.value})} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                          </div>
+                          <div>
+                            <label className="text-xs text-gray-400">Aciklama</label>
+                            <input type="text" value={historyEditData.aciklama || ''} onChange={e => setHistoryEditData({...historyEditData, aciklama: e.target.value})} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-1 text-sm">
+                            <div><span className="text-gray-400 text-xs">Baslangic</span><p className="text-white">{formatDisplayDate(donem.kiraBaslangic)}</p></div>
+                            <div><span className="text-gray-400 text-xs">Bitis</span><p className="text-white">{formatDisplayDate(donem.kiraBitis)}</p></div>
+                            <div><span className="text-gray-400 text-xs">Net</span><p className="text-yellow-400">{
+                              (() => {
+                                const net = parseTurkishNumber(donem.netKira)
+                                const brut = parseTurkishNumber(donem.brutKira)
+                                if (Number.isFinite(net) && net > 0) return paraTR(net) + ' TL'
+                                if (Number.isFinite(brut) && brut > 0) return paraTR(brut * (1 - KIRA_STOPAJ_ORANI)) + ' TL'
+                                return '-'
+                              })()
+                            }</p></div>
+                            <div><span className="text-gray-400 text-xs">Brut</span><p className="text-yellow-400">{
+                              (() => {
+                                const net = parseTurkishNumber(donem.netKira)
+                                const brut = parseTurkishNumber(donem.brutKira)
+                                if (Number.isFinite(brut) && brut > 0) return paraTR(brut) + ' TL'
+                                if (Number.isFinite(net) && net > 0) return paraTR(net / (1 - KIRA_STOPAJ_ORANI)) + ' TL'
+                                return '-'
+                              })()
+                            }</p></div>
+                          </div>
+                          {donem.aciklama && <p className="text-gray-400 text-xs">{donem.aciklama}</p>}
+                        </div>
+                      )}
+                      <div className="flex items-center justify-end gap-2 mt-3">
+                        {isEditingHistory ? (
+                          <>
+                            <button onClick={() => updateKiraHistoryItem(idx)} className="text-xs bg-green-500/20 text-green-400 px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-green-500/30"><Save className="w-3 h-3"/> Kaydet</button>
+                            <button onClick={() => { setEditingHistoryIndex(null); setHistoryEditData({}) }} className="text-xs bg-red-500/20 text-red-400 px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-red-500/30"><X className="w-3 h-3"/> Vazgec</button>
+                          </>
+                        ) : (
+                          <>
+                            <button onClick={() => startEditHistoryItem(idx, donem)} className="text-xs bg-yellow-500/20 text-yellow-400 px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-yellow-500/30"><Edit3 className="w-3 h-3"/> Duzenle</button>
+                            <button onClick={() => deleteKiraHistoryItem(idx)} className="text-xs bg-red-500/20 text-red-400 px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-red-500/30"><Trash2 className="w-3 h-3"/> Sil</button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Onemli Tarihler */}
           <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
@@ -1347,7 +2362,7 @@ export default function ClientDetail() {
         <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-semibold text-white">{isAdiOrtaklik ? 'Adi Ortaklik Ortaklari' : 'Sirket Ortaklari / Yetkililer'}</h3>
-            <button onClick={() => { setShowPartnerForm(!showPartnerForm); setEditPartnerId(null); setNewPartner({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', address: '' }) }} className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1">
+            <button onClick={() => { setShowPartnerForm(!showPartnerForm); setEditPartnerId(null); setNewPartner({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', sermaye: '', paySayisi: '', address: '', edevletSifre: '' }) }} className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1">
               <Plus className="w-4 h-4" /><span>Ortak Ekle</span>
             </button>
           </div>
@@ -1359,16 +2374,31 @@ export default function ClientDetail() {
                 <input type="text" value={newPartner.name} onChange={(e) => setNewPartner({...newPartner, name: e.target.value})} placeholder="Ad Soyad *" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
                 <input type="text" value={newPartner.title} onChange={(e) => setNewPartner({...newPartner, title: e.target.value})} placeholder="Unvan (Ortak/Mudur)" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
                 <input type="text" value={newPartner.tc} onChange={(e) => setNewPartner({...newPartner, tc: e.target.value})} placeholder="TC Kimlik No" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <div className="relative">
+                  <input
+                    type={showPasswords.partnerEdevlet ? 'text' : 'password'}
+                    value={newPartner.edevletSifre || ''}
+                    onChange={(e) => setNewPartner({...newPartner, edevletSifre: e.target.value})}
+                    placeholder="e-Devlet Şifresi"
+                    autoComplete="new-password"
+                    className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 pr-10 text-white text-sm focus:outline-none focus:border-yellow-400"
+                  />
+                  <button type="button" onClick={() => setShowPasswords(p => ({ ...p, partnerEdevlet: !p.partnerEdevlet }))} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                    {showPasswords.partnerEdevlet ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
                 <input type="text" value={newPartner.vkn} onChange={(e) => setNewPartner({...newPartner, vkn: e.target.value})} placeholder="Vergi No" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
                 <input type="text" value={newPartner.vergi_dairesi} onChange={(e) => setNewPartner({...newPartner, vergi_dairesi: e.target.value})} placeholder="Vergi Dairesi" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                <input type="text" value={newPartner.hisse_orani} onChange={(e) => setNewPartner({...newPartner, hisse_orani: e.target.value})} placeholder="Hisse Orani (%)" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" value={newPartner.hisse_orani} onChange={(e) => setNewPartner({...newPartner, hisse_orani: e.target.value})} placeholder="Sermaye Pay Orani (%)" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" inputMode="decimal" value={newPartner.sermaye} onChange={(e) => setNewPartner({...newPartner, sermaye: e.target.value})} placeholder="Sermaye (TL)" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <input type="text" inputMode="numeric" value={newPartner.paySayisi} onChange={(e) => setNewPartner({...newPartner, paySayisi: e.target.value})} placeholder="Pay Sayisi" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
                 <input type="text" value={newPartner.phone} onChange={(e) => setNewPartner({...newPartner, phone: e.target.value})} placeholder="Telefon" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
                 <input type="text" value={newPartner.email} onChange={(e) => setNewPartner({...newPartner, email: e.target.value})} placeholder="E-Posta" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
                 <textarea value={newPartner.address} onChange={(e) => setNewPartner({...newPartner, address: e.target.value})} placeholder="Adres" rows={1} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400 resize-none sm:col-span-2" />
               </div>
               <div className="flex gap-2 mt-3">
                 <button onClick={handleSavePartner} className="bg-green-500/20 text-green-400 px-4 py-2 rounded-lg text-sm font-medium">{editPartnerId ? 'Guncelle' : 'Kaydet'}</button>
-                <button onClick={() => { setShowPartnerForm(false); setEditPartnerId(null); setNewPartner({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', address: '' }) }} className="bg-red-500/20 text-red-400 px-4 py-2 rounded-lg text-sm font-medium">Iptal</button>
+                <button onClick={() => { setShowPartnerForm(false); setEditPartnerId(null); setNewPartner({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', sermaye: '', paySayisi: '', address: '', edevletSifre: '' }) }} className="bg-red-500/20 text-red-400 px-4 py-2 rounded-lg text-sm font-medium">Iptal</button>
               </div>
             </div>
           )}
@@ -1382,7 +2412,13 @@ export default function ClientDetail() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-white font-medium">{partner.name}</span>
                         {partner.title && <span className="text-yellow-500 text-xs bg-yellow-500/10 px-2 py-0.5 rounded">{partner.title}</span>}
-                        {partner.hisse_orani && <span className="text-blue-400 text-xs">%{partner.hisse_orani}</span>}
+                        {partner.hisse_orani && <span className="text-blue-400 text-xs">Pay Orani: %{partner.hisse_orani}</span>}
+                        {partner.sermaye != null && partner.sermaye !== '' && <span className="text-green-400 text-xs">Sermaye: {formatMoney(partner.sermaye)} TL</span>}
+                        {partner.pay_sayisi != null && partner.pay_sayisi !== '' && <span className="text-purple-400 text-xs">Pay Sayisi: {partner.pay_sayisi}</span>}
+                        <label className="flex items-center gap-1.5 text-xs cursor-pointer bg-blue-900/40 border border-blue-700/50 rounded px-2 py-0.5" title="e-Tebligat ve SGK odemesi bu ortagin TC + sifresi ile yapilir">
+                          <input type="checkbox" checked={!!partner.edevlet_aktif} onChange={() => handlePartnerEdevletToggle(partner)} className="accent-yellow-500" />
+                          <span className={partner.edevlet_aktif ? 'text-green-400 font-medium' : 'text-gray-400'}>e-Devlet Aktif</span>
+                        </label>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 mt-2 text-sm text-gray-400">
                         {partner.tc && <span>TC: {partner.tc}</span>}
@@ -1391,6 +2427,15 @@ export default function ClientDetail() {
                         {partner.phone && <span>Tel: {partner.phone}</span>}
                         {partner.email && <span>E-Posta: {partner.email}</span>}
                         {partner.address && <span className="sm:col-span-2">Adres: {partner.address}</span>}
+                        {partner.edevlet_sifre && (
+                          <span className="sm:col-span-2 flex items-center gap-2">
+                            <span>e-Devlet Sifresi:</span>
+                            <span className="font-mono text-gray-200">{showPasswords[`partner_${partner.id}`] ? partner.edevlet_sifre : '••••••••'}</span>
+                            <button onClick={() => setShowPasswords(p => ({ ...p, [`partner_${partner.id}`]: !p[`partner_${partner.id}`] }))} className="text-gray-500 hover:text-yellow-400 transition-colors">
+                              {showPasswords[`partner_${partner.id}`] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                            </button>
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
@@ -1911,8 +2956,8 @@ export default function ClientDetail() {
                         ) : (
                           <label className={`flex items-center gap-1 px-3 py-1.5 rounded-lg border border-dashed cursor-pointer text-sm ${docLoading ? 'opacity-50 cursor-not-allowed' : 'border-blue-700/50 hover:border-yellow-500/50 hover:bg-blue-900/30 text-gray-300'}`}>
                             <Upload className="w-4 h-4" />
-                            <span>PDF Y</span>
-                            <input type="file" accept="application/pdf" disabled={docLoading} className="hidden" onChange={e => { handleGelirBeyanUpload(e, doc.key); e.target.value = '' }} />
+                            <span>{doc.key === 'mizan' ? 'Excel Y' : 'PDF Y'}</span>
+                            <input type="file" accept={doc.key === 'mizan' ? '.xlsx,.xls' : 'application/pdf'} disabled={docLoading} className="hidden" onChange={e => { handleGelirBeyanUpload(e, doc.key); e.target.value = '' }} />
                           </label>
                         )}
                       </div>
@@ -1967,8 +3012,8 @@ export default function ClientDetail() {
                         ) : (
                           <label className={`flex items-center gap-1 px-3 py-1.5 rounded-lg border border-dashed cursor-pointer text-sm ${docLoading ? 'opacity-50 cursor-not-allowed' : 'border-blue-700/50 hover:border-yellow-500/50 hover:bg-blue-900/30 text-gray-300'}`}>
                             <Upload className="w-4 h-4" />
-                            <span>PDF Y</span>
-                            <input type="file" accept="application/pdf" disabled={docLoading} className="hidden" onChange={e => { handleGeciciVergiUpload(e, doc.key); e.target.value = '' }} />
+                            <span>{doc.key === 'mizan' ? 'Excel Y' : 'PDF Y'}</span>
+                            <input type="file" accept={doc.key === 'mizan' ? '.xlsx,.xls' : 'application/pdf'} disabled={docLoading} className="hidden" onChange={e => { handleGeciciVergiUpload(e, doc.key); e.target.value = '' }} />
                           </label>
                         )}
                       </div>
@@ -2113,17 +3158,33 @@ export default function ClientDetail() {
               <h3 className="text-lg font-semibold text-white">Personel Listesi</h3>
               <p className="text-gray-500 text-xs mt-1">{personelList.length} personel kayitli</p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <label className="cursor-pointer bg-green-600/20 text-green-400 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1 hover:bg-green-600/30 transition-colors">
                 <Upload className="w-4 h-4" /><span>Bordro Excel</span>
                 <input ref={bordroFileRef} type="file" accept=".xlsx,.xls" onChange={handleBordroUpload} className="hidden" />
               </label>
-              <button onClick={() => { setShowPersonelForm(true); setEditPersonelId(null); setPersonelForm({ ad_soyad: '', tc_kimlik: '', ise_giris: '', isten_cikis: '', brut_ucret: '', dogum_tarihi: '' }) }}
+              <label className={`cursor-pointer px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1 transition-colors ${bildirgeYukleniyor === 'ise_giris' ? 'bg-blue-600/40 text-blue-200 cursor-wait' : 'bg-blue-600/20 text-blue-300 hover:bg-blue-600/30'}`}>
+                {bildirgeYukleniyor === 'ise_giris' ? <span className="w-4 h-4 border-2 border-blue-300 border-t-transparent rounded-full animate-spin" /> : <Camera className="w-4 h-4" />}
+                <span>{bildirgeYukleniyor === 'ise_giris' ? 'Okunuyor...' : 'İşe Giriş Bildirgesi (AI)'}</span>
+                <input ref={iseGirisBildirgeRef} type="file" accept=".pdf,image/*" onChange={(e) => handleBildirgeUpload(e, 'ise_giris')} className="hidden" disabled={!!bildirgeYukleniyor} />
+              </label>
+              <label className={`cursor-pointer px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1 transition-colors ${bildirgeYukleniyor === 'isten_cikis' ? 'bg-orange-600/40 text-orange-200 cursor-wait' : 'bg-orange-600/20 text-orange-300 hover:bg-orange-600/30'}`}>
+                {bildirgeYukleniyor === 'isten_cikis' ? <span className="w-4 h-4 border-2 border-orange-300 border-t-transparent rounded-full animate-spin" /> : <Camera className="w-4 h-4" />}
+                <span>{bildirgeYukleniyor === 'isten_cikis' ? 'Okunuyor...' : 'İşten Çıkış Bildirgesi (AI)'}</span>
+                <input ref={istenCikisBildirgeRef} type="file" accept=".pdf,image/*" onChange={(e) => handleBildirgeUpload(e, 'isten_cikis')} className="hidden" disabled={!!bildirgeYukleniyor} />
+              </label>
+              <button onClick={() => { setShowPersonelForm(true); setEditPersonelId(null); resetPersonelForm() }}
                 className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1">
                 <Plus className="w-4 h-4" /><span>Ekle</span>
               </button>
             </div>
           </div>
+
+          {bildirgeHata && (
+            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-300 text-sm">
+              {bildirgeHata}
+            </div>
+          )}
 
           {/* Personel Ekleme/Duzenleme Formu */}
           {showPersonelForm && (
@@ -2134,8 +3195,25 @@ export default function ClientDetail() {
                   className="bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
                 <input type="text" placeholder="TC Kimlik No" value={personelForm.tc_kimlik} onChange={(e) => setPersonelForm({...personelForm, tc_kimlik: e.target.value})}
                   className="bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                <input type="number" placeholder="Brut Ucret" value={personelForm.brut_ucret} onChange={(e) => setPersonelForm({...personelForm, brut_ucret: e.target.value})}
-                  className="bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <select value={personelUcretTipi} onChange={(e) => { setPersonelUcretTipi(e.target.value); setPersonelForm(prev => ({ ...prev, brut_ucret: '' })) }}
+                      className="bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-2 text-white text-sm focus:outline-none focus:border-yellow-400">
+                      <option value="brut">Brut Ucret</option>
+                      <option value="net">Net Ucret</option>
+                    </select>
+                    <label className="flex items-center gap-1 text-xs text-gray-300 cursor-pointer select-none">
+                      <input type="checkbox" checked={personelAsgariUcret} onChange={(e) => handlePersonelAsgariChange(e.target.checked)} className="rounded border-blue-700/50 bg-blue-900/30 text-yellow-400" />
+                      Asgari Ucret
+                    </label>
+                  </div>
+                  <input type="text" inputMode="decimal" placeholder={personelUcretTipi === 'net' ? 'Net Ucret' : 'Brut Ucret'} value={personelForm.brut_ucret} onChange={(e) => handlePersonelUcretChange(e.target.value)}
+                    disabled={personelAsgariUcret}
+                    className={`bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400 ${personelAsgariUcret ? 'opacity-60 cursor-not-allowed' : ''}`} />
+                  {personelUcretTipi === 'net' && personelForm.brut_ucret && !personelAsgariUcret && (
+                    <p className="text-[10px] text-yellow-400">Hesaplanan brut: {Number(personelForm.brut_ucret).toLocaleString('tr-TR', {minimumFractionDigits: 2})} TL</p>
+                  )}
+                </div>
                 <div>
                   <label className="text-xs text-gray-500">Ise Giris</label>
                   <input type="date" value={personelForm.ise_giris} onChange={(e) => setPersonelForm({...personelForm, ise_giris: e.target.value})}
@@ -2151,7 +3229,29 @@ export default function ClientDetail() {
                   <input type="date" value={personelForm.dogum_tarihi} onChange={(e) => setPersonelForm({...personelForm, dogum_tarihi: e.target.value})}
                     className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
                 </div>
+                <div>
+                  <label className="text-xs text-gray-500">SGK Durumu</label>
+                  <select value={personelForm.sgk_durumu} onChange={(e) => setPersonelForm({...personelForm, sgk_durumu: e.target.value})}
+                    className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400">
+                    <option value="calisan">Çalışan</option>
+                    <option value="emekli">Emekli</option>
+                  </select>
+                </div>
               </div>
+              {(personelForm.ise_giris_bildirge_url || personelForm.isten_cikis_bildirge_url) && (
+                <div className="flex gap-3 mt-2 text-xs">
+                  {personelForm.ise_giris_bildirge_url && (
+                    <a href={personelForm.ise_giris_bildirge_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                      <FileText className="w-3 h-3" />İşe Giriş Bildirgesi
+                    </a>
+                  )}
+                  {personelForm.isten_cikis_bildirge_url && (
+                    <a href={personelForm.isten_cikis_bildirge_url} target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:text-orange-300 flex items-center gap-1">
+                      <FileText className="w-3 h-3" />İşten Çıkış Bildirgesi
+                    </a>
+                  )}
+                </div>
+              )}
               <div className="flex gap-2 mt-3">
                 <button onClick={handleSavePersonel} className="bg-yellow-500 text-blue-950 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1"><Save className="w-4 h-4" />Kaydet</button>
                 <button onClick={() => { setShowPersonelForm(false); setEditPersonelId(null) }} className="bg-red-500/20 text-red-400 px-4 py-2 rounded-lg text-sm"><X className="w-4 h-4" /></button>
@@ -2167,6 +3267,7 @@ export default function ClientDetail() {
                     <th className="px-4 py-2">#</th>
                     <th className="px-4 py-2">Ad Soyad</th>
                     <th className="px-4 py-2">TC Kimlik</th>
+                    <th className="px-4 py-2">SGK Durumu</th>
                     <th className="px-4 py-2">Ise Giris</th>
                     <th className="px-4 py-2">Isten Cikis</th>
                     <th className="px-4 py-2 text-right">Brut Ucret</th>
@@ -2179,12 +3280,17 @@ export default function ClientDetail() {
                       <td className="px-4 py-2 text-gray-500 text-sm">{i+1}</td>
                       <td className="px-4 py-2 text-white text-sm font-medium">{p.ad_soyad}</td>
                       <td className="px-4 py-2 text-gray-300 text-sm font-mono">{p.tc_kimlik || '-'}</td>
-                      <td className="px-4 py-2 text-gray-300 text-sm">{p.ise_giris ? new Date(p.ise_giris).toLocaleDateString('tr-TR') : '-'}</td>
-                      <td className="px-4 py-2 text-gray-300 text-sm">{p.isten_cikis ? new Date(p.isten_cikis).toLocaleDateString('tr-TR') : '-'}</td>
+                      <td className="px-4 py-2 text-sm">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${p.sgk_durumu === 'emekli' ? 'bg-orange-500/20 text-orange-300' : 'bg-emerald-500/20 text-emerald-300'}`}>
+                          {p.sgk_durumu === 'emekli' ? 'Emekli' : 'Çalışan'}
+                        </span>
+                      </td>
+                 <td className="px-4 py-2 text-gray-300 text-sm">{formatDateTR(p.ise_giris || p.ise_giris_tarihi)}</td>
+                 <td className="px-4 py-2 text-gray-300 text-sm">{formatDateTR(p.isten_cikis || p.cikis_tarihi)}</td>
                       <td className="px-4 py-2 text-yellow-400 text-sm text-right font-medium">{p.brut_ucret ? Number(p.brut_ucret).toLocaleString('tr-TR', {minimumFractionDigits: 2}) + ' TL' : '-'}</td>
                       <td className="px-4 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">
-                          <button onClick={() => { setEditPersonelId(p.id); setShowPersonelForm(true); setPersonelForm({ ad_soyad: p.ad_soyad, tc_kimlik: p.tc_kimlik || '', ise_giris: p.ise_giris || '', isten_cikis: p.isten_cikis || '', brut_ucret: p.brut_ucret || '', dogum_tarihi: p.dogum_tarihi || '' }) }}
+                           <button onClick={() => { setEditPersonelId(p.id); setShowPersonelForm(true); setPersonelUcretTipi(p.ucret_tipi === 'net' ? 'net' : 'brut'); setPersonelAsgariUcret(false); setPersonelForm({ ad_soyad: p.ad_soyad, tc_kimlik: p.tc_kimlik || '', ise_giris: p.ise_giris || p.ise_giris_tarihi || '', isten_cikis: p.isten_cikis || p.cikis_tarihi || '', brut_ucret: p.brut_ucret || '', dogum_tarihi: p.dogum_tarihi || '', sgk_durumu: p.sgk_durumu || 'calisan', ise_giris_bildirge_url: p.ise_giris_bildirge_url || '', isten_cikis_bildirge_url: p.isten_cikis_bildirge_url || '' }) }}
                             className="text-blue-400 hover:text-blue-300 p-1"><Edit3 className="w-4 h-4" /></button>
                           <button onClick={() => handleDeletePersonel(p.id)}
                             className="text-red-400 hover:text-red-300 p-1"><Trash2 className="w-4 h-4" /></button>
@@ -2284,17 +3390,23 @@ export default function ClientDetail() {
                     <p className="text-lg font-bold text-white">{fmt(ozet.toplamBorc)} TL</p>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   <div className="bg-green-500/10 rounded-xl p-3 text-center border border-green-500/20">
                     <p className="text-xs text-gray-400">Toplam Odeme</p>
                     <p className="text-lg font-bold text-green-400">-{fmt(ozet.toplamOdeme)} TL</p>
                   </div>
+                  {ozet.alindiOdeme > 0 && (
+                    <div className="bg-blue-500/10 rounded-xl p-3 text-center border border-blue-500/20">
+                      <p className="text-xs text-gray-400">Alinan (Borctan Dusulmeyi Bekleyen)</p>
+                      <p className="text-lg font-bold text-blue-400">+{fmt(ozet.alindiOdeme)} TL</p>
+                    </div>
+                  )}
                   <div className={`rounded-xl p-3 text-center border ${ozet.kalanBorc > 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-green-500/10 border-green-500/20'}`}>
                     <p className="text-xs text-gray-400">Kalan Borc</p>
                     <p className={`text-xl font-bold ${ozet.kalanBorc > 0 ? 'text-red-400' : 'text-green-400'}`}>{fmt(ozet.kalanBorc)} TL</p>
                   </div>
                 </div>
-                {ozet.sonOdeme && <p className="text-xs text-gray-500 mt-2">Son odeme: {new Date(ozet.sonOdeme).toLocaleDateString('tr-TR')}</p>}
+                 {ozet.sonOdeme && <p className="text-xs text-gray-500 mt-2">Son odeme: {formatDateTR(ozet.sonOdeme)}</p>}
               </div>
             )
           })()}
@@ -2305,17 +3417,23 @@ export default function ClientDetail() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Onceki Donem Borc (TL)</label>
-                <input type="number" value={feeForm.onceki_donem_borc} onChange={(e) => setFeeForm({...feeForm, onceki_donem_borc: e.target.value})}
+                <input type="text" inputMode="decimal" value={feeForm.onceki_donem_borc}
+                  onChange={(e) => setFeeForm({...feeForm, onceki_donem_borc: e.target.value})}
+                  onBlur={(e) => setFeeForm(f => ({...f, onceki_donem_borc: formatTurkishInput(e.target.value)}))}
                   className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400" />
               </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Defter Tasdik Ucreti (TL)</label>
-                <input type="number" value={feeForm.defter_tasdik_ucreti} onChange={(e) => setFeeForm({...feeForm, defter_tasdik_ucreti: e.target.value})}
+                <input type="text" inputMode="decimal" value={feeForm.defter_tasdik_ucreti}
+                  onChange={(e) => setFeeForm({...feeForm, defter_tasdik_ucreti: e.target.value})}
+                  onBlur={(e) => setFeeForm(f => ({...f, defter_tasdik_ucreti: formatTurkishInput(e.target.value)}))}
                   className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400" />
               </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Aylik Muhasebe Ucreti (TL)</label>
-                <input type="number" value={feeForm.aylik_ucret} onChange={(e) => setFeeForm({...feeForm, aylik_ucret: e.target.value})}
+                <input type="text" inputMode="decimal" value={feeForm.aylik_ucret}
+                  onChange={(e) => setFeeForm({...feeForm, aylik_ucret: e.target.value})}
+                  onBlur={(e) => setFeeForm(f => ({...f, aylik_ucret: formatTurkishInput(e.target.value)}))}
                   className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400" />
               </div>
               <div>
@@ -2346,6 +3464,66 @@ export default function ClientDetail() {
             </button>
           </div>
 
+          {/* Serbest Meslek Makbuzlari */}
+          <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+            <h3 className="text-lg font-semibold text-white mb-1 flex items-center space-x-2">
+              <Receipt className="w-5 h-5 text-yellow-400" />
+              <span>Serbest Meslek Makbuzlari</span>
+            </h3>
+            <p className="text-xs text-gray-500 mb-4">Kestiginiz makbuzlari buradan yukleyin; musteri portalinda "Faturalarim" bolumunde goruntuler. Odeme girmek icin makbuz yuklemek zorunlu degildir.</p>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
+              <div>
+                <label className="text-xs text-gray-400">Makbuz Adi / Donem *</label>
+                <input type="text" value={makbuzForm.name} onChange={(e) => setMakbuzForm({...makbuzForm, name: e.target.value})} placeholder="Orn: Agustos 2026 SMM"
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400">Tutar (TL)</label>
+                <input type="text" inputMode="decimal" value={makbuzForm.tutar}
+                  onChange={(e) => setMakbuzForm({...makbuzForm, tutar: e.target.value})}
+                  onBlur={(e) => setMakbuzForm(m => ({...m, tutar: formatTurkishInput(e.target.value)}))}
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400">Makbuz Tarihi</label>
+                <input type="date" value={makbuzForm.donem} onChange={(e) => setMakbuzForm({...makbuzForm, donem: e.target.value})}
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400">PDF Dosyasi *</label>
+                <input ref={makbuzFileRef} type="file" accept="application/pdf" onChange={(e) => setMakbuzFile(e.target.files?.[0] || null)}
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-1.5 px-3 text-white text-sm file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-yellow-500 file:text-blue-950 file:text-xs" />
+              </div>
+            </div>
+            <button onClick={handleMakbuzUpload} disabled={docLoading}
+              className="bg-yellow-500 text-blue-950 px-5 py-2 rounded-lg text-sm font-semibold hover:bg-yellow-400 transition-colors flex items-center space-x-2 disabled:opacity-50">
+              <Upload className="w-4 h-4" /><span>{docLoading ? 'Yukleniyor...' : 'Makbuz Yukle'}</span>
+            </button>
+
+            {(clientDocuments?.makbuzlar || []).length > 0 && (
+              <div className="mt-4 space-y-2">
+                {(clientDocuments.makbuzlar).map(m => (
+                  <div key={m.id} className="flex items-center justify-between bg-blue-900/20 rounded-lg px-4 py-2.5">
+                    <div className="flex items-center space-x-3">
+                      <Receipt className="w-4 h-4 text-green-400 flex-shrink-0" />
+                      <div>
+                        <p className="text-white text-sm font-medium">{m.name}</p>
+                        <p className="text-gray-500 text-xs">
+                          {m.donem ? `${formatDateTR(m.donem)} • ` : ''}{m.tutar != null ? `${Number(m.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} TL • ` : ''}{m.uploaded_at ? `Yukleme: ${formatDateTR(m.uploaded_at)}` : ''}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <a href={m.url} target="_blank" rel="noreferrer" title="Goruntule" className="p-1.5 bg-blue-500/20 rounded-lg text-blue-400 hover:bg-blue-500/30"><Eye className="w-4 h-4" /></a>
+                      <a href={m.url} download title="Indir" className="p-1.5 bg-green-500/20 rounded-lg text-green-400 hover:bg-green-500/30"><Download className="w-4 h-4" /></a>
+                      <button onClick={() => handleMakbuzDelete(m.id)} title="Sil" className="p-1.5 bg-red-500/20 rounded-lg text-red-400 hover:bg-red-500/30"><Trash2 className="w-4 h-4" /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Odeme Gecmisi */}
           <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
             <div className="flex items-center justify-between mb-4">
@@ -2358,10 +3536,12 @@ export default function ClientDetail() {
 
             {showPaymentForm && (
               <div className="mb-4 p-4 bg-blue-900/20 rounded-xl border border-green-500/30">
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
                   <div>
                     <label className="text-xs text-gray-400">Tutar (TL) *</label>
-                    <input type="number" value={paymentForm.tutar} onChange={(e) => setPaymentForm({...paymentForm, tutar: e.target.value})}
+                    <input type="text" inputMode="decimal" value={paymentForm.tutar}
+                      onChange={(e) => setPaymentForm({...paymentForm, tutar: e.target.value})}
+                      onBlur={(e) => setPaymentForm(p => ({...p, tutar: formatTurkishInput(e.target.value)}))}
                       className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
                   </div>
                   <div>
@@ -2375,7 +3555,8 @@ export default function ClientDetail() {
                   </div>
                   <div>
                     <label className="text-xs text-gray-400">Donem</label>
-                    <input type="month" value={paymentForm.donem} onChange={(e) => setPaymentForm({...paymentForm, donem: e.target.value})}
+                    <input type="text" value={paymentForm.donem} onChange={(e) => setPaymentForm({...paymentForm, donem: e.target.value})}
+                      placeholder="Orn: 2026-07"
                       className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
                   </div>
                   <div>
@@ -2383,9 +3564,10 @@ export default function ClientDetail() {
                     <input type="date" value={paymentForm.odeme_tarihi} onChange={(e) => setPaymentForm({...paymentForm, odeme_tarihi: e.target.value})}
                       className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
                   </div>
-                  <div>
+                  <div className="md:col-span-2">
                     <label className="text-xs text-gray-400">Aciklama</label>
                     <input type="text" value={paymentForm.aciklama} onChange={(e) => setPaymentForm({...paymentForm, aciklama: e.target.value})}
+                      placeholder="Orn: Temmuz 2026 muhasebe ucreti"
                       className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
                   </div>
                 </div>
@@ -2406,23 +3588,44 @@ export default function ClientDetail() {
                       <th className="px-4 py-2">Tip</th>
                       <th className="px-4 py-2">Donem</th>
                       <th className="px-4 py-2">Aciklama</th>
-                      <th className="px-4 py-2 text-center">Sil</th>
+                      <th className="px-4 py-2 text-center">Durum</th>
+                      <th className="px-4 py-2 text-center">Islem</th>
                     </tr>
                   </thead>
                   <tbody>
                     {clientPayments.map(p => (
                       <tr key={p.id} className="border-t border-blue-700/20 hover:bg-blue-800/20">
-                        <td className="px-4 py-2 text-white text-sm">{new Date(p.odeme_tarihi).toLocaleDateString('tr-TR')}</td>
-                        <td className="px-4 py-2 text-right text-green-400 text-sm font-medium">{Number(p.tutar).toLocaleString('tr-TR', {minimumFractionDigits: 2})} TL</td>
+                         <td className="px-4 py-2 text-white text-sm">{formatDateTR(p.odeme_tarihi)}</td>
+                        <td className={`px-4 py-2 text-right text-sm font-medium ${p.durum === 'reddedildi' ? 'text-red-400 line-through' : p.durum === 'alindi' ? 'text-blue-400' : p.durum === 'bekliyor' ? 'text-yellow-400' : 'text-green-400'}`}>{Number(p.tutar).toLocaleString('tr-TR', {minimumFractionDigits: 2})} TL</td>
                         <td className="px-4 py-2 text-gray-300 text-xs">
                           <span className={`px-2 py-1 rounded ${p.odeme_tipi === 'eft' ? 'bg-blue-500/20 text-blue-400' : p.odeme_tipi === 'kredi_karti' ? 'bg-purple-500/20 text-purple-400' : 'bg-gray-500/20 text-gray-400'}`}>
                             {p.odeme_tipi === 'eft' ? 'EFT/Havale' : p.odeme_tipi === 'kredi_karti' ? 'Kredi Karti' : 'Nakit'}
                           </span>
                         </td>
                         <td className="px-4 py-2 text-gray-400 text-sm">{p.donem || '-'}</td>
-                        <td className="px-4 py-2 text-gray-400 text-sm">{p.aciklama || '-'}</td>
+                        <td className="px-4 py-2 text-gray-400 text-sm">{p.aciklama || '-'}{p.red_sebebi ? ` (Red: ${p.red_sebebi})` : ''}</td>
                         <td className="px-4 py-2 text-center">
-                          <button onClick={() => handleDeletePayment(p.id)} className="text-red-400 hover:text-red-300 p-1"><Trash2 className="w-4 h-4" /></button>
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${
+                            p.durum === 'uygulandi' ? 'bg-green-500/20 text-green-400' :
+                            p.durum === 'onaylandi' ? 'bg-green-500/20 text-green-400' :
+                            p.durum === 'alindi' ? 'bg-blue-500/20 text-blue-400' :
+                            p.durum === 'reddedildi' ? 'bg-red-500/20 text-red-400' :
+                            'bg-yellow-500/20 text-yellow-400 animate-pulse'
+                          }`}>
+                            {p.durum === 'uygulandi' ? 'Borctan Dusuldu' : p.durum === 'onaylandi' ? 'Onaylandi' : p.durum === 'alindi' ? 'Odeme Alindi' : p.durum === 'reddedildi' ? 'Reddedildi' : 'Onay Bekliyor'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            {(p.durum === 'alindi' || p.durum === 'bekliyor') && p.odeme_kanali !== 'manuel' && (
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => openBorcDusModal(p)} title="Borctan Dus" className="text-green-400 hover:text-green-300 p-1"><CheckCircle className="w-4 h-4" /></button>
+                                <button onClick={() => handleRejectPayment(p)} title="Reddet" className="text-red-400 hover:text-red-300 p-1"><X className="w-4 h-4" /></button>
+                              </div>
+                            )}
+                            <button onClick={() => handleOpenReceipt(p)} title="Makbuz Goster" className="text-blue-400 hover:text-blue-300 p-1"><Receipt className="w-4 h-4" /></button>
+                            <button onClick={() => handleDeletePayment(p.id)} title="Sil" className="text-red-400 hover:text-red-300 p-1"><Trash2 className="w-4 h-4" /></button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -2432,6 +3635,94 @@ export default function ClientDetail() {
             ) : (
               <p className="text-gray-500 text-sm text-center py-6">Henuz odeme kaydi yok</p>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Borctan Dusme Modal */}
+      {borcDusModal?.payment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-blue-700/40 bg-blue-950 p-6 shadow-2xl">
+            <h3 className="text-lg font-semibold text-white mb-1 flex items-center gap-2"><CheckCircle className="w-5 h-5 text-green-400" /> Borctan Dus</h3>
+            <p className="text-sm text-gray-400 mb-4">
+              {Number(borcDusModal.payment.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} TL tutarindaki online odemeyi hangi borc kaleminden dusmek istersiniz?
+            </p>
+            <select
+              value={borcDusSecim}
+              onChange={(e) => setBorcDusSecim(e.target.value)}
+              className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
+            >
+              <option value="">Borc kalemi secin</option>
+              {getBorcKalemleri().map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <div className="mt-6 flex gap-3 justify-end">
+              <button onClick={() => setBorcDusModal(null)} className="px-4 py-2 rounded-lg bg-blue-900/40 text-gray-300 hover:bg-blue-800/50 text-sm">Vazgec</button>
+              <button onClick={handleApplyToDebt} className="px-4 py-2 rounded-lg bg-green-500 text-white font-semibold hover:bg-green-400 text-sm flex items-center gap-1"><CheckCircle className="w-4 h-4" /> Uygula</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Kira Guncelleme Modal */}
+      {kiraUpdateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-blue-700/40 bg-blue-950 p-6 shadow-2xl">
+            <h3 className="text-lg font-semibold text-white mb-1 flex items-center gap-2"><Edit3 className="w-5 h-5 text-yellow-400" /> Kirayi Guncelle</h3>
+            <p className="text-sm text-gray-400 mb-4">Yeni kira tutari girin; mevcut donem arsivlenir ve yeni donem 1 yil uzatilarak olusturulur.</p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Kira Tutar Tipi</label>
+                <select
+                  value={kiraUpdateData.kiraTutarTipi}
+                  onChange={(e) => handleKiraUpdateTutarChange(e.target.value, kiraUpdateData.kiraTutarTipi === 'brut' ? kiraUpdateData.brutKira : kiraUpdateData.netKira)}
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
+                >
+                  <option value="net">Net Kira</option>
+                  <option value="brut">Brut Kira</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Yeni {kiraUpdateData.kiraTutarTipi === 'brut' ? 'Brut' : 'Net'} Kira (TL)</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  autoFocus
+                  value={kiraUpdateData.kiraTutarTipi === 'brut' ? kiraUpdateData.brutKira : kiraUpdateData.netKira}
+                  onChange={(e) => handleKiraUpdateTutarChange(kiraUpdateData.kiraTutarTipi, e.target.value)}
+                  onBlur={finalizeKiraUpdateTutar}
+                  placeholder="Orn: 25.000,00"
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-blue-900/20 rounded-lg p-3 border border-blue-700/30">
+                  <span className="text-xs text-gray-400 block">Hesaplanan {kiraUpdateData.kiraTutarTipi === 'brut' ? 'Net' : 'Brut'}</span>
+                  <span className="text-white text-sm font-medium">{kiraUpdateData.kiraTutarTipi === 'brut' ? kiraUpdateData.netKira : kiraUpdateData.brutKira} TL</span>
+                </div>
+                <div className="bg-blue-900/20 rounded-lg p-3 border border-blue-700/30">
+                  <span className="text-xs text-gray-400 block">Yeni Bitis Tarihi</span>
+                  <span className="text-white text-sm font-medium">
+                    {(() => {
+                      const kb = getKiraBilgisi(client)
+                      const sahip = kb.isyeriSahipleri?.[kiraUpdateIndex]
+                      const eskiBitisIso = sahip?.kiraBitis ? normalizeDateForInput(sahip.kiraBitis) : ''
+                      const yeniBaslangic = eskiBitisIso ? addOneDay(eskiBitisIso) : new Date().toISOString().split('T')[0]
+                      return formatDisplayDate(addOneYear(yeniBaslangic))
+                    })()}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex gap-3 justify-end">
+              <button onClick={closeKiraUpdateModal} className="px-4 py-2 rounded-lg bg-blue-900/40 text-gray-300 hover:bg-blue-800/50 text-sm">Vazgec</button>
+              <button onClick={applyKiraUpdate} className="px-4 py-2 rounded-lg bg-yellow-500 text-blue-950 font-semibold hover:bg-yellow-400 text-sm flex items-center gap-1"><Save className="w-4 h-4" /> Guncelle</button>
+            </div>
           </div>
         </div>
       )}

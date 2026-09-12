@@ -59,7 +59,11 @@ export default async function handler(req, res) {
     if (settingsError) throw settingsError
 
     const settings = {}
-    ;(settingsRows || []).forEach(row => { settings[row.key] = row.value })
+    ;(settingsRows || []).forEach(row => {
+      // Bos yinelenen satirlar (diger ofis/varsayilan) dolu degeri ezmesin
+      if (row.value === null || row.value === undefined || row.value === '') return
+      settings[row.key] = row.value
+    })
 
     const host = settings.smtp_host
     const port = parseInt(settings.smtp_port || '587')

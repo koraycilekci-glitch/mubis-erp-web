@@ -1,11 +1,81 @@
 import { useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useClients } from '../hooks/useClients'
+import { supabase } from '../lib/supabase'
 import { 
   Search, CheckCircle, Clock, AlertTriangle, ChevronLeft, ChevronRight
 } from 'lucide-react'
 
 const months = ['Ocak', 'Subat', 'Mart', 'Nisan', 'Mayis', 'Haziran', 'Temmuz', 'Agustos', 'Eylul', 'Ekim', 'Kasim', 'Aralik']
+
+// Beyan durum anahtari cozumleyici — AylikBeyanTakip'in yazdigi formata birebir uyar.
+// Anahtarlar "ait oldugu ay" bazlidir: ${belongYear}_${belongMonth}_${type}
+const TYPE_KEY_MAP = { gecici: 'gecici_vergi', gelir: 'gelir_vergi' }
+
+const resolveBeyanStatusKey = (type, month, year, client) => {
+  const t = TYPE_KEY_MAP[type] || type
+  if (t === 'gecici_vergi') {
+    // Ceyrek son ayi seciliyken anahtar ceyrek baslangic ayidir
+    const qStart = month - 2
+    return qStart >= 0 ? `${year}_${qStart}_gecici_vergi` : `${year - 1}_${12 + qStart}_gecici_vergi`
+  }
+  if (t === 'gelir_vergi') return `${year - 1}_0_gelir_vergi`
+  if (t === 'edefter') {
+    const rawPeriod = String(client?.edefterPeriod ?? 'aylik').toLowerCase().replace(/[\s_-]/g, '')
+    const uc3 = rawPeriod === '3aylik' || rawPeriod === 'ucaylik' || rawPeriod === '3ay'
+    if (uc3) {
+      const qStart = month - 2
+      return qStart >= 0 ? `${year}_${qStart}_edefter` : `${year - 1}_${12 + qStart}_edefter`
+    }
+    // Aylik e-defter: ilgili ayi takip eden 4. ayda yuklenir -> ait oldugu ay = month - 3
+    const edM = (month + 9) % 12
+    const edY = month <= 2 ? year - 1 : year
+    return `${edY}_${edM}_edefter`
+  }
+  return `${year}_${month}_${t}`
+}
+
+const beyanDeadline = (type, month, year, client) => {
+  const t = TYPE_KEY_MAP[type] || type
+  const next = month === 11 ? { m: 0, y: year + 1 } : { m: month + 1, y: year }
+  if (t === 'kdv') return new Date(next.y, next.m, 28)
+  if (t === 'kdv2') return new Date(next.y, next.m, 25)
+  if (t === 'muhtasar' || t === 'damga') return new Date(next.y, next.m, 26)
+  if (t === 'sgk') {
+    const last = new Date(next.y, next.m + 1, 0)
+    while (last.getDay() === 0 || last.getDay() === 6 || isResmiTatil(last)) {
+      last.setDate(last.getDate() - 1)
+    }
+    return last
+  }
+  if (t === 'gecici_vergi') return new Date(next.y, next.m, 17)
+  if (t === 'gelir_vergi') return new Date(year, 2, 31)
+  if (t === 'edefter') {
+    const sahis = client?.type === 'individual'
+    const rawPeriod = String(client?.edefterPeriod ?? 'aylik').toLowerCase().replace(/[\s_-]/g, '')
+    const uc3 = rawPeriod === '3aylik' || rawPeriod === 'ucaylik' || rawPeriod === '3ay'
+    if (uc3) {
+      if (month === 11) return sahis ? new Date(year + 1, 3, 10) : new Date(year + 1, 4, 14)
+      return new Date(year, month + 3, sahis ? 10 : 14)
+    }
+    return new Date(next.y, next.m, sahis ? 10 : 14)
+  }
+  return null
+}
+
+const toWorkDay = (date) => {
+  const d = new Date(date)
+  while (d.getDay() === 0 || d.getDay() === 6 || isResmiTatil(d)) {
+    d.setDate(d.getDate() + 1)
+  }
+  return d
+}
+
+const formatDL = (date) => {
+  if (!date) return ''
+  const d = toWorkDay(date)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 const beyanTypes = [
   { id: 'kdv', name: 'KDV', icon: '📋', color: 'text-blue-400', bg: 'bg-blue-500/10' },
@@ -24,21 +94,51 @@ const defaultBeyanSettings = { kdv: 'monthly', muhtasar: 'monthly', sgk: true, g
 export default function TaxCalendar() {
   const { user } = useAuth()
   const _isAdmin = user?.role === 'admin'
-  const { clients } = useClients()
+  const { clients, refresh: refreshClients } = useClients()
   const [selectedYear, setSelectedYear] = useState(2026)
   const [selectedMonth, setSelectedMonth] = useState(6)
   const [selectedBeyan, setSelectedBeyan] = useState('kdv')
   const [searchTerm, setSearchTerm] = useState('')
+  const [statusUpdating, setStatusUpdating] = useState(false)
 
-  const getBeyanStatus = (clientId, type, month, year) => {
-    return localStorage.getItem(`beyan_${clientId}_${type}_${month}_${year}`) || 'pending'
+  // Durumlar dogrudan veritabanindaki beyan_durumlari'ndan okunur
+  // (AylikBeyanTakip ile ayni kaynak — localStorage kullanilmaz)
+  const getBeyanStatus = (client, type, month, year) => {
+    const key = resolveBeyanStatusKey(type, month, year, client)
+    const durum = client.beyanDurumlari?.[key]
+    if (durum === 'yapildi' || durum === 'onaylandi' || durum === 'tahakkuk_gonderildi') return 'completed'
+    const dl = beyanDeadline(type, month, year, client)
+    if (dl && new Date() > dl) return 'overdue'
+    return 'pending'
   }
 
-  const toggleStatus = (clientId, type, month, year) => {
-    const current = getBeyanStatus(clientId, type, month, year)
-    const next = current === 'completed' ? 'pending' : current === 'pending' ? 'overdue' : 'completed'
-    localStorage.setItem(`beyan_${clientId}_${type}_${month}_${year}`, next)
-    window.location.reload()
+  const toggleStatus = async (clientId, type, month, year) => {
+    if (statusUpdating) return
+    const client = clients.find(c => c.id === clientId)
+    if (!client) return
+    const key = resolveBeyanStatusKey(type, month, year, client)
+    const current = getBeyanStatus(client, type, month, year)
+    const nextStatus = current === 'completed' ? 'yapilamadi' : 'yapildi'
+    const currentMap = client.beyanDurumlari || {}
+    const updatedMap = {
+      ...currentMap,
+      [key]: nextStatus,
+      [`${key}_personel`]: user?.name || user?.email || 'Admin',
+      [`${key}_tarih`]: new Date().toISOString()
+    }
+    setStatusUpdating(true)
+    try {
+      const { error } = await supabase
+        .from('clients')
+        .update({ beyan_durumlari: updatedMap })
+        .eq('id', clientId)
+      if (error) throw error
+      await refreshClients?.()
+    } catch (err) {
+      alert('Durum kaydedilemedi: ' + (err.message || 'Bilinmeyen hata'))
+    } finally {
+      setStatusUpdating(false)
+    }
   }
 
   const shouldShowBeyan = (client, type, month) => {
@@ -61,7 +161,7 @@ export default function TaxCalendar() {
     .filter(c => shouldShowBeyan(c, selectedBeyan, selectedMonth))
     .map(c => ({
       ...c,
-      status: getBeyanStatus(c.id, selectedBeyan, selectedMonth, selectedYear)
+      status: getBeyanStatus(c, selectedBeyan, selectedMonth, selectedYear)
     }))
 
   const stats = {
@@ -147,12 +247,12 @@ export default function TaxCalendar() {
                     </td>
                     <td className="py-3">
                       <button onClick={() => toggleStatus(client.id, selectedBeyan, selectedMonth, selectedYear)}
-                        className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${
+                        disabled={statusUpdating}
+                        className={`px-3 py-1 rounded-lg text-xs font-medium transition-all disabled:opacity-50 ${
                           client.status === 'completed' ? 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30' :
-                          client.status === 'pending' ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' :
                           'bg-green-500/20 text-green-400 hover:bg-green-500/30'
                         }`}>
-                        {client.status === 'completed' ? 'Beklet' : client.status === 'pending' ? 'Gecikti' : 'Tamamla'}
+                        {client.status === 'completed' ? 'Geri Al' : 'Tamamla'}
                       </button>
                     </td>
                   </tr>

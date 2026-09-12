@@ -25,6 +25,25 @@ export async function processZReportImage(imageUrl) {
 }
 
 /**
+ * Toplu Z raporu resimlerini tek worker ile sirayla okur.
+ */
+export async function processZReportImagesBatch(imageUrls) {
+  if (!Array.isArray(imageUrls) || imageUrls.length === 0) return []
+  const worker = await createWorker('tur')
+  try {
+    const results = []
+    for (const url of imageUrls) {
+      const { data: { text } } = await worker.recognize(url)
+      const parsed = parseZReportOCRText(text)
+      results.push({ rawText: text, parsed, confidence: parsed.confidence || 0 })
+    }
+    return results
+  } finally {
+    await worker.terminate()
+  }
+}
+
+/**
  * OCR metnini Z raporu yapisina parse eder - GELISTIRILMIS
  */
 function parseZReportOCRText(text) {
@@ -32,7 +51,7 @@ function parseZReportOCRText(text) {
 
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
   const fullText = text.toUpperCase()
-  
+
   const result = {
     tarih: null,
     evrakNo: null,
@@ -56,14 +75,13 @@ function parseZReportOCRText(text) {
   }
 
   // ========== TARIH BULMA ==========
-  // Formatlar: 04.08.2026, 04/08/2026, 04-08-2026, 4.8.2026
   const datePatterns = [
     /(\d{1,2})[\.\/\-](\d{1,2})[\.\/\-](\d{4})/,
     /(\d{4})[\.\/\-](\d{1,2})[\.\/\-](\d{1,2})/,
-    /(\d{2})(\d{2})(\d{4})/, // 04082026
-    /(\d{2})\.(\d{2})\.(\d{2})/ // 04.08.26
+    /(\d{2})(\d{2})(\d{4})/,
+    /(\d{2})[\.\-\/](\d{2})[\.\-\/](\d{2})/
   ]
-  
+
   for (const pattern of datePatterns) {
     const match = text.match(pattern)
     if (match) {
@@ -78,12 +96,14 @@ function parseZReportOCRText(text) {
 
   // ========== EVRAK / Z NO ==========
   const evrakPatterns = [
+    /Z\s*[-–—]\s*(\d{3,})/i,
+    /Z\s*RAPORU.*Z\s*[-–—]\s*(\d+)/i,
     /(?:EVRAK\s*NO|Z\s*NO|F[İI]Ş\s*NO|BELGE\s*NO)[\.:\s]*([0-9]+)/i,
     /(?:Z\s*RAPORU|RAPOR)[\.:\s]*([0-9]+)/i,
     /(?:SIRA\s*NO|NO)[\.:\s]*([0-9]{3,})/i,
     /Z\s*NO\s*[:\.\s]+(\d+)/i
   ]
-  
+
   for (const pattern of evrakPatterns) {
     const match = text.match(pattern)
     if (match) {
@@ -92,58 +112,90 @@ function parseZReportOCRText(text) {
     }
   }
 
-  // ========== SATIŞ DEĞERLERİ ==========
-  // Her satırı tek tek incele
+  // ========== ODEME TOPLAMLARI (banka / kredi / nakit) ==========
+  let bankaToplami = 0
+  let kasaKrediToplami = 0
+
   lines.forEach(line => {
     const upperLine = line.toUpperCase()
-    
-    // Satış 0%
+
+    // Nakit tahsilat (kasa nakit dahil)
+    if (/NAK[İI]T\s*TAHS[İI]LAT|KASA\s*NAK[İI]T/.test(upperLine) && !/[K]AR[SŞ]IL[Iİ]G/.test(upperLine)) {
+      const num = extractNumberFromLine(line)
+      if (num > result.nakit) result.nakit = num
+    }
+
+    // Kredi karti - kasa kredi satirlari
+    if (/KASA\s*KRED[İI]/.test(upperLine)) {
+      const num = extractNumberFromLine(line)
+      kasaKrediToplami += num
+    }
+
+    // Banka satirlari (T.VAKIFLAR, HALK, DENIZ, vb.)
+    if (/(?:T\.VAKIFLAR|VAKIFLAR|HALK|DEN[İI]Z|[İI]Ş|İŞ|GARANT[İI]|AKBANK|YAPI\s*KRED[İI]|ZIRAAT|F[İI]NANS)\s*BANK/i.test(upperLine)) {
+      const num = extractNumberFromLine(line)
+      if (num > 0) bankaToplami += num
+    }
+
+    // Havale / EFT
+    if (/HAVALE|EFT|BANKA\s*HAVA/i.test(upperLine)) {
+      const num = extractNumberFromLine(line)
+      if (num > result.havale) result.havale = num
+    }
+  })
+
+  result.krediKarti = kasaKrediToplami + bankaToplami
+
+  // ========== SATIŞ DEĞERLERİ ==========
+  let brutSatis = 0
+  let netSatis = 0
+  let topSatis = 0
+  let topkdv = 0
+
+  lines.forEach(line => {
+    const upperLine = line.toUpperCase()
+
+    // Net satis (KDV dahil toplam)
+    if (/NET\s*SATIŞ/.test(upperLine) || /NET\s*SATIS/.test(upperLine)) {
+      const num = extractNumberFromLine(line)
+      if (num > netSatis) netSatis = num
+    }
+    // Brut satis
+    else if (/BR[ÜU]T\s*SATIŞ/.test(upperLine) || /BRUT\s*SATIS/.test(upperLine)) {
+      const num = extractNumberFromLine(line)
+      if (num > brutSatis) brutSatis = num
+    }
+    // TOPKDV
+    else if (/TOPKDV|KDV\s*TOPLAM/.test(upperLine)) {
+      const num = extractNumberFromLine(line)
+      if (num > topkdv) topkdv = num
+    }
+    // TOP / TOPLAM (genel toplam) - FIS SAYILARI disinda
+    else if (/\bTOP\b|\bTOPLAM\b/.test(upperLine) && !/F[İI]Ş\s*SAY|İPTAL|RAPOR/i.test(upperLine)) {
+      const num = extractNumberFromLine(line)
+      if (num > topSatis) topSatis = num
+    }
+
+    // KDV oranli satislar (X10/X20/Z10/Z20/220 SATIS OCR varyantlari dahil)
     if (/SATIŞ.*0\s*%|SATIŞ.*0\s*KDV|0\s*%.*SATIŞ/.test(upperLine)) {
       const num = extractNumberFromLine(line)
       if (num > result.satis0) result.satis0 = num
     }
-    // Satış 1%
     else if (/SATIŞ.*1\s*%|SATIŞ.*1\s*KDV|1\s*%.*SATIŞ/.test(upperLine)) {
       const num = extractNumberFromLine(line)
       if (num > result.satis1) result.satis1 = num
     }
-    // Satış 10%
-    else if (/SATIŞ.*10\s*%|SATIŞ.*10\s*KDV|10\s*%.*SATIŞ/.test(upperLine)) {
+    else if (/SATIŞ.*10\s*%|SATIŞ.*10\s*KDV|10\s*%.*SATIŞ|\b(?:X|Z)\s?10\s*SATIŞ|\b10\s*SATIŞ/.test(upperLine)) {
       const num = extractNumberFromLine(line)
       if (num > result.satis10) result.satis10 = num
     }
-    // Satış 20%
-    else if (/SATIŞ.*20\s*%|SATIŞ.*20\s*KDV|20\s*%.*SATIŞ/.test(upperLine)) {
+    else if (/SATIŞ.*20\s*%|SATIŞ.*20\s*KDV|20\s*%.*SATIŞ|\b(?:X|Z)\s?20\s*SATIŞ|\b20\s*SATIŞ|\b220\s*SATIŞ/.test(upperLine)) {
       const num = extractNumberFromLine(line)
       if (num > result.satis20) result.satis20 = num
     }
-    
-    // Toplam satış
-    else if (/TOPLAM\s*SATIŞ|GENEL\s*TOPLAM|TOPLAM/.test(upperLine) && !result.toplamSatis) {
-      const num = extractNumberFromLine(line)
-      if (num > 0) result.toplamSatis = num
-    }
-    
-    // Nakit
-    else if (/NAK[İI]T|PEŞ[İI]N/.test(upperLine) && !line.includes('KARŞILIĞI')) {
-      const num = extractNumberFromLine(line)
-      if (num > result.nakit) result.nakit = num
-    }
-    
-    // Kredi Kartı
-    else if (/KRED[İI].*KART|K\..*KART|KART/.test(upperLine)) {
-      const num = extractNumberFromLine(line)
-      if (num > result.krediKarti) result.krediKarti = num
-    }
-    
-    // Havale / EFT
-    else if (/HAVALE|EFT|BANKA/.test(upperLine)) {
-      const num = extractNumberFromLine(line)
-      if (num > result.havale) result.havale = num
-    }
-    
+
     // Matrah
-    else if (/MATRAH/.test(upperLine)) {
+    if (/MATRAH/.test(upperLine)) {
       if (/1\s*%/.test(upperLine)) {
         const num = extractNumberFromLine(line)
         if (num > result.matrah1) result.matrah1 = num
@@ -155,42 +207,61 @@ function parseZReportOCRText(text) {
         if (num > result.matrah20) result.matrah20 = num
       }
     }
-    
-    // KDV
-    else if (/KDV|VERG[İI]/.test(upperLine) && !upperLine.includes('MATRAH')) {
-      if (/1\s*%/.test(upperLine) || /\b1\b/.test(upperLine)) {
-        const num = extractNumberFromLine(line)
-        if (num > result.kdv1) result.kdv1 = num
-      } else if (/10\s*%/.test(upperLine) || /\b10\b/.test(upperLine)) {
+
+    // KDV (X10/X20/220 KDV OCR varyantlari dahil)
+    if (/KDV|VERG[İI]/.test(upperLine) && !upperLine.includes('MATRAH') && !/TOPKDV|KDV\s*TOPLAM|KIMKDV/i.test(upperLine)) {
+      if (/\b(?:X|Z)\s?10\s*KDV|\b10\s*KDV|10\s*%/.test(upperLine)) {
         const num = extractNumberFromLine(line)
         if (num > result.kdv10) result.kdv10 = num
-      } else if (/20\s*%/.test(upperLine) || /\b20\b/.test(upperLine)) {
+      } else if (/\b(?:X|Z)\s?20\s*KDV|\b20\s*KDV|\b220\s*KDV|20\s*%/.test(upperLine)) {
+        const num = extractNumberFromLine(line)
+        if (num > result.kdv20) result.kdv20 = num
+      } else if (/1\s*%/.test(upperLine) || /\b1\b/.test(upperLine)) {
+        const num = extractNumberFromLine(line)
+        if (num > result.kdv1) result.kdv1 = num
+      } else if (/\b10\b/.test(upperLine)) {
+        const num = extractNumberFromLine(line)
+        if (num > result.kdv10) result.kdv10 = num
+      } else if (/\b20\b/.test(upperLine)) {
         const num = extractNumberFromLine(line)
         if (num > result.kdv20) result.kdv20 = num
       }
     }
-    
+
     // İade
-    else if (/[İI]ADE/.test(upperLine)) {
+    if (/[İI]ADE/.test(upperLine)) {
       const num = extractNumberFromLine(line)
       if (num > result.iade) result.iade = num
     }
   })
 
-  // Eğer toplam satış bulunamadıysa, KDV'li satışları topla
-  if (result.toplamSatis === 0) {
-    result.toplamSatis = result.satis1 + result.satis10 + result.satis20 + result.satis0
+  // Toplam satis belirleme sirasi: net satis > top > brut satis > kdvli satislar toplami
+  result.toplamSatis = netSatis || topSatis || brutSatis || (result.satis1 + result.satis10 + result.satis20 + result.satis0)
+
+  // KDV toplami belirleme
+  const kdvToplam = result.kdv1 + result.kdv10 + result.kdv20
+  if (topkdv > 0 && kdvToplam === 0) {
+    // Tek KDV orani varsa topkdv'yi ona ata
+    if (result.satis20 > 0) result.kdv20 = topkdv
+    else if (result.satis10 > 0) result.kdv10 = topkdv
+    else if (result.satis1 > 0) result.kdv1 = topkdv
+    else result.kdv20 = topkdv
+  }
+
+  // KDV'li satis kategorileri bos ama toplam satis varsa %20 varsayimiyla dagit
+  if (result.toplamSatis > 0 && result.satis0 + result.satis1 + result.satis10 + result.satis20 === 0) {
+    result.satis20 = result.toplamSatis
   }
 
   // Güven skoru hesapla
   const filledFields = [
-    result.tarih, result.evrakNo, 
+    result.tarih, result.evrakNo,
     result.satis0, result.satis1, result.satis10, result.satis20,
     result.nakit, result.krediKarti,
     result.matrah1, result.matrah10, result.matrah20,
     result.kdv1, result.kdv10, result.kdv20
   ].filter(v => v !== null && v !== 0 && v !== '').length
-  
+
   result.confidence = Math.min(100, (filledFields / 14) * 100)
 
   return result
@@ -256,11 +327,15 @@ export function convertToAccountingEntry(clientType, zData, hesapPlani) {
   const toplamKdv = zData.kdv1 + zData.kdv10 + zData.kdv20
   const toplamMatrah = zData.matrah1 + zData.matrah10 + zData.matrah20
 
+  // 0 bolme hatasini onle
+  const kdvOrani = toplamSatis > 0 ? toplamKdv / toplamSatis : 0
+
   if (clientType === 'company') {
     // Sirket - 1. Sinif Defter
-    
+
     // 1. Nakit satislar
     if (zData.nakit > 0) {
+      const nakitKdv = toplamKdv > 0 ? zData.nakit * kdvOrani : 0
       entries.push({
         tarih: zData.tarih,
         evrakNo: zData.evrakNo,
@@ -269,11 +344,11 @@ export function convertToAccountingEntry(clientType, zData, hesapPlani) {
         borcHesapAdi: 'Kasa',
         alacakHesap: '600',
         alacakHesapAdi: 'Yurtici Satislar',
-        tutar: zData.nakit - (zData.nakit / toplamSatis * toplamKdv),
+        tutar: zData.nakit - nakitKdv,
         kdvOrani: null
       })
-      
-      if (toplamKdv > 0) {
+
+      if (nakitKdv > 0) {
         entries.push({
           tarih: zData.tarih,
           evrakNo: zData.evrakNo,
@@ -282,7 +357,7 @@ export function convertToAccountingEntry(clientType, zData, hesapPlani) {
           borcHesapAdi: 'Kasa',
           alacakHesap: '391',
           alacakHesapAdi: 'Hesaplanan KDV',
-          tutar: zData.nakit / toplamSatis * toplamKdv,
+          tutar: nakitKdv,
           kdvOrani: null
         })
       }
@@ -290,6 +365,7 @@ export function convertToAccountingEntry(clientType, zData, hesapPlani) {
 
     // 2. Kredi karti satislar
     if (zData.krediKarti > 0) {
+      const kkKdv = toplamKdv > 0 ? zData.krediKarti * kdvOrani : 0
       entries.push({
         tarih: zData.tarih,
         evrakNo: zData.evrakNo,
@@ -298,11 +374,11 @@ export function convertToAccountingEntry(clientType, zData, hesapPlani) {
         borcHesapAdi: 'Alinan Cekler',
         alacakHesap: '600',
         alacakHesapAdi: 'Yurtici Satislar',
-        tutar: zData.krediKarti - (zData.krediKarti / toplamSatis * toplamKdv),
+        tutar: zData.krediKarti - kkKdv,
         kdvOrani: null
       })
-      
-      if (toplamKdv > 0) {
+
+      if (kkKdv > 0) {
         entries.push({
           tarih: zData.tarih,
           evrakNo: zData.evrakNo,
@@ -311,14 +387,14 @@ export function convertToAccountingEntry(clientType, zData, hesapPlani) {
           borcHesapAdi: 'Alinan Cekler',
           alacakHesap: '391',
           alacakHesapAdi: 'Hesaplanan KDV',
-          tutar: zData.krediKarti / toplamSatis * toplamKdv,
+          tutar: kkKdv,
           kdvOrani: null
         })
       }
     }
   } else {
     // 1. Sinif Isletme - Basit usul
-    
+
     entries.push({
       tarih: zData.tarih,
       evrakNo: zData.evrakNo,

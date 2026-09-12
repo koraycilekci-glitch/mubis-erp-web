@@ -1,0 +1,23 @@
+// ============================================================
+// MUBiS GIB Yardimci Servisi - Yapilandirma
+// ------------------------------------------------------------
+// Bu dosyayi "config.json" olarak kaydedin ve bilgilerinizi girin.
+// Bu dosya SADECE sizin bilgisayarinizda durur, hicbir yere gonderilmez.
+// ============================================================
+
+{
+  "gib": {
+    // Dijital Vergi Dairesi giris bilgileri
+    "kullaniciKodu": "18128800198",   // TC / VKN
+    "parola": "BURAYA_SIFRE"
+  },
+  "etebligat": {
+    // e-Bildirge giris bilgileri (farkliysa)
+    "kullaniciKodu": "18128800198",
+    "parola": "BURAYA_SIFRE"
+  },
+  "musteriler": {
+    // İstege bagli: musteri bazli giris bilgileri (VKN -> giris bilgileri)
+    // "3310031873": { "kullaniciKodu": "3310031873", "parola": "..." }
+  }
+}

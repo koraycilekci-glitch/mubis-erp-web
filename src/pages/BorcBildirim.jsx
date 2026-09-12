@@ -9,6 +9,7 @@ import {
   getDebtNotificationHistory
 } from '../services/debtNotificationService'
 import { getSettings } from '../services/settingsService'
+import { formatDateTimeTR } from '../utils/dateUtils'
 
 export default function BorcBildirim() {
   const [activeTab, setActiveTab] = useState('borclular')
@@ -364,7 +365,7 @@ export default function BorcBildirim() {
                     <div>
                       <div className="text-white font-medium">{h.clients?.company || h.clients?.name || 'Bilinmiyor'}</div>
                       <div className="text-xs text-gray-400">
-                        {new Date(h.created_at).toLocaleString('tr-TR')} |
+                         {formatDateTimeTR(h.created_at)} |
                         Kanal: {h.channel} |
                         Tutar: {h.borc_tutar.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL
                       </div>

@@ -30,7 +30,7 @@ export default function Login() {
         return
       }
       
-      if (result.user.role === 'admin' || result.user.role === 'personel') {
+      if (['admin', 'personel', 'super_admin'].includes(result.user.role)) {
         navigate('/admin')
       } else {
         navigate('/portal')

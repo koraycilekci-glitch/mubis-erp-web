@@ -290,10 +290,97 @@ function OfisDetayModal({ ofis, onClose, onDone, onError }) {
   const [kullanicilar, setKullanicilar] = useState([])
   const [islem, setIslem] = useState(false)
   const [atamaEmail, setAtamaEmail] = useState('')
+  const [yeniKullanici, setYeniKullanici] = useState({ name: '', email: '', password: '' })
+
+  const kullaniciListesiniYenile = () => {
+    getOfficeUsers(ofis.id).then(setKullanicilar).catch(() => {})
+  }
 
   useEffect(() => {
-    getOfficeUsers(ofis.id).then(setKullanicilar).catch(() => {})
+    kullaniciListesiniYenile()
   }, [ofis.id])
+
+  const getAuthHeader = async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    return { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` }
+  }
+
+  // Bu ofise yeni admin kullanıcısı ekle
+  const kullaniciEkle = async () => {
+    const email = yeniKullanici.email.trim()
+    if (!email || !yeniKullanici.password || yeniKullanici.password.length < 6) {
+      onError('E-posta ve en az 6 karakterli sifre gerekli')
+      return
+    }
+    setIslem(true)
+    try {
+      const headers = await getAuthHeader()
+      const r = await fetch('/api/manage-users', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          email,
+          password: yeniKullanici.password,
+          name: yeniKullanici.name || email,
+          role: 'admin',
+          office_id: ofis.id
+        })
+      })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Kullanici eklenemedi')
+      setYeniKullanici({ name: '', email: '', password: '' })
+      kullaniciListesiniYenile()
+      onDone('Kullanici eklendi. Gecici sifresiyle giris yapmasini bekleyin.')
+    } catch (e) {
+      onError(e.message)
+    } finally {
+      setIslem(false)
+    }
+  }
+
+  // Kullanicinin sifresini gecici olarak sifirla
+  const sifreSifirla = async (k) => {
+    const yeni = window.prompt(`${k.name || k.email} icin yeni gecici sifre (en az 6 karakter):`)
+    if (!yeni) return
+    if (yeni.length < 6) {
+      onError('Sifre en az 6 karakter olmalidir')
+      return
+    }
+    setIslem(true)
+    try {
+      const headers = await getAuthHeader()
+      const r = await fetch('/api/manage-users', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'reset-password', userId: k.id, password: yeni })
+      })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Sifre sifirlanamadi')
+      onDone('Sifre sifirlandi. Kullanici yeni giriste sifresini degistirmek zorunda kalacak.')
+    } catch (e) {
+      onError(e.message)
+    } finally {
+      setIslem(false)
+    }
+  }
+
+  // Kullaniciyi tamamen sil
+  const kullaniciSil = async (k) => {
+    if (!window.confirm(`${k.name || k.email} kullanıcisi tamamen silinecek. Emin misiniz?`)) return
+    setIslem(true)
+    try {
+      const headers = await getAuthHeader()
+      const r = await fetch(`/api/manage-users?userId=${k.id}`, { method: 'DELETE', headers })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Kullanici silinemedi')
+      kullaniciListesiniYenile()
+      onDone('Kullanici silindi')
+    } catch (e) {
+      onError(e.message)
+    } finally {
+      setIslem(false)
+    }
+  }
 
   const kaydet = async () => {
     setIslem(true)
@@ -386,26 +473,84 @@ function OfisDetayModal({ ofis, onClose, onDone, onError }) {
             <div className="space-y-1.5 mb-3">
               {kullanicilar.length === 0 && <p className="text-gray-500 text-xs">Henuz kullanici yok.</p>}
               {kullanicilar.map(k => (
-                <div key={k.id} className="flex items-center justify-between bg-blue-900/25 rounded-lg px-3 py-2">
-                  <span className="text-gray-300 text-xs truncate">{k.name || k.email}</span>
-                  <span className="text-gray-500 text-[11px]">{k.role}</span>
+                <div key={k.id} className="flex items-center justify-between gap-2 bg-blue-900/25 rounded-lg px-3 py-2">
+                  <div className="min-w-0">
+                    <span className="text-gray-300 text-xs block truncate">{k.name || k.email}</span>
+                    <span className="text-gray-500 text-[11px] font-mono truncate block">{k.email}</span>
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <span className="text-gray-500 text-[11px]">{k.role}</span>
+                    <button
+                      onClick={() => sifreSifirla(k)}
+                      disabled={islem}
+                      title="Sifre sifirla"
+                      className="px-2 py-1 rounded-lg bg-yellow-500/15 text-yellow-300 text-[11px] hover:bg-yellow-500/25 disabled:opacity-50"
+                    >
+                      Sifre Sifirla
+                    </button>
+                    <button
+                      onClick={() => kullaniciSil(k)}
+                      disabled={islem}
+                      title="Kullaniciyi sil"
+                      className="px-2 py-1 rounded-lg bg-red-500/15 text-red-300 text-[11px] hover:bg-red-500/25 disabled:opacity-50"
+                    >
+                      Sil
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
-            <div className="flex gap-2">
+
+            {/* Yeni kullanici ekleme */}
+            <p className="text-white text-sm font-medium mb-2">Yeni Kullanici Ekle</p>
+            <div className="space-y-2 mb-2">
               <input
-                value={atamaEmail}
-                onChange={e => setAtamaEmail(e.target.value)}
-                placeholder="Kullanici e-postasi"
-                className="flex-1 bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
+                value={yeniKullanici.name}
+                onChange={e => setYeniKullanici({ ...yeniKullanici, name: e.target.value })}
+                placeholder="Ad Soyad"
+                className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
               />
-              <button onClick={kullaniciAta} disabled={islem} className="px-3 py-2 rounded-lg bg-blue-500/20 text-blue-300 text-xs hover:bg-blue-500/30 disabled:opacity-50">
-                Ofise Ata
+              <input
+                type="email"
+                value={yeniKullanici.email}
+                onChange={e => setYeniKullanici({ ...yeniKullanici, email: e.target.value })}
+                placeholder="E-posta (giris adi)"
+                className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
+              />
+              <input
+                value={yeniKullanici.password}
+                onChange={e => setYeniKullanici({ ...yeniKullanici, password: e.target.value })}
+                placeholder="Gecici sifre (en az 6 karakter)"
+                className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
+              />
+              <button
+                onClick={kullaniciEkle}
+                disabled={islem}
+                className="w-full py-2 rounded-lg bg-blue-500/20 text-blue-300 text-xs hover:bg-blue-500/30 disabled:opacity-50 flex items-center justify-center gap-1"
+              >
+                <Plus className="w-3 h-3" /> Kullanici Ekle
               </button>
+              <p className="text-gray-500 text-[11px]">
+                Bu ofise bagli yeni admin hesabi olusturur. Kullanici ilk giriste sifresini degistirmek zorunda kalir.
+              </p>
             </div>
-            <p className="text-gray-500 text-[11px] mt-1.5">
-              Kayitli bir kullaniciyi bu ofise admin olarak tasir.
-            </p>
+
+            <div className="border-t border-blue-800/40 pt-3">
+              <div className="flex gap-2">
+                <input
+                  value={atamaEmail}
+                  onChange={e => setAtamaEmail(e.target.value)}
+                  placeholder="Kayitli kullanici e-postasi"
+                  className="flex-1 bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
+                />
+                <button onClick={kullaniciAta} disabled={islem} className="px-3 py-2 rounded-lg bg-blue-500/20 text-blue-300 text-xs hover:bg-blue-500/30 disabled:opacity-50">
+                  Ofise Ata
+                </button>
+              </div>
+              <p className="text-gray-500 text-[11px] mt-1.5">
+                Kayitli bir kullaniciyi bu ofise admin olarak tasir.
+              </p>
+            </div>
           </div>
         </div>
 

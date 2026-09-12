@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
 import { getSettings, saveSettings, getDefaultDocumentPermissions, parseDocumentPermissions, getDefaultDocumentFolders, parseDocumentFolders } from '../services/settingsService'
-import { Settings as SettingsIcon, Lock, Clock, Users, Eye, EyeOff, CheckCircle, AlertCircle, Save, RefreshCw, MessageCircle, Mail, FolderOpen, FolderTree, Plus, Trash2, Pencil, Volume2, Play } from 'lucide-react'
+import { getBankInfo, saveBankInfo } from '../services/paymentService'
+import { Settings as SettingsIcon, Lock, Clock, Users, Eye, EyeOff, CheckCircle, AlertCircle, Save, RefreshCw, MessageCircle, Mail, FolderOpen, FolderTree, Plus, Trash2, Pencil, Volume2, Play, CreditCard, Building2 } from 'lucide-react'
 import FolderStructureEditor from '../components/FolderStructureEditor'
 import { SES_TERCIHLERI, VARSAYILAN_SES_AYARI, seslerHazirOlunca, sesSec, konus, sesAyariCoz, sesDestekleniyor, sesCinsiyeti, cinsiyetSesiVar } from '../utils/speechUtils'
 
@@ -55,6 +56,9 @@ export default function Settings() {
     smtp_pass: '',
     smtp_from: '',
     smtp_secure: 'false',
+    odeme_hatirlatma_gun: '5',
+    payment_provider: 'paytr',
+    payment_providers_enabled: JSON.stringify(['paytr']),
     client_document_permissions: JSON.stringify(getDefaultDocumentPermissions())
   })
   const [commLoading, setCommLoading] = useState(false)
@@ -75,9 +79,46 @@ export default function Settings() {
   const [folderMsg, setFolderMsg] = useState('')
   const [folderErr, setFolderErr] = useState('')
 
+  // Banka bilgileri (EFT/Havale)
+  const [bankInfo, setBankInfo] = useState({ banka: '', hesapSahibi: '', iban: '' })
+  const [bankInfoEdit, setBankInfoEdit] = useState({ banka: '', hesapSahibi: '', iban: '' })
+  const [bankInfoLoading, setBankInfoLoading] = useState(false)
+  const [bankInfoMsg, setBankInfoMsg] = useState('')
+  const [bankInfoErr, setBankInfoErr] = useState('')
+  // Etkin odeme kuruluslari (coklu secim)
+  const [enabledProviders, setEnabledProviders] = useState(['paytr'])
+  // Aktif odeme kurulusu (iclerinden secilen)
+  const [activeProviderLocal, setActiveProviderLocal] = useState('paytr')
+
   useEffect(() => {
     loadCommSettings()
+    loadBankInfoData()
   }, [])
+
+  const loadBankInfoData = async () => {
+    try {
+      const info = await getBankInfo()
+      setBankInfo(info)
+      setBankInfoEdit(info)
+    } catch (err) {
+      console.error('Banka bilgisi yukleme hatasi:', err)
+    }
+  }
+
+  const handleBankInfoSave = async () => {
+    setBankInfoLoading(true)
+    setBankInfoMsg('')
+    setBankInfoErr('')
+    try {
+      await saveBankInfo(bankInfoEdit)
+      setBankInfo(bankInfoEdit)
+      setBankInfoMsg('Banka bilgileri kaydedildi.')
+    } catch (err) {
+      setBankInfoErr('Banka bilgileri kaydedilemedi: ' + (err.message || 'Bilinmeyen hata'))
+    } finally {
+      setBankInfoLoading(false)
+    }
+  }
 
   // MUBIS Asistan ses ayarlari
   const [sesAyari, setSesAyari] = useState(VARSAYILAN_SES_AYARI)
@@ -118,6 +159,17 @@ export default function Settings() {
       setDocPermissions(parseDocumentPermissions(settings.client_document_permissions))
       setDocFolders(parseDocumentFolders(settings.client_document_folders))
       setSesAyari(sesAyariCoz(settings))
+      // Odeme kuruluslari
+      let enabled = ['paytr']
+      try {
+        const parsed = typeof settings.payment_providers_enabled === 'string'
+          ? JSON.parse(settings.payment_providers_enabled)
+          : settings.payment_providers_enabled
+        if (Array.isArray(parsed) && parsed.length > 0) enabled = parsed
+      } catch { /* varsayilan */
+      }
+      setEnabledProviders(enabled)
+      setActiveProviderLocal(settings.payment_provider || enabled[0] || 'paytr')
     } catch (err) {
       console.error('Iletisim ayarlari yuklenemedi:', err)
     }
@@ -128,8 +180,37 @@ export default function Settings() {
     setCommMsg('')
     setCommErr('')
     try {
-      await saveSettings(commSettings)
+      await saveSettings({
+        ...commSettings,
+        payment_providers_enabled: JSON.stringify(enabledProviders),
+        payment_provider: activeProviderLocal
+      })
       setCommMsg('Iletisim ayarlari kaydedildi!')
+      setTimeout(() => setCommMsg(''), 3000)
+    } catch (err) {
+      setCommErr('Ayarlar kaydedilemedi: ' + err.message)
+    }
+    setCommLoading(false)
+  }
+
+  const handleProviderSetupSave = async () => {
+    setCommLoading(true)
+    setCommMsg('')
+    setCommErr('')
+    try {
+      if (enabledProviders.length === 0) {
+        // Online odeme kapali
+        await saveSettings({ payment_provider: 'eft', payment_providers_enabled: JSON.stringify([]) })
+      } else {
+        const aktif = enabledProviders.includes(activeProviderLocal) ? activeProviderLocal : enabledProviders[0]
+        setActiveProviderLocal(aktif)
+        await saveSettings({
+          ...commSettings,
+          payment_providers_enabled: JSON.stringify(enabledProviders),
+          payment_provider: aktif
+        })
+      }
+      setCommMsg('Odeme kurulusu ayarlari kaydedildi!')
       setTimeout(() => setCommMsg(''), 3000)
     } catch (err) {
       setCommErr('Ayarlar kaydedilemedi: ' + err.message)
@@ -403,6 +484,8 @@ export default function Settings() {
     { id: 'password', label: 'Sifre Degistir', icon: Lock },
     { id: 'interval', label: 'Sifre Sikligi', icon: Clock },
     { id: 'communication', label: 'Iletisim Ayarlari', icon: MessageCircle },
+    ...(user?.role === 'admin' ? [{ id: 'bank', label: 'Banka Bilgileri', icon: Building2 }] : []),
+    ...(user?.role === 'admin' ? [{ id: 'payments', label: 'Odeme Kurulusu', icon: CreditCard }] : []),
     { id: 'documents', label: 'Evrak Gorunurlugu', icon: FolderOpen },
     { id: 'folders', label: 'Evrak Klasor Yapisi', icon: FolderTree },
     ...(user?.role === 'admin' ? [{ id: 'assistant', label: 'Asistan Sesi', icon: Volume2 }] : []),
@@ -543,9 +626,54 @@ export default function Settings() {
               <div className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/30">
                 <h3 className="text-white font-medium mb-4 flex items-center gap-2">
                   <MessageCircle className="w-4 h-4 text-green-400" />
-                  WhatsApp Business API
+                  WhatsApp Gonderim Ayarlari
                 </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                <div className="mb-5">
+                  <label className="text-gray-400 text-sm block mb-2">WhatsApp Gonderim Kanali</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className={`flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
+                      commSettings.whatsapp_channel !== 'web'
+                        ? 'bg-green-500/10 border-green-500/40 text-green-300'
+                        : 'bg-blue-900/20 border-blue-700/40 text-gray-400'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="whatsapp_channel"
+                        value="api"
+                        checked={commSettings.whatsapp_channel !== 'web'}
+                        onChange={e => setCommSettings({ ...commSettings, whatsapp_channel: e.target.value })}
+                        className="mt-1 w-4 h-4 text-green-500 border-blue-700/50 bg-blue-900/30 focus:ring-green-500"
+                      />
+                      <div>
+                        <span className="text-sm font-medium">WhatsApp Business API</span>
+                        <p className="text-xs mt-1 opacity-80">Dosyalar mesaja ekinde gonderilir. Phone Number ID ve Access Token gerekir.</p>
+                      </div>
+                    </label>
+
+                    <label className={`flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
+                      commSettings.whatsapp_channel === 'web'
+                        ? 'bg-green-500/10 border-green-500/40 text-green-300'
+                        : 'bg-blue-900/20 border-blue-700/40 text-gray-400'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="whatsapp_channel"
+                        value="web"
+                        checked={commSettings.whatsapp_channel === 'web'}
+                        onChange={e => setCommSettings({ ...commSettings, whatsapp_channel: e.target.value })}
+                        className="mt-1 w-4 h-4 text-green-500 border-blue-700/50 bg-blue-900/30 focus:ring-green-500"
+                      />
+                      <div>
+                        <span className="text-sm font-medium">Web.WhatsApp</span>
+                        <p className="text-xs mt-1 opacity-80">Kullanici telefonundaki WhatsApp uzerinden gonderilir. Dosyalar link olarak gonderilir.</p>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                {commSettings.whatsapp_channel !== 'web' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="text-gray-400 text-sm block mb-1">Phone Number ID</label>
                     <input
@@ -586,6 +714,13 @@ export default function Settings() {
                     />
                   </div>
                 </div>
+                )}
+
+                {commSettings.whatsapp_channel === 'web' && (
+                  <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-yellow-300 text-xs">
+                    Web.WhatsApp seciliyken telefon numarasi gerekmez; gonderim esnasinda yeni sekmede hazir mesaj acilir ve dosya linkleri mesaja eklenir.
+                  </div>
+                )}
               </div>
 
               {/* SMTP / Natro Mail */}
@@ -666,6 +801,19 @@ export default function Settings() {
                       SSL/TLS kullan (465 icin isaretli, 587 icin bos)
                     </label>
                   </div>
+                  <div>
+                    <label className="text-gray-400 text-sm block mb-1">Ödeme Hatırlatması (kaç gün önce)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="30"
+                      value={commSettings.odeme_hatirlatma_gun}
+                      onChange={e => setCommSettings({ ...commSettings, odeme_hatirlatma_gun: e.target.value })}
+                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-2.5 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500"
+                      placeholder="5"
+                    />
+                    <p className="text-gray-500 text-xs mt-1">Son ödeme tarihinden bu kadar gün önce müşteriye WhatsApp/e-posta hatırlatması gider. Her dönem için bir kez gönderilir.</p>
+                  </div>
                 </div>
               </div>
 
@@ -674,6 +822,210 @@ export default function Settings() {
                 Iletisim Ayarlarini Kaydet
               </button>
             </div>
+          </div>
+        )}
+
+        {/* BANKA BILGILERI */}
+        {activeTab === 'bank' && user?.role === 'admin' && (
+          <div>
+            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <Building2 className="w-5 h-5 text-yellow-400" />
+              Banka Bilgileri
+            </h2>
+            <p className="text-gray-400 text-sm mb-6">
+              Musteri portalinda EFT/Havale ile odeme bolumunde gorunecek muhasebe banka hesap bilgileri.
+            </p>
+
+            {bankInfoMsg && (
+              <div className="bg-green-500/20 border border-green-500/50 rounded-xl p-3 mb-4 flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-green-400" />
+                <span className="text-green-300 text-sm">{bankInfoMsg}</span>
+              </div>
+            )}
+            {bankInfoErr && (
+              <div className="bg-red-500/20 border border-red-500/50 rounded-xl p-3 mb-4 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400" />
+                <span className="text-red-300 text-sm">{bankInfoErr}</span>
+              </div>
+            )}
+
+            <div className="bg-blue-900/20 rounded-xl p-6 border border-blue-700/30">
+              <h3 className="text-white font-medium mb-4 flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-yellow-400" />
+                EFT / Havale Hesap Bilgileri
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                <div>
+                  <label className="text-gray-400 text-sm block mb-1">Banka Adi</label>
+                  <input
+                    type="text"
+                    value={bankInfoEdit.banka || ''}
+                    onChange={e => setBankInfoEdit(p => ({ ...p, banka: e.target.value }))}
+                    className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-2.5 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500"
+                    placeholder="Orn: Garanti Bankasi"
+                  />
+                </div>
+                <div>
+                  <label className="text-gray-400 text-sm block mb-1">Hesap Sahibi</label>
+                  <input
+                    type="text"
+                    value={bankInfoEdit.hesapSahibi || ''}
+                    onChange={e => setBankInfoEdit(p => ({ ...p, hesapSahibi: e.target.value }))}
+                    className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-2.5 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500"
+                    placeholder="Orn: Ad Soyad"
+                  />
+                </div>
+                <div>
+                  <label className="text-gray-400 text-sm block mb-1">IBAN</label>
+                  <input
+                    type="text"
+                    value={bankInfoEdit.iban || ''}
+                    onChange={e => setBankInfoEdit(p => ({ ...p, iban: e.target.value }))}
+                    className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-2.5 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500"
+                    placeholder="TR00 0000 0000 0000 0000 0000 00"
+                  />
+                </div>
+              </div>
+              <button onClick={handleBankInfoSave} disabled={bankInfoLoading} className="btn-gold px-6 py-2.5 flex items-center gap-2 disabled:opacity-50">
+                {bankInfoLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Banka Bilgilerini Kaydet
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ODEME KURULUSU SECIMI */}
+        {activeTab === 'payments' && user?.role === 'admin' && (
+          <div>
+            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <CreditCard className="w-5 h-5 text-yellow-400" />
+              Odeme Kurulusu
+            </h2>
+            <p className="text-gray-400 text-sm mb-6">
+              Musterilerin kredi karti ile odeme yapacagi odeme kuruluslarini secin. Birden fazla kurulusu etkinlestirebilir, iclerinden aktif olanini belirleyebilirsiniz.
+            </p>
+
+            {commMsg && (
+              <div className="bg-green-500/20 border border-green-500/50 rounded-xl p-3 mb-4 flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-green-400" />
+                <span className="text-green-300 text-sm">{commMsg}</span>
+              </div>
+            )}
+            {commErr && (
+              <div className="bg-red-500/20 border border-red-500/50 rounded-xl p-3 mb-4 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400" />
+                <span className="text-red-300 text-sm">{commErr}</span>
+              </div>
+            )}
+
+            <div className="space-y-6">
+              {/* 1. Adim: Etkin kuruluslar */}
+              <div className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/30">
+                <h3 className="text-white font-medium mb-1 flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-purple-400" />
+                  1. Anlasilan Odeme Kuruluslari
+                </h3>
+                <p className="text-gray-400 text-xs mb-4">Anlastiginiz odeme kuruluslarini isaretleyin. Isaretlemediginiz takdirde online odeme kapali olur (yalnizca EFT/Havale).</p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {[
+                    { id: 'paytr', label: 'PayTR', desc: 'PayTR Link API ile kredi karti odemesi' },
+                    { id: 'odeal', label: 'Odeal', desc: 'Odeal Pay-by-Link ile kredi karti odemesi' }
+                  ].map(provider => {
+                    const isEnabled = enabledProviders.includes(provider.id)
+                    return (
+                      <label
+                        key={provider.id}
+                        className={`cursor-pointer rounded-xl border p-4 transition-all ${
+                          isEnabled
+                            ? 'bg-purple-500/10 border-purple-500/50'
+                            : 'bg-blue-900/20 border-blue-700/30 hover:border-blue-600/50'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={isEnabled}
+                            onChange={() => {
+                              setEnabledProviders(prev => {
+                                if (prev.includes(provider.id)) {
+                                  return prev.filter(p => p !== provider.id)
+                                }
+                                return [...prev, provider.id]
+                              })
+                            }}
+                            className="mt-1 w-4 h-4 rounded border-blue-700/50 bg-blue-900/30 text-purple-500 focus:ring-purple-500"
+                          />
+                          <div>
+                            <p className="text-white font-medium text-sm">{provider.label}</p>
+                            <p className="text-gray-400 text-xs mt-0.5">{provider.desc}</p>
+                          </div>
+                        </div>
+                      </label>
+                    )
+                  })}
+                </div>
+
+                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-yellow-300 text-xs mt-4">
+                  <strong>Bilgi:</strong> Etkinlestirilen kurulusun API anahtarlari Vercel ortam degiskenlerinde tanimli olmalidir.
+                  PayTR icin <code>PAYTR_MERCHANT_ID, PAYTR_MERCHANT_KEY, PAYTR_MERCHANT_SALT</code>;
+                  Odeal icin <code>ODEAL_API_KEY, ODEAL_SECRET_KEY</code> gerekir.
+                  Yeni bir odeme kurulusu ile anlasildiginda entegrasyonu eklenir ve bu listede gorunur hale gelir.
+                </div>
+              </div>
+
+              {/* 2. Adim: Aktif kurulus secimi */}
+              {enabledProviders.length > 0 ? (
+                <div className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/30">
+                  <h3 className="text-white font-medium mb-1 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-green-400" />
+                    2. Aktif Odeme Kurulusu
+                  </h3>
+                  <p className="text-gray-400 text-xs mb-4">Musteriler kredi karti ile odeme yaparken hangi kurulusu kullanacak? Icindeki bir tanesini secin.</p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {enabledProviders.map(providerId => {
+                      const meta = { paytr: 'PayTR', odeal: 'Odeal' }[providerId] || providerId
+                      return (
+                        <label
+                          key={providerId}
+                          className={`cursor-pointer rounded-xl border p-4 transition-all ${
+                            activeProviderLocal === providerId
+                              ? 'bg-green-500/10 border-green-500/50'
+                              : 'bg-blue-900/20 border-blue-700/30 hover:border-blue-600/50'
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="radio"
+                              name="active_payment_provider"
+                              value={providerId}
+                              checked={activeProviderLocal === providerId}
+                              onChange={() => setActiveProviderLocal(providerId)}
+                              className="mt-1 w-4 h-4 text-green-500 border-blue-700/50 bg-blue-900/30 focus:ring-green-500"
+                            />
+                            <div>
+                              <p className="text-white font-medium text-sm">{meta}</p>
+                              <p className="text-gray-400 text-xs mt-0.5">Musteri odemeleri bu kurulus uzerinden alinir</p>
+                            </div>
+                          </div>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-gray-500/10 border border-gray-500/30 rounded-xl p-4 text-gray-300 text-sm">
+                  Hicbir odeme kurulusu etkin degil. Musteriler yalnizca <strong>EFT/Havale</strong> ile odeme yapabilir
+                  (Banka Bilgileri sekmesindeki hesap bilgileri musteride gorunur).
+                </div>
+              )}
+            </div>
+
+            <button onClick={handleProviderSetupSave} disabled={commLoading} className="btn-gold px-6 py-2.5 flex items-center gap-2 disabled:opacity-50 mt-6">
+              {commLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              Odeme Kurulusu Ayarlarini Kaydet
+            </button>
           </div>
         )}
 

@@ -8,6 +8,8 @@ import { buildClientAiContext } from '../utils/clientAiContext'
 import { buildAdminAiContext } from '../utils/adminAiContext'
 import { getMessages, markAllAsRead, replyFromClient } from '../services/messageService'
 import { useNavigate } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
+import { asistanHitapAdi, asistanKarsilama } from '../utils/assistantGreeting'
 
 const SES_CACHE_KEY = 'mubis_ai_voice_setting'
 
@@ -37,10 +39,6 @@ const PERSONEL_SORULARI = [
   'Amortisman ayırma şartları ve faydalı ömür nasıl belirlenir?',
   'Asgari ücret desteği ve 5510 sayılı Kanun teşviklerinden kimler yararlanır?'
 ]
-
-const KARSILAMA = `Merhaba! 👋
-Ben MUBİS Yapay Zekâ Asistanı.
-Vergi, SGK, muhasebe ve diğer mali konularda sorularınızı yanıtlamaktan memnuniyet duyarım.`
 
 const MISAFIR_LIMIT = 10
 const LIMIT_KEY = 'mubis_ai_guest_usage'
@@ -102,6 +100,7 @@ function MesajMetni({ text }) {
 
 export default function MubisAssistant() {
   const { user } = useAuth()
+  const [clientProfile, setClientProfile] = useState(null)
   const [acik, setAcik] = useState(false)
   const [balon, setBalon] = useState(false)
   const [sesli, setSesli] = useState(false)
@@ -109,9 +108,8 @@ export default function MubisAssistant() {
   const [yaziyor, setYaziyor] = useState(false)
   const [input, setInput] = useState('')
   const [okunmamis, setOkunmamis] = useState(0)
-  const [mesajlar, setMesajlar] = useState([
-    { role: 'assistant', content: KARSILAMA, ts: new Date() }
-  ])
+  const [mesajlar, setMesajlar] = useState([])
+  const karsilama = asistanKarsilama(clientProfile, user)
   const [sesAyari, setSesAyari] = useState(() => {
     try {
       const raw = localStorage.getItem(SES_CACHE_KEY)
@@ -151,6 +149,8 @@ export default function MubisAssistant() {
   const [kisiselOzet, setKisiselOzet] = useState('')
   const [adminMesajlari, setAdminMesajlari] = useState([])
   const [musavireYaz, setMusavireYaz] = useState(false)
+  const [replyToId, setReplyToId] = useState(null)
+  const [mesajUyari, setMesajUyari] = useState(null) // yeni gelen admin mesaji popup'i
   const okunanIdler = useRef(new Set())
 
   useEffect(() => {
@@ -160,21 +160,66 @@ export default function MubisAssistant() {
     return () => { iptal = true }
   }, [user, personelMi])
 
+  useEffect(() => {
+    if (!clientId) {
+      setClientProfile(null)
+      return
+    }
+
+    let iptal = false
+    supabase
+      .from('clients')
+      .select('name, shortName, short_name, company, phonenumbers')
+      .eq('id', clientId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!iptal) setClientProfile(data || null)
+      })
+      .catch(() => {})
+
+    return () => { iptal = true }
+  }, [clientId])
+
   const mesajlariYukle = useCallback(async (sessiz = true) => {
     if (!clientId) return
     const data = await getMessages(clientId)
-    setAdminMesajlari(data)
+    // Asistan yalnizca okunmamis admin mesajlarini gosterir; okunan/cevaplanan
+    // mesajlar ve musterinin kendi gonderdikleri buradan kalkar,
+    // "Mesajlarim" sekmesinde arsiv olarak kalir.
+    // Pencere acikken okunurken aninda kaybolmasinlar diye ekranda olanlar korunur,
+    // pencere kapaninca temizlenir.
+    setAdminMesajlari(prev => {
+      if (!acik) return data.filter(m => m.sender === 'admin' && !m.is_read)
+      const gorunenAdminIdler = new Set(prev.filter(m => m.sender === 'admin').map(m => m.id))
+      return data.filter(m => m.sender === 'admin' && (!m.is_read || gorunenAdminIdler.has(m.id)))
+    })
 
-    const yeniOkunmamis = data.filter(
-      m => m.sender === 'admin' && !m.is_read && !okunanIdler.current.has(m.id)
-    )
+    // Rozeti her yuklemede veritabanindaki gercek okunmamis sayisina esitle
+    const gercekOkunmamis = data.filter(m => m.sender === 'admin' && !m.is_read)
+    setOkunmamis(gercekOkunmamis.length)
+
+    // Yalnizca bu oturumda ilk kez gorulen mesajlar icin uyar
+    const yeniOkunmamis = gercekOkunmamis.filter(m => !okunanIdler.current.has(m.id))
     if (yeniOkunmamis.length > 0 && sessiz) {
-      setOkunmamis(n => n + yeniOkunmamis.length)
       setBalon(true)
       setTimeout(() => setBalon(false), 8000)
       yeniOkunmamis.forEach(m => okunanIdler.current.add(m.id))
+      // Son gelen mesaji uyari penceresinde goster
+      setMesajUyari(yeniOkunmamis[yeniOkunmamis.length - 1])
     }
-  }, [clientId])
+  }, [clientId, acik])
+
+  // Uyari penceresi 20 sn sonra kendiliginden kapansin
+  useEffect(() => {
+    if (!mesajUyari) return
+    const t = setTimeout(() => setMesajUyari(null), 20000)
+    return () => clearTimeout(t)
+  }, [mesajUyari])
+
+  // Asistan acilinca uyari penceresini kapat
+  useEffect(() => {
+    if (acik) setMesajUyari(null)
+  }, [acik])
 
   useEffect(() => {
     if (!clientId) return
@@ -202,15 +247,25 @@ export default function MubisAssistant() {
     if (sesli && sonu?.assistant_message) konus(sonu.assistant_message, sesAyari)
     markAllAsRead(clientId, 'admin').then(() => {
       setAdminMesajlari(prev => prev.map(m => m.sender === 'admin' ? { ...m, is_read: true } : m))
+      setOkunmamis(0)
     })
   }, [acik, clientId, adminMesajlari, sesli, sesAyari])
+
+  // Pencere kapaninca okunmus admin mesajlarini listeden temizle
+  useEffect(() => {
+    if (!acik) setAdminMesajlari(prev => prev.filter(m => m.sender === 'admin' && !m.is_read))
+  }, [acik])
 
   const musavireGonder = useCallback(async (metin) => {
     const soru = (metin ?? input).trim()
     if (!soru || !clientId) return
     setInput('')
     try {
-      await replyFromClient({ clientId, message: soru, clientName: user?.name || '' })
+      await replyFromClient({ clientId, message: soru, clientName: user?.name || clientProfile?.name || '', parentId: replyToId })
+      await markAllAsRead(clientId, 'admin')
+      // Cevaplanan/okunan mesajlar ve musterinin kendi mesajlari asistandan hemen kaldirilir
+      setAdminMesajlari(prev => prev.filter(m => m.sender === 'admin' && !m.is_read))
+      setOkunmamis(0)
       await mesajlariYukle(false)
       setMesajlar(prev => [...prev, {
         role: 'assistant',
@@ -223,8 +278,21 @@ export default function MubisAssistant() {
         content: 'Mesajınız gönderilemedi: ' + e.message,
         ts: new Date()
       }])
+    } finally {
+      setMusavireYaz(false)
+      setReplyToId(null)
     }
-  }, [input, clientId, user, mesajlariYukle])
+  }, [input, clientId, user, clientProfile, replyToId, mesajlariYukle])
+
+  function handleSend() {
+    const metin = input.trim()
+    if (!metin || yaziyor) return
+    if (musavireYaz && clientId) {
+      musavireGonder(metin)
+    } else {
+      gonder(metin)
+    }
+  }
 
   const aksiyonaGit = useCallback((url) => {
     if (!url) return
@@ -241,12 +309,12 @@ export default function MubisAssistant() {
   useEffect(() => {
     if (acik) {
       setOkunmamis(0)
-      setMesajlar([{ role: 'assistant', content: KARSILAMA, ts: new Date() }])
+      setMesajlar([{ role: 'assistant', content: karsilama, ts: new Date() }])
       setInput('')
       setMusavireYaz(false)
       setTimeout(() => inputRef.current?.focus(), 200)
     }
-  }, [acik])
+  }, [acik, karsilama])
 
   // Ilk ziyarette dikkat cekmek icin balon
   useEffect(() => {
@@ -260,19 +328,18 @@ export default function MubisAssistant() {
     return () => clearTimeout(t)
   }, [])
 
-  const seslendir = useCallback((metin) => {
+  function seslendir(metin) {
     if (!sesli) return
     // Linkleri okumasin: [Ad](url) -> Ad, ciplak url -> kaldir
     const temiz = String(metin || '')
       .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1')
       .replace(/https?:\/\/[^\s]+/g, '')
     konus(temiz, sesAyari)
-  }, [sesli, sesAyari])
+  }
 
   const gonder = useCallback(async (metin) => {
     const soru = (metin ?? input).trim()
     if (!soru || yaziyor) return
-
     if (misafir && misafirKullanim() >= MISAFIR_LIMIT) {
       setMesajlar(prev => [...prev, {
         role: 'assistant',
@@ -282,10 +349,10 @@ export default function MubisAssistant() {
       return
     }
 
-    const yeniMesajlar = [...mesajlar, { role: 'user', content: soru, ts: new Date() }]
-    setMesajlar(yeniMesajlar)
     setInput('')
     setYaziyor(true)
+    const yeniMesajlar = [...mesajlar, { role: 'user', content: soru, ts: new Date() }]
+    setMesajlar(yeniMesajlar)
 
     try {
       // Musteri girisi varsa kisisel mali ozet (borc, tahakkuk, son tarihler) eklenir
@@ -320,7 +387,7 @@ export default function MubisAssistant() {
             .filter(m => m.role === 'user' || m.role === 'assistant')
             .map(m => ({ role: m.role, content: m.content })),
           context: user
-            ? `Kullanici: ${user.name || user.username}, rol: ${user.role}${kisisel}${adminCtx ? '\n\n' + adminCtx : ''}${rolNotu}`
+            ? `Kullanici: ${asistanHitapAdi(clientProfile, user) || user.username}, rol: ${user.role}${kisisel}${adminCtx ? '\n\n' + adminCtx : ''}${rolNotu}`
             : ''
         })
       })
@@ -339,9 +406,9 @@ export default function MubisAssistant() {
     } finally {
       setYaziyor(false)
     }
-  }, [input, mesajlar, misafir, seslendir, user, yaziyor, kisiselOzet, personelMi])
+  }, [input, mesajlar, misafir, user, yaziyor, kisiselOzet, personelMi])
 
-  const mikrofon = useCallback(() => {
+  function mikrofon() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SR) {
       alert('Tarayıcınız sesli girişi desteklemiyor. Chrome veya Edge deneyebilirsiniz.')
@@ -366,11 +433,11 @@ export default function MubisAssistant() {
     recognitionRef.current = rec
     setDinliyor(true)
     rec.start()
-  }, [dinliyor, gonder])
+  }
 
   const sifirla = () => {
     window.speechSynthesis?.cancel()
-    setMesajlar([{ role: 'assistant', content: KARSILAMA, ts: new Date() }])
+    setMesajlar([{ role: 'assistant', content: karsilama, ts: new Date() }])
     setInput('')
   }
 
@@ -381,6 +448,49 @@ export default function MubisAssistant() {
 
   return (
     <>
+      {/* Yeni mesaj uyari penceresi */}
+      {mesajUyari && !acik && (
+        <div className="fixed bottom-[110px] md:bottom-32 right-4 md:right-6 z-[65] w-[calc(100vw-2rem)] max-w-[340px] bg-white rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.35)] border border-blue-100 overflow-hidden animate-fade-in-up">
+          <div className={`px-4 py-2.5 flex items-center justify-between ${
+            mesajUyari.priority === 'acil' ? 'bg-gradient-to-r from-red-600 to-red-700'
+            : mesajUyari.priority === 'onemli' ? 'bg-gradient-to-r from-amber-500 to-amber-600'
+            : 'bg-gradient-to-r from-blue-700 to-blue-800'
+          }`}>
+            <div className="flex items-center gap-2 text-white text-sm font-bold">
+              <Megaphone className="w-4 h-4" />
+              {mesajUyari.priority === 'acil' ? 'Acil Mesajınız Var' : 'Yeni Mesajınız Var'}
+            </div>
+            <button onClick={() => setMesajUyari(null)} className="p-1 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="px-4 py-3">
+            <p className="text-[11px] text-gray-500 mb-1">
+              {mesajUyari.sender_name ? `${mesajUyari.sender_name} (SMMM)` : 'Mali Müşaviriniz'}
+              {' · '}
+              {new Date(mesajUyari.created_at).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+            </p>
+            <p className="text-sm text-blue-950 leading-snug line-clamp-3">
+              {mesajUyari.assistant_message || mesajUyari.message}
+            </p>
+            <div className="flex gap-2 mt-3">
+              <button
+                onClick={() => { setAcik(true); setMesajUyari(null) }}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition-colors"
+              >
+                Oku / Cevapla
+              </button>
+              <button
+                onClick={() => setMesajUyari(null)}
+                className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-semibold rounded-lg transition-colors"
+              >
+                Kapat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Yuzen kalem karakteri */}
       {!acik && (
         <div className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-[60] flex items-end gap-3">
@@ -587,8 +697,13 @@ export default function MubisAssistant() {
                 ref={inputRef}
                 value={input}
                 onChange={e => setInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); gonder() } }}
-                placeholder={dinliyor ? 'Dinliyorum...' : 'Sorunuzu yazın...'}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault()
+                    handleSend()
+                  }
+                }}
+                placeholder={dinliyor ? 'Dinliyorum...' : musavireYaz ? 'Mali müşavirinize cevabınızı yazın...' : 'Sorunuzu yazın...'}
                 className="flex-1 bg-transparent text-sm text-blue-950 placeholder-gray-400 outline-none py-1.5"
               />
               <button
@@ -601,9 +716,9 @@ export default function MubisAssistant() {
                 <Mic className="w-4 h-4" />
               </button>
               <button
-                onClick={() => gonder()}
+                onClick={handleSend}
                 disabled={!input.trim() || yaziyor}
-                title="Gönder"
+                title={musavireYaz ? 'Mali müşavire gönder' : 'Gönder'}
                 className="w-9 h-9 rounded-full bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 flex items-center justify-center transition-colors flex-shrink-0"
               >
                 <Send className="w-4 h-4" />

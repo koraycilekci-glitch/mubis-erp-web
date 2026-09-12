@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Kira kaynak inceleme</title>
+<style>iframe{width:1px;height:1px;border:0}pre{white-space:pre-wrap}</style>
+<iframe id="detail" src="file:///C:/Users/hp/PROJELER/mubis-erp-web/src/pages/ClientDetail.jsx"></iframe>
+<iframe id="service" src="file:///C:/Users/hp/PROJELER/mubis-erp-web/src/services/kiraService.js"></iframe>
+<iframe id="utils" src="file:///C:/Users/hp/PROJELER/mubis-erp-web/src/utils/kiraUtils.js"></iframe>
+<iframe id="client-stopaj" src="file:///C:/Users/hp/PROJELER/mubis-erp-web/src/pages/ClientKiraStopaj.jsx"></iframe>
+<iframe id="app" src="file:///C:/Users/hp/PROJELER/mubis-erp-web/src/App.jsx"></iframe>
+<pre id="output">loading</pre>
+<script>
+const render = () => {
+  document.querySelector('#output').textContent = [...document.querySelectorAll('iframe')].map((frame) => {
+    try {
+      return `===== ${frame.id} =====\n${frame.contentDocument?.documentElement?.innerText || frame.contentDocument?.body?.innerText || 'empty'}`
+    } catch (error) {
+      return `===== ${frame.id} =====\n${error}`
+    }
+  }).join('\n\n')
+}
+document.querySelectorAll('iframe').forEach((frame) => frame.addEventListener('load', render))
+setTimeout(render, 3000)
+</script>

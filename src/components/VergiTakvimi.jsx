@@ -1,17 +1,22 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Calendar, AlertTriangle, CheckCircle, Clock, Download, MessageCircle, Mail, X, FileText, RefreshCw } from 'lucide-react'
-import { getFormattedBeyanDeadline, getMonthName, getBeyanStorageKey } from '../utils/dateUtils'
+import { Calendar, AlertTriangle, CheckCircle, Clock, Download, MessageCircle, Mail, X, FileText, RefreshCw, CreditCard } from 'lucide-react'
+import { getFormattedBeyanDeadline, getLastBusinessDayOfMonth, getMonthName, getBeyanStorageKey } from '../utils/dateUtils'
 import { getTahakkukList, sumTahakkukTutar } from '../utils/tahakkukUtils'
 import { supabase } from '../lib/supabase'
-import { sendEmail, openWhatsAppWeb } from '../services/whatsappService'
+import { sendEmail, sendDocumentViaWhatsAppChannel, getWhatsAppChannel } from '../services/whatsappService'
 import { getSettings } from '../services/settingsService'
 import { analyzeDocument } from '../services/documentIntelligenceEngine'
+import { useAuth } from '../context/AuthContext'
+import { gibYardimciIleDoldur, gibYardimciIs, musteriGirisBilgileriGetir } from '../utils/gibOdemeHelper'
+
+const GIB_ODEME_URL = 'https://dijital.gib.gov.tr/hizliOdemeler/belgeNumarasiIleOdeme'
 
 export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDurumlari, onBeyanDurumlariUpdate }) {
   const now = new Date()
   const year = now.getFullYear()
   const month = now.getMonth()
-  
+  const { user } = useAuth()
+
   const [beyanDurumlari, setBeyanDurumlari] = useState(propBeyanDurumlari || {})
   const [loading, setLoading] = useState(true)
   const [selectedTahakkuk, setSelectedTahakkuk] = useState(null)
@@ -19,6 +24,10 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
   const [modalLoading, setModalLoading] = useState(false)
   const [settings, setSettings] = useState(null)
   const [documentUrl, setDocumentUrl] = useState(null)
+  const [showGibPanel, setShowGibPanel] = useState(false)
+  const [gibBilgi, setGibBilgi] = useState({ vkn: '', tahakkukNo: '', il: '', vergiDairesi: '' })
+  const [gibHelperDurum, setGibHelperDurum] = useState('')
+  const [gibRapor, setGibRapor] = useState(null)
   const analyzingRef = useRef(new Set())
   const attemptedAnalysisRef = useRef(new Set())
 
@@ -77,6 +86,8 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
       : (Number(beyanDurumlari[`${statusKey}_tutar`]) || 0)
     const analizDurumu = beyanDurumlari[`${statusKey}_analiz_durumu`] || ''
     const sonOdeme = beyanDurumlari[`${statusKey}_son_odeme`] || ''
+    const odendi = beyanDurumlari[`${statusKey}_odendi`] === true
+    const odemeTarihi = beyanDurumlari[`${statusKey}_odeme_tarihi`] || ''
     const hasTahakkuk = tahakkuklar.length > 0 || tutar > 0
 
     return {
@@ -87,6 +98,8 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
       tahakkukUrl,
       tahakkuklar,
       sonOdeme,
+      odendi,
+      odemeTarihi,
       isHazirlaniyor: !hasTahakkuk && (durum === 'hazir' || durum === 'onaylandi'),
       isTamamlandi: durum === 'tahakkuk_gonderildi',
       statusKey
@@ -99,7 +112,7 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
       { id: 'kdv', name: 'KDV', day: 28, type: 'kdv' },
       { id: 'kdv2', name: 'KDV2', day: 25, type: 'kdv2' },
       { id: 'muhtasar', name: 'Muhtasar', day: 26, type: 'muhtasar' },
-      { id: 'sgk', name: 'SGK', day: 31, type: 'sgk' },
+      { id: 'sgk', name: 'SGK', type: 'sgk', lastBusinessDay: true },
     ]
 
     const specialItems = []
@@ -123,7 +136,9 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
     }
 
     const allItems = [...calendarItems, ...specialItems].map(i => {
-      const dl = getFormattedBeyanDeadline(year, month, i.day)
+      const dl = i.lastBusinessDay
+        ? getLastBusinessDayOfMonth(year, month)
+        : getFormattedBeyanDeadline(year, month, i.day)
       const tahakkukInfo = getTahakkukStatus({ ...i, filingMonth: month, filingYear: year })
 
       return {
@@ -204,7 +219,7 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
           // Bu dosyanin tutarini listeye yaz, toplami hesapla
           const newList = list.map(t =>
             t.url === tahakkukUrl
-              ? { ...t, tutar: Number(result.amount), analiz_durumu: 'tamamlandi', son_odeme: item.deadline || result.due_date || '', vergi_turu: result.tax_type || '' }
+              ? { ...t, tutar: Number(result.amount), analiz_durumu: 'tamamlandi', son_odeme: item.deadline || result.due_date || '', vergi_turu: result.tax_type || '', tahakkuk_no: result.accrual_no || t.tahakkuk_no || '' }
               : t
           )
           next[listKey] = newList
@@ -214,6 +229,8 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
           next[`${item.statusKey}_son_odeme`] = item.deadline || result.due_date || ''
           next[`${item.statusKey}_vergi_turu`] = result.tax_type || ''
           next[`${item.statusKey}_analiz_url`] = tahakkukUrl
+          // GIB odeme ekraninda kullanilmak uzere tahakkuk fis (belge) numarasi
+          if (result.accrual_no) next[`${item.statusKey}_tahakkuk_no`] = result.accrual_no
           console.log('Tahakkuk tutari okundu:', item.name, result.amount, '- toplam:', next[`${item.statusKey}_tutar`])
         } else {
           const newList = list.map(t =>
@@ -274,6 +291,7 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
 
     setSelectedTahakkuk(item)
     setShowModal(true)
+    setShowGibPanel(false)
     setModalLoading(false)
     // Son tahakkuku varsayilan dokuman olarak sec (WhatsApp/mail gonderimi icin)
     const list = item.tahakkuklar || []
@@ -296,36 +314,139 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
         .eq('id', clientId)
         .single()
 
-      const message = `${selectedTahakkuk.name} tahakkuk dokumaniniz hazirdir.\n\nIndirmek icin linke tiklayin:\n${documentUrl}\n\nSaygilarimizla,\nMUBiS ERP`
-      openWhatsAppWeb({ phone: client.phone, message })
+      const caption = `${selectedTahakkuk.name} tahakkuk dokumaniniz hazirdir.\n\nSaygilarimizla,\nMUBiS ERP`
+      const documentName = `${selectedTahakkuk.name || 'tahakkuk'}.pdf`
 
-      alert('WhatsApp penceresi acildi. Mesaji WhatsApp uzerinden gonderin.')
+      await sendDocumentViaWhatsAppChannel({
+        phone: client.phone,
+        documentUrl,
+        documentName,
+        caption,
+        clientId,
+        documentType: 'tahakkuk',
+        settings
+      })
+
+      alert(getWhatsAppChannel(settings) === 'web' ? 'WhatsApp penceresi acildi. Mesaji WhatsApp uzerinden gonderin.' : 'WhatsApp mesaji gonderildi.')
     } catch (err) {
       alert('Gonderim hatasi: ' + err.message)
     }
   }
 
   const handleEmailSend = async () => {
-    if (!documentUrl || !selectedTahakkuk) return
-    
+    if (!documentUrl || !selectedTahakkuk) return;
+
     try {
       const { data: client } = await supabase
         .from('clients')
         .select('email')
         .eq('id', clientId)
         .single()
-      
+
       await sendEmail({
         to: client.email,
         subject: `${selectedTahakkuk.name} Tahakkuk Dokumani`,
         body: `${selectedTahakkuk.name} tahakkuk dokumani ekte sunulmustur.`,
         smtpConfig: settings
       })
-      
+
       alert('E-posta ile gonderildi!')
     } catch (err) {
       alert('Gonderim hatasi: ' + err.message)
     }
+  }
+
+  // GIB Dijital Vergi Dairesi - belge numarasi ile odeme
+  // 1) Yerel yardimci servis kuruluysa (baslat.bat) Chrome/Edge'i acip
+  //    formu OTOMATIK doldurur (guvenlik kodu haric).
+  // 2) Kurulu degilse GIB sayfasini yeni sekmede acar, bilgiler panelde
+  //    kopyalanabilir olarak sunulur.
+  const handleGibOdeme = async () => {
+    const statusKey = selectedTahakkuk?.statusKey || ''
+    // Panelde elle yazilmis degerler oncelikli (kullanici il/vergi dairesi
+    // girip tekrar basabilir); eksikler musteri kaydindan tamamlanir
+    const bilgi = {
+      vkn: gibBilgi.vkn || user?.vkn || user?.tc || '',
+      tahakkukNo: beyanDurumlari[`${statusKey}_tahakkuk_no`] || '',
+      il: gibBilgi.il || user?.city || '',
+      vergiDairesi: gibBilgi.vergiDairesi || user?.taxOffice || ''
+    }
+    // MUBiS'te kayitli kurum erisim bilgilerini de ekle (VKN/vergi dairesi
+    // eksikse tamamlanir; giris gerektiren islerde sifreler buradan gider)
+    try {
+      const giris = await musteriGirisBilgileriGetir(clientId)
+      if (giris) {
+        bilgi.vkn = bilgi.vkn || giris.vkn || giris.tc || ''
+        bilgi.il = bilgi.il || giris.il || ''
+        bilgi.vergiDairesi = bilgi.vergiDairesi || giris.vergiDairesi || ''
+        bilgi.kullaniciKodu = giris.dvs_username || ''
+        bilgi.parola = giris.dvs_password || ''
+      }
+    } catch (e) { /* bilgi eksikse de devam */ }
+
+    setGibBilgi(bilgi)
+    setShowGibPanel(true)
+    setGibHelperDurum('deniyor')
+
+    const sonuc = await gibYardimciIleDoldur(bilgi)
+    if (sonuc.ok) {
+      setGibHelperDurum('ok')
+      setGibRapor(sonuc.rapor || null)
+      return
+    }
+    // Yardimci program yok/calistirilamiyor: GIB sayfasini acma, kurulum
+    // uyari goster. Kurulum servisi hemen baslattigi icin bu uyari bir
+    // daha cikmaz; "Ode" butonu odeme sayfasini dogrudan acar.
+    setGibHelperDurum('kurulu-degil')
+  }
+
+  // Yardimci program olmadan elle devam etmek isteyen icin
+  const handleGibManuelAc = () => {
+    const url = selectedTahakkuk?.type === 'sgk'
+      ? 'https://www.turkiye.gov.tr/sosyal-guvenlik-sosyal-guvenlik-kurumu-kart-ile-prim-odeme-uygulamasi'
+      : GIB_ODEME_URL
+    window.open(url, '_blank', 'noopener')
+  }
+
+  // SGK prim odemesi: e-Devlet uzerinden (turkiye.gov.tr). Yardimci program
+  // TC + e-Devlet sifresini doldurur, kullanici guvenlik kodunu girer;
+  // giris sonrasi uygulama acilir, sorgu secimleri yapilip Borc Sorgula'ya basilir.
+  const handleSgkOdeme = async () => {
+    setShowGibPanel(true)
+    setGibHelperDurum('deniyor')
+    let tc = user?.vkn || user?.tc || ''
+    let edevletSifre = ''
+    try {
+      const giris = await musteriGirisBilgileriGetir(clientId)
+      if (giris) {
+        tc = giris.vkn || giris.tc || tc
+        edevletSifre = giris.edevlet_pass || ''
+      }
+    } catch (e) { /* bilgi yoksa asagida uyarilir */ }
+    if (!edevletSifre) {
+      setGibHelperDurum('edevlet-sifre-yok')
+      return
+    }
+    const sonuc = await gibYardimciIs('sgk-odeme', { tc, edevletSifre })
+    if (sonuc.ok) {
+      setGibHelperDurum('ok')
+      return
+    }
+    setGibHelperDurum(['kurulu-degil', 'erisim-engelli', 'servis-yanit-vermedi'].includes(sonuc.reason) ? sonuc.reason : 'kurulu-degil')
+  }
+
+  // Odeme yapildi: tahakkugu odendi olarak isaretle (yeni donemde otomatik sifirlanir)
+  const handleOdendiIsaretle = async () => {
+    if (!selectedTahakkuk?.statusKey) return
+    const bugun = new Date()
+    const tarih = `${bugun.getFullYear()}-${String(bugun.getMonth() + 1).padStart(2, '0')}-${String(bugun.getDate()).padStart(2, '0')}`
+    const patch = {
+      [`${selectedTahakkuk.statusKey}_odendi`]: true,
+      [`${selectedTahakkuk.statusKey}_odeme_tarihi`]: tarih
+    }
+    setBeyanDurumlari(prev => ({ ...prev, ...patch }))
+    await persistBeyanDurumlari(patch)
+    setShowModal(false)
   }
 
   if (loading) {
@@ -358,9 +479,9 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
               key={item.id + item.filingMonth} 
               onClick={() => item.hasTahakkuk && handleTahakkukClick(item)}
               className={`rounded-xl p-4 border transition-all ${
-                item.gecmi 
-                  ? 'bg-blue-900/10 border-blue-800/20 opacity-60' 
-                  : item.isTamamlandi
+                item.gecmi && !item.odendi
+                  ? 'bg-blue-900/10 border-blue-800/20 opacity-60'
+                  : item.isTamamlandi || item.odendi
                     ? 'bg-green-900/20 border-green-500/30'
                     : item.hasTahakkuk
                       ? 'bg-blue-800/30 border-blue-500/40 cursor-pointer hover:bg-blue-700/30 hover:border-blue-400/50'
@@ -442,6 +563,12 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
                     {item.isTamamlandi && (
                       <div className="text-xs text-green-500">Tahakkuk gonderildi</div>
                     )}
+                    {item.odendi && (
+                      <div className="text-xs text-green-400 font-semibold flex items-center gap-1">
+                        <CheckCircle className="w-3 h-3" />
+                        Odendi{item.odemeTarihi ? ` - ${item.odemeTarihi.split('-').reverse().join('.')}` : ''}
+                      </div>
+                    )}
                     {item.isHazirlaniyor && !item.isTamamlandi && (
                       <div className="text-xs text-blue-400">Hazirlaniyor</div>
                     )}
@@ -476,21 +603,23 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
       </div>
 
       {showModal && selectedTahakkuk && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-blue-900 rounded-2xl border border-blue-700/50 max-w-md w-full p-6">
-            <div className="flex items-center justify-between mb-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowModal(false) }}>
+          <div className="bg-blue-900 rounded-2xl border border-blue-700/50 max-w-md w-full max-h-[85vh] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between p-5 pb-3 border-b border-blue-700/40 shrink-0">
               <h3 className="text-lg font-semibold text-white">
                 {selectedTahakkuk.name} - Tahakkuk
               </h3>
-              <button 
+              <button
                 onClick={() => setShowModal(false)}
-                className="text-gray-400 hover:text-white"
+                title="Kapat"
+                className="text-gray-400 hover:text-white shrink-0"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            
-            <div className="space-y-4">
+
+            <div className="space-y-4 p-5 overflow-y-auto">
               <div className="bg-blue-800/30 rounded-xl p-4 border border-blue-700/30">
                 <div className="text-sm text-gray-400">Odeme Tutari</div>
                 <div className="text-2xl font-bold text-green-400">
@@ -565,6 +694,84 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
                     <Mail className="w-5 h-5" />
                     E-Posta ile Gonder
                   </button>
+
+                  {/* Odeme butonu: SGK icin e-Devlet (turkiye.gov.tr), diger vergiler icin GIB */}
+                  <button
+                    onClick={selectedTahakkuk.type === 'sgk' ? handleSgkOdeme : handleGibOdeme}
+                    className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-teal-500 to-teal-600 hover:from-teal-400 hover:to-teal-500 text-white py-3 rounded-xl font-semibold transition-colors"
+                  >
+                    <CreditCard className="w-5 h-5" />
+                    {selectedTahakkuk.type === 'sgk' ? 'SGK Primi Öde (e-Devlet)' : 'Dijital Vergi Dairesi&apos;nde Ode'}
+                  </button>
+
+                  {/* Odeme geri bildirimi: sade tutulur, sadece Ode + gerekirse kurulum uyari */}
+                  {showGibPanel && (
+                    <div className="space-y-2">
+                      {gibHelperDurum === 'ok' && (
+                        <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 text-xs text-green-300">
+                          {selectedTahakkuk?.type === 'sgk'
+                            ? 'e-Devlet giris ekrani acildi ve bilgiler dolduruldu. Guvenlik kodunu girip GIRIS\'e basin; sonrasinda uygulama acilip sorgu secimleri otomatik yapilir, Borc Sorgula\'ya basilir.'
+                            : 'GIB odeme sayfasi acildi ve form otomatik dolduruldu. Guvenlik kodunu girip SORGULA\'ya basin.'}
+                        </div>
+                      )}
+                          {gibHelperDurum === 'deniyor' && (
+                            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300">
+                              GIB odeme sayfasi hazirlaniyor...
+                            </div>
+                          )}
+                          {gibHelperDurum && !['ok', 'deniyor'].includes(gibHelperDurum) && (
+                            <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-3 text-xs text-orange-300 space-y-2">
+                              <p className="font-medium">
+                                {gibHelperDurum === 'erisim-engelli'
+                                  ? 'Yardimci programin surumu eski. Lutfen yeniden kurun.'
+                                  : gibHelperDurum === 'edevlet-sifre-yok'
+                                    ? 'Musteri kaydinda e-Devlet sifresi bulunamadi. Musteri profilinde "e-Devlet Sifresi" alanini doldurup kaydedin.'
+                                    : 'Yardimci program bilgisayarinizda kurulu degil.'}
+                              </p>
+                              {gibHelperDurum !== 'edevlet-sifre-yok' && (
+                                <>
+                                  <p className="leading-relaxed">
+                                    Odeme formunun otomatik doldurulmasi icin yardimci programi kurun. Kurulumdan sonra bu uyari bir daha cikmaz; &quot;Ode&quot; butonu odeme sayfasini dogrudan acar.
+                                  </p>
+                                  <a
+                                    href="/downloads/mubis-gib-yardimci.exe"
+                                    download
+                                    className="w-full flex items-center justify-center gap-2 bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 py-2 rounded-lg font-medium text-sm transition-colors"
+                                  >
+                                    <Download className="w-4 h-4" />
+                                    Yardimci Programi Kur (Windows)
+                                  </a>
+                                  <p className="text-[10px] text-gray-400 leading-relaxed">
+                                    Indirdikten sonra cift tiklayin; kurulum kendiliginden yapilir.
+                                  </p>
+                                </>
+                              )}
+                              <button
+                                onClick={handleGibManuelAc}
+                                className="text-[11px] text-blue-300 hover:text-blue-200 underline"
+                              >
+                                {selectedTahakkuk?.type === 'sgk' ? 'Yardimci program olmadan SGK odeme sayfasini ac' : 'Yardimci program olmadan GIB sayfasini ac'}
+                              </button>
+                            </div>
+                          )}
+                    </div>
+                  )}
+
+                  {/* Odeme sonrasi odendi isaretleme */}
+                  {selectedTahakkuk.odendi ? (
+                    <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 text-xs text-green-300 text-center">
+                      <CheckCircle className="w-4 h-4 inline mr-1 -mt-0.5" />
+                      Odendi olarak isaretlendi{selectedTahakkuk.odemeTarihi ? ` — ${selectedTahakkuk.odemeTarihi.split('-').reverse().join('.')}` : ''}
+                    </div>
+                  ) : (
+                    <button
+                      onClick={handleOdendiIsaretle}
+                      className="w-full flex items-center justify-center gap-2 border border-green-500/40 text-green-300 hover:bg-green-500/10 py-2.5 rounded-xl font-medium text-sm transition-colors"
+                    >
+                      <CheckCircle className="w-4 h-4" />
+                      Odemeyi Yaptim — Odendi Isaretle
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="text-center py-4 text-gray-400">

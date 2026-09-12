@@ -1,11 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Bot, Save, CheckCircle2, Clock, Calendar, FileText } from 'lucide-react'
+import { Bot, Save, Clock, Calendar, FileText } from 'lucide-react'
 import {
-  getClientPortalCredentials,
-  saveClientPortalCredentials,
-  getAutomationSettings
+  getAutomationSettings,
+  saveAutomationSettings
 } from '../services/automationService'
-import { encryptPortalValue } from '../utils/crypto'
 
 const DOC_TYPES = [
   { key: 'etebligat', label: 'e-Tebligat' },
@@ -22,10 +20,6 @@ const REPEAT_OPTIONS = [
 
 export default function PortalOtomasyonKarti({ client }) {
   const [enabled, setEnabled] = useState(false)
-  const [creds, setCreds] = useState({
-    dvs_u: '', dvs_p: '',
-    sgk_u: '', sgk_isyeri_kodu: '', sgk_sistem_s: '', sgk_isyeri_s: ''
-  })
   const [docTypes, setDocTypes] = useState(['etebligat'])
   const [scheduleTime, setScheduleTime] = useState('02:00')
   const [repeat, setRepeat] = useState('daily')
@@ -36,23 +30,13 @@ export default function PortalOtomasyonKarti({ client }) {
     if (!client?.id) return
     const load = async () => {
       try {
-        const [c, settings] = await Promise.all([
-          getClientPortalCredentials(client.id),
-          getAutomationSettings()
-        ])
-        setCreds({
-          dvs_u: c?.dvs?.u || client?.dvsUsername || '',
-          dvs_p: c?.dvs?.p || client?.dvsPassword || '',
-          sgk_u: c?.sgk?.u || '',
-          sgk_isyeri_kodu: c?.sgk?.isyeri_kodu || client?.sgkIsyeriKodu || '',
-          sgk_sistem_s: c?.sgk?.sistem_s || client?.sgkSistemSifre || '',
-          sgk_isyeri_s: c?.sgk?.isyeri_s || client?.sgkIsyeriSifre || ''
-        })
-        const meta = c?._meta || {}
-        setEnabled(meta.enabled || false)
-        setDocTypes(meta.doc_types || ['etebligat'])
-        setScheduleTime(meta.schedule_time || settings?.schedule_time || '02:00')
-        setRepeat(meta.repeat || settings?.repeat_type || 'daily')
+        const settings = await getAutomationSettings()
+        // Musteri bazli ayarlar localStorage / ayri bir kaynaktan okunabilir;
+        // su anlik global ayarlari kullaniyoruz.
+        setEnabled(settings?.enabled || false)
+        setDocTypes(settings?.doc_types || ['etebligat'])
+        setScheduleTime(settings?.schedule_time || '02:00')
+        setRepeat(settings?.repeat_type || 'daily')
       } catch (e) {
         console.error(e)
       }
@@ -63,25 +47,12 @@ export default function PortalOtomasyonKarti({ client }) {
   const handleSave = async () => {
     setSaving(true)
     try {
-      const payload = {
-        dvs: {
-          u: creds.dvs_u,
-          p: creds.dvs_p ? await encryptPortalValue(creds.dvs_p) : ''
-        },
-        sgk: {
-          u: creds.sgk_u,
-          isyeri_kodu: creds.sgk_isyeri_kodu,
-          sistem_s: creds.sgk_sistem_s ? await encryptPortalValue(creds.sgk_sistem_s) : '',
-          isyeri_s: creds.sgk_isyeri_s ? await encryptPortalValue(creds.sgk_isyeri_s) : ''
-        },
-        _meta: {
-          enabled,
-          doc_types: docTypes,
-          schedule_time: scheduleTime,
-          repeat
-        }
-      }
-      await saveClientPortalCredentials(client.id, payload)
+      await saveAutomationSettings({
+        enabled,
+        doc_types: docTypes,
+        schedule_time: scheduleTime,
+        repeat_type: repeat
+      })
       setMessage('Otomasyon ayarları kaydedildi.')
     } catch (e) {
       setMessage('Hata: ' + e.message)
@@ -112,118 +83,60 @@ export default function PortalOtomasyonKarti({ client }) {
         <span className="text-gray-400 text-xs">Vergi Dairesi ve SGK portallarından otomatik indirme</span>
       </div>
 
-      {enabled && (
-        <div className="space-y-5">
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/20">
-              <div className="text-white font-medium text-sm mb-3 flex items-center gap-2">
-                <span>🏛️</span> Dijital Vergi Dairesi
-              </div>
-              <div className="space-y-2">
-                <input
-                  type="text"
-                  value={creds.dvs_u}
-                  onChange={(e) => setCreds({ ...creds, dvs_u: e.target.value })}
-                  placeholder="Kullanıcı Adı / VKN"
-                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
-                />
-                <input
-                  type="password"
-                  value={creds.dvs_p}
-                  onChange={(e) => setCreds({ ...creds, dvs_p: e.target.value })}
-                  placeholder="Şifre"
-                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
-                />
-              </div>
-            </div>
-
-            <div className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/20">
-              <div className="text-white font-medium text-sm mb-3 flex items-center gap-2">
-                <span>🏥</span> SGK / e-Bildirge
-              </div>
-              <div className="space-y-2">
-                <input
-                  type="text"
-                  value={creds.sgk_u}
-                  onChange={(e) => setCreds({ ...creds, sgk_u: e.target.value })}
-                  placeholder="Kullanıcı Adı"
-                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
-                />
-                <input
-                  type="text"
-                  value={creds.sgk_isyeri_kodu}
-                  onChange={(e) => setCreds({ ...creds, sgk_isyeri_kodu: e.target.value })}
-                  placeholder="İşyeri Kodu"
-                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
-                />
-                <input
-                  type="password"
-                  value={creds.sgk_sistem_s}
-                  onChange={(e) => setCreds({ ...creds, sgk_sistem_s: e.target.value })}
-                  placeholder="Sistem Şifresi"
-                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
-                />
-                <input
-                  type="password"
-                  value={creds.sgk_isyeri_s}
-                  onChange={(e) => setCreds({ ...creds, sgk_isyeri_s: e.target.value })}
-                  placeholder="İşyeri Şifresi"
-                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-gray-400 text-sm mb-2">İndirilecek Belgeler</label>
-            <div className="flex flex-wrap gap-2">
-              {DOC_TYPES.map(t => (
-                <button
-                  key={t.key}
-                  onClick={() => toggleDoc(t.key)}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
-                    docTypes.includes(t.key)
-                      ? 'bg-blue-600/30 border-blue-500/60 text-white'
-                      : 'bg-blue-900/20 border-blue-700/30 text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <FileText className="w-3.5 h-3.5" /> {t.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-4">
+      <div className="space-y-5">
+        {enabled && (
+          <>
             <div>
-              <label className="block text-gray-400 text-sm mb-1">Çalışma Saati</label>
-              <div className="flex items-center gap-2 bg-blue-900/30 border border-blue-700/40 rounded-lg px-3 py-2">
-                <Clock className="w-4 h-4 text-gray-400" />
-                <input
-                  type="time"
-                  value={scheduleTime}
-                  onChange={(e) => setScheduleTime(e.target.value)}
-                  className="bg-transparent text-white text-sm focus:outline-none"
-                />
+              <label className="block text-gray-400 text-sm mb-2">İndirilecek Belgeler</label>
+              <div className="flex flex-wrap gap-2">
+                {DOC_TYPES.map(t => (
+                  <button
+                    key={t.key}
+                    onClick={() => toggleDoc(t.key)}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                      docTypes.includes(t.key)
+                        ? 'bg-blue-600/30 border-blue-500/60 text-white'
+                        : 'bg-blue-900/20 border-blue-700/30 text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5" /> {t.label}
+                  </button>
+                ))}
               </div>
             </div>
-            <div>
-              <label className="block text-gray-400 text-sm mb-1">Tekrar</label>
-              <div className="flex items-center gap-2 bg-blue-900/30 border border-blue-700/40 rounded-lg px-3 py-2">
-                <Calendar className="w-4 h-4 text-gray-400" />
-                <select
-                  value={repeat}
-                  onChange={(e) => setRepeat(e.target.value)}
-                  className="bg-transparent text-white text-sm focus:outline-none"
-                >
-                  {REPEAT_OPTIONS.map(o => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
+
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-gray-400 text-sm mb-1">Çalışma Saati</label>
+                <div className="flex items-center gap-2 bg-blue-900/30 border border-blue-700/40 rounded-lg px-3 py-2">
+                  <Clock className="w-4 h-4 text-gray-400" />
+                  <input
+                    type="time"
+                    value={scheduleTime}
+                    onChange={(e) => setScheduleTime(e.target.value)}
+                    className="bg-transparent text-white text-sm focus:outline-none"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-gray-400 text-sm mb-1">Tekrar</label>
+                <div className="flex items-center gap-2 bg-blue-900/30 border border-blue-700/40 rounded-lg px-3 py-2">
+                  <Calendar className="w-4 h-4 text-gray-400" />
+                  <select
+                    value={repeat}
+                    onChange={(e) => setRepeat(e.target.value)}
+                    className="bg-transparent text-white text-sm focus:outline-none"
+                  >
+                    {REPEAT_OPTIONS.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </div>
 
       {message && (
         <div className="mt-4 text-emerald-300 text-sm">{message}</div>

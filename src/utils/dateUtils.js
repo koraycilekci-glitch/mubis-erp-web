@@ -1,26 +1,106 @@
-// Türkiye resmi tatilleri (2026)
+// Türkiye resmi tatilleri — sabit günler + yıla göre değişen dini bayramlar (2025-2027)
+// Arife günleri yarım gün tatil olduğu için izin hesabına dahil edilmez
 export const RESMI_TATILLER = {
+  // ---- 2025 ----
+  '2025-01-01': 'Yılbaşı',
+  '2025-03-30': 'Ramazan Bayramı (1. Gün)',
+  '2025-03-31': 'Ramazan Bayramı (2. Gün)',
+  '2025-04-01': 'Ramazan Bayramı (3. Gün)',
+  '2025-04-23': 'Ulusal Egemenlik ve Çocuk Bayramı',
+  '2025-05-01': 'Emek ve Dayanışma Günü',
+  '2025-05-19': 'Atatürk\'ü Anma, Gençlik ve Spor Bayramı',
+  '2025-06-06': 'Kurban Bayramı (1. Gün)',
+  '2025-06-07': 'Kurban Bayramı (2. Gün)',
+  '2025-06-08': 'Kurban Bayramı (3. Gün)',
+  '2025-06-09': 'Kurban Bayramı (4. Gün)',
+  '2025-07-15': 'Demokrasi ve Milli Birlik Günü',
+  '2025-08-30': 'Zafer Bayramı',
+  '2025-10-29': 'Cumhuriyet Bayramı',
+  // ---- 2026 ----
   '2026-01-01': 'Yılbaşı',
+  '2026-03-20': 'Ramazan Bayramı (1. Gün)',
+  '2026-03-21': 'Ramazan Bayramı (2. Gün)',
+  '2026-03-22': 'Ramazan Bayramı (3. Gün)',
   '2026-04-23': 'Ulusal Egemenlik ve Çocuk Bayramı',
   '2026-05-01': 'Emek ve Dayanışma Günü',
   '2026-05-19': 'Atatürk\'ü Anma, Gençlik ve Spor Bayramı',
+  '2026-05-27': 'Kurban Bayramı (1. Gün)',
+  '2026-05-28': 'Kurban Bayramı (2. Gün)',
+  '2026-05-29': 'Kurban Bayramı (3. Gün)',
+  '2026-05-30': 'Kurban Bayramı (4. Gün)',
   '2026-07-15': 'Demokrasi ve Milli Birlik Günü',
   '2026-08-30': 'Zafer Bayramı',
   '2026-10-29': 'Cumhuriyet Bayramı',
-  // Ramazan ve Kurban Bayramı (2026 yaklaşık tarihler)
-  '2026-02-18': 'Ramazan Bayramı (1. Gün)',
-  '2026-02-19': 'Ramazan Bayramı (2. Gün)',
-  '2026-02-20': 'Ramazan Bayramı (3. Gün)',
-  '2026-04-26': 'Kurban Bayramı (1. Gün)',
-  '2026-04-27': 'Kurban Bayramı (2. Gün)',
-  '2026-04-28': 'Kurban Bayramı (3. Gün)',
-  '2026-04-29': 'Kurban Bayramı (4. Gün)',
+  // ---- 2027 ----
+  '2027-01-01': 'Yılbaşı',
+  '2027-03-10': 'Ramazan Bayramı (1. Gün)',
+  '2027-03-11': 'Ramazan Bayramı (2. Gün)',
+  '2027-03-12': 'Ramazan Bayramı (3. Gün)',
+  '2027-04-23': 'Ulusal Egemenlik ve Çocuk Bayramı',
+  '2027-05-01': 'Emek ve Dayanışma Günü',
+  '2027-05-16': 'Kurban Bayramı (1. Gün)',
+  '2027-05-17': 'Kurban Bayramı (2. Gün)',
+  '2027-05-18': 'Kurban Bayramı (3. Gün)',
+  '2027-05-19': 'Kurban Bayramı (4. Gün)',
+  '2027-07-15': 'Demokrasi ve Milli Birlik Günü',
+  '2027-08-30': 'Zafer Bayramı',
+  '2027-10-29': 'Cumhuriyet Bayramı'
 }
 
-// Hafta sonu mu kontrol et
+// Hafta tatili kontrolü (İş Kanunu'na göre yalnızca Pazar günü hafta tatilidir)
 export function isWeekend(date) {
-  const day = date.getDay()
-  return day === 0 || day === 6 // 0=Pazar, 6=Cumartesi
+  return date.getDay() === 0 // 0=Pazar; Cumartesi iş günü sayılır
+}
+
+// Vergi takvimi icin hafta sonu kontrolu (Cumartesi + Pazar)
+export function isVergiHaftaSonu(date) {
+  return date.getDay() === 0 || date.getDay() === 6
+}
+
+// İş günü mü kontrol et (hafta sonu + resmi tatil hariç)
+export function isBusinessDay(date) {
+  return !isWeekend(date) && !isResmiTatil(date)
+}
+
+// İzin başlangıç tarihi ve gün sayısına göre bitiş tarihi hesapla
+// Başlangıç günü dahil, hafta sonları ve resmi tatiller düşülür
+export function hesaplaIzinBitis(baslangic, gunSayisi) {
+  if (!baslangic || !gunSayisi || gunSayisi < 1) return ''
+  const start = new Date(baslangic)
+  if (Number.isNaN(start.getTime())) return ''
+
+  let kalan = Number(gunSayisi)
+  const current = new Date(start)
+
+  // Başlangıç günü iş günü değilse ilk iş gününe kaydır
+  while (!isBusinessDay(current)) {
+    current.setDate(current.getDate() + 1)
+  }
+  kalan -= 1 // Başlangıç günü sayıldı
+
+  while (kalan > 0) {
+    current.setDate(current.getDate() + 1)
+    if (isBusinessDay(current)) kalan -= 1
+  }
+
+  const y = current.getFullYear()
+  const m = String(current.getMonth() + 1).padStart(2, '0')
+  const d = String(current.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+// İzin bitiş tarihinden sonraki ilk iş gününü bul (işe dönüş tarihi)
+export function hesaplaIseDonus(bitis) {
+  if (!bitis) return ''
+  const next = new Date(bitis)
+  next.setDate(next.getDate() + 1)
+  while (!isBusinessDay(next)) {
+    next.setDate(next.getDate() + 1)
+  }
+  const y = next.getFullYear()
+  const m = String(next.getMonth() + 1).padStart(2, '0')
+  const d = String(next.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }
 
 // Resmi tatil mi kontrol et
@@ -32,23 +112,46 @@ export function isResmiTatil(date) {
   return RESMI_TATILLER[`${y}-${m}-${d}`] !== undefined
 }
 
-// Bir sonraki iş gününü bul
+// Bir sonraki iş gününü bul (izin/kidem hesaplarinda kullanilir, yalnizca Pazar)
 export function getNextWorkDay(date) {
   const nextDay = new Date(date)
   nextDay.setDate(nextDay.getDate() + 1)
-  
+
   while (isWeekend(nextDay) || isResmiTatil(nextDay)) {
     nextDay.setDate(nextDay.getDate() + 1)
   }
   return nextDay
 }
 
-// Beyan son tarihini hesapla (hafta sonu/tatil kontrolü ile)
+// Vergi takvimi icin bir sonraki is gununu bul (Cumartesi de hafta sonu sayilir)
+export function getNextVergiWorkDay(date) {
+  const nextDay = new Date(date)
+  nextDay.setDate(nextDay.getDate() + 1)
+  while (isVergiHaftaSonu(nextDay) || isResmiTatil(nextDay)) {
+    nextDay.setDate(nextDay.getDate() + 1)
+  }
+  return nextDay
+}
+
+// Ayin son is gununu hesapla (Cumartesi/Pazar ve resmi tatiller haric, geriye dogru erteleme)
+export function getLastBusinessDayOfMonth(year, month) {
+  const date = new Date(year, month + 1, 0) // ayin son gunu
+  while (isVergiHaftaSonu(date) || isResmiTatil(date)) {
+    date.setDate(date.getDate() - 1)
+  }
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+// Beyan son tarihini hesapla (hafta sonu/tatil kontrolu ile)
+// Vergi odemelerinde Cumartesi de hafta sonu sayilir ve takip eden ilk is gunune ertelenir.
 export function getBeyanDeadline(year, month, day) {
   const date = new Date(year, month, day)
-  
-  if (isWeekend(date) || isResmiTatil(date)) {
-    return getNextWorkDay(date)
+
+  while (isVergiHaftaSonu(date) || isResmiTatil(date)) {
+    date.setDate(date.getDate() + 1)
   }
   return date
 }
@@ -63,6 +166,22 @@ export function getFormattedBeyanDeadline(year, month, day) {
   return `${y}-${m}-${d}`
 }
 
+export function formatDateTR(value) {
+  if (!value) return '-'
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  const day = String(date.getDate()).padStart(2, '0')
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  return `${day}.${month}.${date.getFullYear()}`
+}
+
+export function formatDateTimeTR(value) {
+  if (!value) return '-'
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  return `${formatDateTR(date)} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
 // Beyan türüne göre son tarihi hesapla
 // mukellefTipi: 'individual' (gelir vergisi mükellefi) | 'company' (kurumlar vergisi mükellefi)
 export function getBeyanDeadlineByType(beyanType, year, month, mukellefTipi = 'company') {
@@ -70,7 +189,7 @@ export function getBeyanDeadlineByType(beyanType, year, month, mukellefTipi = 'c
     'kdv': { day: 28 },
     'kdv2': { day: 25 },
     'muhtasar': { day: 26 },
-    'sgk': { day: 26 },
+    'sgk': { lastBusinessDay: true }, // SGK prim odemeleri ayin son is gunu
   }
 
   const sahis = mukellefTipi === 'individual'
@@ -142,7 +261,7 @@ export function getBeyanDeadlineByType(beyanType, year, month, mukellefTipi = 'c
     }
     return null
   }
-  
+
   if (specialDeadlines[beyanType]) {
     const special = specialDeadlines[beyanType]
     if (special.months.includes(month)) {
@@ -150,11 +269,14 @@ export function getBeyanDeadlineByType(beyanType, year, month, mukellefTipi = 'c
     }
     return null
   }
-  
+
   if (deadlines[beyanType]) {
+    if (deadlines[beyanType].lastBusinessDay) {
+      return getLastBusinessDayOfMonth(year, month)
+    }
     return getFormattedBeyanDeadline(year, month, deadlines[beyanType].day)
   }
-  
+
   return null
 }
 
@@ -179,12 +301,12 @@ export function isBeyanActive(beyanType, month) {
 export function getBeyanAitAy(selectedMonth) {
   let aitMonth = selectedMonth - 1
   let aitYear = 0
-  
+
   if (aitMonth < 0) {
     aitMonth = 11
     aitYear = -1
   }
-  
+
   return { aitMonth, aitYear }
 }
 
@@ -259,7 +381,7 @@ export function getBeyanAciklama(beyanType) {
     'kdv': 'Her ayın 28\'i (bir önceki ay beyanı)',
     'kdv2': 'Her ayın 25\'i (bir önceki ay beyanı)',
     'muhtasar': 'Her ayın 26\'sı (bir önceki ay beyanı)',
-    'sgk': 'Her ayın 26\'sı (bir önceki ay beyanı)',
+    'sgk': 'Her ayın son iş günü (hafta sonu/tatilde geriye ertelenir)',
     'edefter': 'Aylık: ilgili ayı takip eden 3. ayın sonu · 3 Aylık: dönemi takip eden 3. ayın 10/14\'ü',
     'edefter_3aylik': 'Ocak-Mart 10/14 Haziran, Nisan-Haziran 10/14 Eylül, Temmuz-Eylül 10/14 Aralık, Ekim-Aralık 10 Nisan / 14 Mayıs',
     'gecici_vergi': 'Şubat 17, Mayıs 17, Ağustos 17, Kasım 17',

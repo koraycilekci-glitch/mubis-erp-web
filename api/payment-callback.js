@@ -1,6 +1,32 @@
 import { createClient } from '@supabase/supabase-js'
 import crypto from 'crypto'
 
+async function getClientName(supabase, clientId) {
+  try {
+    const { data } = await supabase.from('clients').select('name, company').eq('id', clientId).maybeSingle()
+    return data?.name || data?.company || `Musteri ${clientId}`
+  } catch (err) {
+    console.error('Musteri adi okuma hatasi:', err)
+    return `Musteri ${clientId}`
+  }
+}
+
+async function createAdminNotification(supabase, { title, message, route, metadata }) {
+  try {
+    await supabase.from('notifications').insert({
+      audience: 'admin',
+      type: 'odeme',
+      title,
+      message,
+      route,
+      metadata,
+      is_read: false
+    })
+  } catch (err) {
+    console.error('Admin bildirimi olusturma hatasi:', err)
+  }
+}
+
 export default async function handler(req, res) {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -46,9 +72,15 @@ export default async function handler(req, res) {
       }
 
       if (body.status === 'success' && supabaseUrl && supabaseServiceKey) {
-        // callback_id formatindan client_id parse et: MUBIS_{clientId}_{timestamp}
-        const parts = (body.callback_id || '').split('_')
-        const clientId = parts.length >= 2 ? parseInt(parts[1]) : null
+        // callback_id formatindan client_id parse et: MUBIS + 8 haneli clientId + timestamp
+        const cbId = body.callback_id || ''
+        let clientId = null
+        if (cbId.startsWith('MUBIS')) {
+          const numericPart = cbId.slice(5)
+          // İlk 8 karakter clientId (sifirlarla dolgu), gerisi timestamp
+          const paddedClientId = numericPart.slice(0, 8)
+          clientId = parseInt(paddedClientId) || null
+        }
         const tutar = (Number(body.total_amount) || 0) / 100 // Kurustan TL'ye
 
         if (clientId && tutar > 0) {
@@ -62,19 +94,31 @@ export default async function handler(req, res) {
             .single()
 
           if (!existing) {
-            const { error } = await supabase.from('payments').insert({
+            const { error, data: inserted } = await supabase.from('payments').insert({
               client_id: clientId,
               tutar: tutar,
               odeme_tipi: 'kredi_karti',
               odeme_kanali: 'paytr',
-              aciklama: `PayTR online odeme`,
+              aciklama: `PayTR online odeme (borctan dusulum bekliyor)`,
               donem: new Date().toISOString().slice(0, 7),
               gateway_ref: body.merchant_oid,
+              durum: 'alindi',
               odeme_tarihi: new Date().toISOString().split('T')[0]
-            })
+            }).select().single()
 
-            if (error) console.error('PayTR odeme kaydi hatasi:', error)
-            else console.log(`PayTR odeme kaydedildi: client=${clientId}, tutar=${tutar} TL`)
+            if (error) {
+              console.error('PayTR odeme kaydi hatasi:', error)
+            } else {
+              console.log(`PayTR odeme kaydedildi (alindi): client=${clientId}, tutar=${tutar} TL`)
+              // Admin bildirimi olustur
+              const clientName = await getClientName(supabase, clientId)
+              await createAdminNotification(supabase, {
+                title: 'Yeni Online Odeme Alindi',
+                message: `${clientName || clientId} nolu musteri PayTR ile ${tutar.toLocaleString('tr-TR')} TL odeme yapti. Musteri detay sayfasindan hangi borc kalemine dusulecegini secin.`,
+                route: `/admin/client/${clientId}`,
+                metadata: { paymentId: inserted?.id, clientId, tutar, gateway: 'paytr' }
+              })
+            }
           } else {
             console.log('PayTR tekrarlayan bildirim, zaten kayitli:', body.merchant_oid)
           }
@@ -95,19 +139,30 @@ export default async function handler(req, res) {
 
       if (isSuccess && clientId && tutar > 0 && supabaseUrl && supabaseServiceKey) {
         const supabase = createClient(supabaseUrl, supabaseServiceKey)
-        const { error } = await supabase.from('payments').insert({
+        const { error, data: inserted } = await supabase.from('payments').insert({
           client_id: parseInt(clientId),
           tutar: tutar,
           odeme_tipi: 'kredi_karti',
           odeme_kanali: 'odeal',
-          aciklama: `Odeal online odeme`,
+          aciklama: `Odeal online odeme (borctan dusulum bekliyor)`,
           donem: new Date().toISOString().slice(0, 7),
           gateway_ref: gatewayRef,
+          durum: 'alindi',
           odeme_tarihi: new Date().toISOString().split('T')[0]
-        })
+        }).select().single()
 
-        if (error) console.error('Odeal odeme kaydi hatasi:', error)
-        else console.log(`Odeal odeme kaydedildi: client=${clientId}, tutar=${tutar} TL`)
+        if (error) {
+          console.error('Odeal odeme kaydi hatasi:', error)
+        } else {
+          console.log(`Odeal odeme kaydedildi (alindi): client=${clientId}, tutar=${tutar} TL`)
+          const clientName = await getClientName(supabase, parseInt(clientId))
+          await createAdminNotification(supabase, {
+            title: 'Yeni Online Odeme Alindi',
+            message: `${clientName || clientId} nolu musteri Odeal ile ${tutar.toLocaleString('tr-TR')} TL odeme yapti. Musteri detay sayfasindan hangi borc kalemine dusulecegini secin.`,
+            route: `/admin/client/${clientId}`,
+            metadata: { paymentId: inserted?.id, clientId, tutar, gateway: 'odeal' }
+          })
+        }
       }
 
       // Kullaniciya sonuc sayfasi goster
@@ -118,6 +173,7 @@ export default async function handler(req, res) {
               <h1 style="color:#4ade80;font-size:48px">&#10004;</h1>
               <h2>Odemeniz Basariyla Alindi!</h2>
               <p style="color:#94a3b8">Tutar: ${tutar.toLocaleString('tr-TR')} TL</p>
+              <p style="color:#facc15;margin-top:10px">Odeme onaylandiktan sonra borcunuzdan dusulecektir.</p>
               <a href="https://mubiserp.com/portal" style="color:#facc15;margin-top:20px;display:inline-block">Portale Don</a>
             </div>
           </body></html>

@@ -18,6 +18,28 @@ export default async function handler(req, res) {
     auth: { autoRefreshToken: false, persistSession: false }
   })
 
+  // --- Cagiranin super_admin oldugunu dogrula ---
+  const authHeader = req.headers.authorization || ''
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+  if (!token) {
+    return res.status(401).json({ error: 'Oturum bilgisi bulunamadi' })
+  }
+
+  const { data: caller, error: callerErr } = await supabaseAdmin.auth.getUser(token)
+  if (callerErr || !caller?.user) {
+    return res.status(401).json({ error: 'Oturum dogrulanamadi' })
+  }
+
+  const { data: callerProfile } = await supabaseAdmin
+    .from('profiles')
+    .select('role')
+    .eq('id', caller.user.id)
+    .maybeSingle()
+
+  if (callerProfile?.role !== 'super_admin') {
+    return res.status(403).json({ error: 'Bu islem icin sistem yoneticisi yetkisi gerekir' })
+  }
+
   // Profil upsert: sema cache hatasi veren kolonu dusurerek tekrar dener
   async function upsertProfile(payload) {
     let current = { ...payload }
@@ -36,6 +58,30 @@ export default async function handler(req, res) {
 
   if (req.method === 'POST') {
     const { action } = req.body || {}
+
+    // --- Sifre sifirla (gecici sifre ver) ---
+    if (action === 'reset-password') {
+      const { userId, password } = req.body
+      if (!userId || !password) return res.status(400).json({ error: 'userId ve sifre zorunlu' })
+      if (String(password).length < 6) return res.status(400).json({ error: 'Sifre en az 6 karakter olmalidir' })
+
+      try {
+        const { error: aErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+          password,
+          email_confirm: true
+        })
+        if (aErr) throw aErr
+
+        await supabaseAdmin
+          .from('profiles')
+          .update({ temp_password: true })
+          .eq('id', userId)
+
+        return res.status(200).json({ success: true })
+      } catch (err) {
+        return res.status(500).json({ error: err.message || 'Sifre sifirlanamadi' })
+      }
+    }
 
     // --- Kullanici guncelle ---
     if (action === 'update') {

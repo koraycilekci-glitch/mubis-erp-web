@@ -29,7 +29,8 @@ export default async function handler(req, res) {
     const linkType = 'product'
     const lang = 'tr'
     const minCount = '1'
-    const callbackId = `MUBIS_${clientId || '0'}_${Date.now()}`
+    const clientIdNum = parseInt(clientId) || 0
+    const callbackId = `MUBIS${String(clientIdNum).padStart(8, '0')}${Date.now()}`
     const callbackLink = 'https://mubiserp.com/api/payment-callback'
 
     // Token hesaplama - PayTR dokumantasyonuna gore:

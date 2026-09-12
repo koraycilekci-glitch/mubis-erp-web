@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabase'
 import { getMyOfficeId } from './officeService'
 
 const DEFAULT_SETTINGS = {
+  whatsapp_channel: 'api', // 'api' | 'web'
   whatsapp_phone_number_id: '',
   whatsapp_access_token: '',
   whatsapp_template_name: 'beyanname_bildirim',
@@ -12,17 +13,19 @@ const DEFAULT_SETTINGS = {
   smtp_from: '',
   smtp_secure: 'false',
   ai_voice_gender: 'kadin',
+  payment_provider: 'paytr', // aktif odeme kurulusu: 'paytr' | 'odeal' | 'eft'
+  payment_providers_enabled: JSON.stringify(['paytr']), // anlasilan kuruluslar
   ai_voice_name: '',
   ai_voice_rate: '1.02',
   ai_voice_pitch: '1',
   client_document_permissions: JSON.stringify({
     beyanname: {
       kdv: true, kdv2: true, muhtasar: true, sgk: true, gecici_vergi: true,
-      kurumlar_vergi: true, gelir_vergi: true, edefter: true, muhtasar_3aylik: true
+      kurumlar_vergi: true, gelir_vergi: true, edefter: true, muhtasar_3aylik: true, esmm: true
     },
     tahakkuk: {
       kdv: true, kdv2: true, muhtasar: true, sgk: true, gecici_vergi: true,
-      kurumlar_vergi: true, gelir_vergi: true, edefter: true, muhtasar_3aylik: true
+      kurumlar_vergi: true, gelir_vergi: true, edefter: true, muhtasar_3aylik: true, esmm: true
     },
     mizan: true,
     sigorta_tahakkuk: true,

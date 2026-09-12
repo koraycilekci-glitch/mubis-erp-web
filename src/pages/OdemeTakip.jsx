@@ -1,11 +1,61 @@
 import { useState, useEffect } from 'react'
 import { useClients } from '../hooks/useClients'
-import { getAllAccountingFees, getAllPayments, hesaplaBorcOzeti } from '../services/paymentService'
-import { 
-  DollarSign, Users, TrendingUp, TrendingDown, Search,
-  FileSpreadsheet, Filter, CheckCircle, AlertTriangle, Clock, X
+import { getAllAccountingFees, getAllPayments, addPayment, deletePayment, hesaplaBorcOzeti, getActivePaymentProvider, getBankInfo, buildBorcMesaji } from '../services/paymentService'
+import {
+  DollarSign, Users, Search, FileSpreadsheet, FileText,
+  CheckCircle, AlertTriangle, Clock, X, CreditCard, Copy, Mail, MessageCircle, Minus, Plus, Trash2
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
+import { parseTurkishNumber, formatTurkishInput } from '../utils/numberFormat'
+import { sendEmail, sendShareDocumentsViaWhatsApp, logWhatsAppWebSend, getWhatsAppChannel, openWhatsAppWeb } from '../services/whatsappService'
+import { getSettings } from '../services/settingsService'
+import { sendBulkDebtNotifications, buildDebtPayload } from '../services/debtNotificationService'
+
+const AYLER = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
+
+// Uzun isim/unvanlari 25 karakterde kisalt
+const kisaAd = (ad) => {
+  const s = (ad || '').trim()
+  return s.length > 25 ? s.slice(0, 24).trimEnd() + '…' : s
+}
+
+// PDF icin Turkce karakter destekli DejaVuSans fontu (bir kez yuklenir, cache'lenir)
+let _trFont // undefined: denenmedi, null: basarisiz, { base64 }: hazir
+async function loadTurkishFont() {
+  if (_trFont !== undefined) return _trFont
+  try {
+    const res = await fetch('https://unpkg.com/dejavu-fonts-ttf@2.37.3/ttf/DejaVuSans.ttf')
+    if (!res.ok) throw new Error('font indirilemedi')
+    const bytes = new Uint8Array(await res.arrayBuffer())
+    let binary = ''
+    const chunk = 0x8000
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk))
+    }
+    _trFont = { base64: btoa(binary) }
+  } catch (err) {
+    console.warn('PDF font yuklenemedi, ASCII yedegi kullanilacak:', err.message)
+    _trFont = null
+  }
+  return _trFont
+}
+
+// Font yuklenemezse Turkce karakterleri ASCII'ye cevir
+const trAscii = (s) => String(s ?? '')
+  .replace(/İ/g, 'I').replace(/ı/g, 'i')
+  .replace(/Ş/g, 'S').replace(/ş/g, 's')
+  .replace(/Ğ/g, 'G').replace(/ğ/g, 'g')
+  .replace(/Ü/g, 'U').replace(/ü/g, 'u')
+  .replace(/Ö/g, 'O').replace(/ö/g, 'o')
+  .replace(/Ç/g, 'C').replace(/ç/g, 'c')
+
+const ODEME_TURLERI = [
+  { value: 'nakit', label: 'Nakit', renk: 'bg-green-500/20 border-green-500/50 text-green-400' },
+  { value: 'eft', label: 'EFT / Havale', renk: 'bg-blue-500/20 border-blue-500/50 text-blue-400' },
+  { value: 'kredi_karti', label: 'Kredi Kartı', renk: 'bg-purple-500/20 border-purple-500/50 text-purple-400' }
+]
 
 export default function OdemeTakip() {
   const { clients } = useClients()
@@ -13,10 +63,37 @@ export default function OdemeTakip() {
   const [payments, setPayments] = useState([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
-  const [filter, setFilter] = useState('all') // all, borcu_var, borcu_yok
-  const [selectedClient, setSelectedClient] = useState(null)
+  const [filter, setFilter] = useState('all') // all | borcu_var | borcu_yok
+  const [yil, setYil] = useState(new Date().getFullYear())
+  const [buAyVurgu, setBuAyVurgu] = useState(false)
 
-  useEffect(() => { loadData() }, [])
+  // Toplu borc bildirimi (WhatsApp / Mail)
+  const [selectedIds, setSelectedIds] = useState([])
+  const [topluGonderiyor, setTopluGonderiyor] = useState(false)
+  // Sirali WhatsApp gonderim kuyrugu
+  const [waQueue, setWaQueue] = useState(null) // { liste: [{clientId, clientName, phone, message, opened}], index }
+
+  // Ay hucrelerindeki Odeme Kaydi modal
+  const [odemeModal, setOdemeModal] = useState(null) // { clientId, name, ay, aylikUcret }
+  const [odemeForm, setOdemeForm] = useState({ tutar: '', odeme_tipi: 'nakit', odeme_tarihi: new Date().toISOString().split('T')[0], aciklama: '' })
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState('')
+
+  // Online odeme linki (musteri bazli)
+  const [selectedClient, setSelectedClient] = useState(null)
+  const [showLinkModal, setShowLinkModal] = useState(false)
+  const [linkAmount, setLinkAmount] = useState('')
+  const [linkProvider, setLinkProvider] = useState('paytr')
+  const [linkLoading, setLinkLoading] = useState(false)
+  const [linkUrl, setLinkUrl] = useState('')
+  const [linkError, setLinkError] = useState('')
+  const [linkMessage, setLinkMessage] = useState('')
+  const [linkSending, setLinkSending] = useState('') // 'mail' | 'whatsapp' | ''
+
+  useEffect(() => {
+    loadData()
+    getActivePaymentProvider().then(setLinkProvider).catch(() => setLinkProvider('paytr'))
+  }, [])
 
   const loadData = async () => {
     try {
@@ -31,251 +108,925 @@ export default function OdemeTakip() {
     }
   }
 
-  // Her musteri icin borc ozeti hesapla
-  const musteriOzetleri = clients.map(c => {
-    const fee = fees.find(f => f.client_id === c.id)
-    const clientPayments = payments.filter(p => p.client_id === c.id)
-    const ozet = hesaplaBorcOzeti(fee, clientPayments)
-    return { ...c, fee, payments: clientPayments, ozet }
-  }).filter(c => {
-    if (searchTerm) {
-      const s = searchTerm.toLowerCase()
-      const name = (c.name || c.company || '').toLowerCase()
-      if (!name.includes(s)) return false
-    }
-    if (filter === 'borcu_var') return c.ozet.kalanBorc > 0
-    if (filter === 'borcu_yok') return c.ozet.kalanBorc <= 0
-    return true
-  }).sort((a, b) => b.ozet.kalanBorc - a.ozet.kalanBorc)
-
-  // Toplamlar
-  const toplamlar = musteriOzetleri.reduce((acc, c) => ({
-    toplamBorc: acc.toplamBorc + c.ozet.toplamBorc,
-    toplamOdeme: acc.toplamOdeme + c.ozet.toplamOdeme,
-    kalanBorc: acc.kalanBorc + c.ozet.kalanBorc,
-    aylikGelir: acc.aylikGelir + c.ozet.aylikUcret
-  }), { toplamBorc: 0, toplamOdeme: 0, kalanBorc: 0, aylikGelir: 0 })
-
-  const borcuOlanSayisi = clients.filter(c => {
-    const fee = fees.find(f => f.client_id === c.id)
-    const cp = payments.filter(p => p.client_id === c.id)
-    return hesaplaBorcOzeti(fee, cp).kalanBorc > 0
-  }).length
+  const simdi = new Date()
+  const nowY = simdi.getFullYear()
+  const nowM = simdi.getMonth() + 1
 
   const fmt = (n) => Number(n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 })
 
-  const exportExcel = () => {
-    const rows = musteriOzetleri.map((c, i) => ({
-      '#': i + 1,
-      'Musteri': c.name || c.company || '-',
-      'Aylik Ucret': c.ozet.aylikUcret,
-      'Onceki Donem': c.ozet.oncekiDonem,
-      'Defter Tasdik': c.ozet.defterTasdik,
-      'Toplam Borc': c.ozet.toplamBorc,
-      'Toplam Odeme': c.ozet.toplamOdeme,
-      'Kalan Borc': c.ozet.kalanBorc,
-      'Son Odeme': c.ozet.sonOdeme ? new Date(c.ozet.sonOdeme).toLocaleDateString('tr-TR') : '-'
-    }))
-    rows.push({})
-    rows.push({ '#': '', 'Musteri': 'TOPLAM', 'Toplam Borc': toplamlar.toplamBorc, 'Toplam Odeme': toplamlar.toplamOdeme, 'Kalan Borc': toplamlar.kalanBorc })
-    const ws = XLSX.utils.json_to_sheet(rows)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Odeme Takip')
-    XLSX.writeFile(wb, `odeme_takip_${new Date().toISOString().split('T')[0]}.xlsx`)
+  // Her musteri icin matris satiri
+  const tumSatirlar = clients.map(c => {
+    const fee = fees.find(f => f.client_id === c.id) || null
+    const clientPayments = payments.filter(p => p.client_id === c.id)
+    const aylikUcret = Number(fee?.aylik_ucret) || 0
+    const defterTasdik = Number(fee?.defter_tasdik_ucreti) || 0
+    const oncekiDonem = Number(fee?.onceki_donem_borc) || 0
+
+    // Tahsil edilen: her borc kalemi kendi tutariyla sinirli (cift/eski kayitlar fazla sayilmaz)
+    const tahsilEden = (d) => clientPayments
+      .filter(p => p.donem === d && p.durum !== 'reddedildi' &&
+        (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel'))
+      .reduce((s, p) => s + (Number(p.tutar) || 0), 0)
+
+    // Faturalanan ay sayisi: baslangictan (veya ilk odemenin yapildigi aydan) bugune
+    const odenenAyListesi = Array.from({ length: 12 }, (_, i) => i + 1)
+      .filter(m => tahsilEden(`${yil}-${String(m).padStart(2, '0')}`) > 0)
+    const faturalananAy = (() => {
+      if (yil > nowY) return 0
+      const sonAy = yil === nowY ? nowM : 12
+      let basA = 1
+      if (fee) {
+        const basY = Number(fee.baslangic_yil)
+        if (basY && yil < basY) return 0
+        if (basY === yil) basA = Number(fee.baslangic_ay) || 1
+      }
+      if (odenenAyListesi.length > 0) basA = Math.min(basA, Math.min(...odenenAyListesi))
+      return Math.max(0, sonAy - basA + 1)
+    })()
+
+    const toplamBorc = aylikUcret * faturalananAy + defterTasdik + oncekiDonem
+
+    const odenen =
+      Math.min(tahsilEden('Onceki Donem'), oncekiDonem) +
+      Math.min(tahsilEden('Defter Tasdik'), defterTasdik) +
+      odenenAyListesi
+        .reduce((s, m) => s + Math.min(tahsilEden(`${yil}-${String(m).padStart(2, '0')}`), aylikUcret), 0)
+
+    return { ...c, fee, clientPayments, aylikUcret, defterTasdik, oncekiDonem, faturalananAy, toplamBorc, odenen, kalan: toplamBorc - odenen }
+  })
+
+  const rows = tumSatirlar
+    .filter(c => {
+      if (searchTerm) {
+        const s = searchTerm.toLowerCase()
+        const name = (c.name || c.company || '').toLowerCase()
+        if (!name.includes(s)) return false
+      }
+      if (filter === 'borcu_var') return c.kalan > 0
+      if (filter === 'borcu_yok') return c.kalan <= 0
+      return true
+    })
+    .sort((a, b) => (a.name || a.company || '').localeCompare(b.name || b.company || '', 'tr'))
+
+  // Ayin odeme durumu (manuel kayitlar ve alinan online odemeler = tahsil edildi)
+  const monthStatus = (row, m) => {
+    const key = `${yil}-${String(m).padStart(2, '0')}`
+    const odedi = row.clientPayments.some(p => p.donem === key &&
+      (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel'))
+    if (odedi) return 'odendi'
+    const bekliyor = row.clientPayments.some(p => p.donem === key && p.durum === 'bekliyor')
+    if (bekliyor) return 'bekliyor'
+    if (yil > nowY) return 'yok'
+    if (row.aylikUcret > 0) {
+      if (yil === nowY && m === nowM) return 'bekliyor'
+      if (yil < nowY || m < nowM) return 'geciken'
+    }
+    return 'yok'
   }
 
+  // Defter Tasdik / Onceki Donem odeme durumu
+  const kalemDurum = (row, kalemAd) => {
+    const kayit = row.clientPayments.filter(p => p.donem === kalemAd && p.durum !== 'reddedildi')
+    if (kayit.some(p => p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel')) return 'odendi'
+    if (kayit.length > 0) return 'bekliyor'
+    return 'yok'
+  }
+
+  // Ozet kartlari (yillik)
+  const yillikTahsilat = tumSatirlar.reduce((s, r) => s + r.toplamBorc, 0)
+  const odenenToplam = tumSatirlar.reduce((s, r) => s + r.odenen, 0)
+  const gecikenToplam = tumSatirlar.reduce((s, r) => {
+    if (r.aylikUcret <= 0 || yil > nowY) return s
+    const sonAy = yil < nowY ? 12 : nowM - 1
+    let odenmemisAy = 0
+    for (let m = 1; m <= sonAy; m++) {
+      if (monthStatus(r, m) === 'geciken') odenmemisAy++
+    }
+    return s + odenmemisAy * r.aylikUcret
+  }, 0)
+  const bekleyenToplam = Math.max(0, yillikTahsilat - odenenToplam - gecikenToplam)
+  const yuzde = (bolen) => yillikTahsilat > 0 ? `${((bolen / yillikTahsilat) * 100).toFixed(1).replace('.', ',')}` : '0,0'
+
+  // Aylik tahsilat toplamlari (donem bazli, tahsil edilen odemeler)
+  const aylikTahsilatlar = AYLER.map((_, mi) => {
+    const key = `${yil}-${String(mi + 1).padStart(2, '0')}`
+    return payments
+      .filter(p => p.donem === key && (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel'))
+      .reduce((s, p) => s + (Number(p.tutar) || 0), 0)
+  })
+  const aylikTahsilatToplam = aylikTahsilatlar.reduce((s, n) => s + n, 0)
+
+  // ============ ODEME KAYDI MODAL ============
+  // kalem: 1-12 (ay) veya 'Onceki Donem' / 'Defter Tasdik'
+  const openOdemeModal = (row, kalem) => {
+    const varsayilanTutar = kalem === 'Onceki Donem' ? row.oncekiDonem
+      : kalem === 'Defter Tasdik' ? row.defterTasdik
+      : row.aylikUcret
+    setOdemeForm({
+      tutar: varsayilanTutar > 0 ? formatTurkishInput(varsayilanTutar.toFixed(2)) : '',
+      odeme_tipi: 'nakit',
+      odeme_tarihi: new Date().toISOString().split('T')[0],
+      aciklama: ''
+    })
+    const donemKey = typeof kalem === 'number' ? `${yil}-${String(kalem).padStart(2, '0')}` : kalem
+    const mevcut = row.clientPayments.filter(p => p.donem === donemKey && p.durum !== 'reddedildi')
+    setOdemeModal({ clientId: row.id, name: row.name || row.company || 'Musteri', kalem, varsayilanTutar, mevcut })
+    setFormError('')
+  }
+
+  // Yanlis isaretlenen odemeyi sil
+  const handleSilPayment = async (paymentId) => {
+    if (!confirm('Bu ödeme kaydını silmek istediğinizden emin misiniz?')) return
+    try {
+      await deletePayment(paymentId)
+      const p = await getAllPayments()
+      setPayments(p)
+      setOdemeModal(m => {
+        if (!m) return m
+        const donemKey = typeof m.kalem === 'number' ? `${yil}-${String(m.kalem).padStart(2, '0')}` : m.kalem
+        return { ...m, mevcut: p.filter(x => x.client_id === m.clientId && x.donem === donemKey && x.durum !== 'reddedildi') }
+      })
+    } catch (err) {
+      alert('Ödeme silinemedi: ' + (err.message || 'Bilinmeyen hata'))
+    }
+  }
+
+  const kalemBaslik = (kalem) => typeof kalem === 'number' ? `${AYLER[kalem - 1]} ${yil}` : kalem
+  const kalemEtiket = (kalem) => kalem === 'Onceki Donem' ? 'Önceki Dönem Borcu' : kalem === 'Defter Tasdik' ? 'Defter Tasdik' : 'Aylık Ücret'
+
+  const saveOdeme = async (event) => {
+    event.preventDefault()
+    if (!odemeModal) return
+    const tutar = parseTurkishNumber(odemeForm.tutar)
+    if (!tutar || tutar <= 0) {
+      setFormError('Geçerli bir tutar girin. Örn: 8.000,00')
+      return
+    }
+    setSaving(true)
+    setFormError('')
+    try {
+      const kalem = odemeModal.kalem
+      const donem = typeof kalem === 'number' ? `${yil}-${String(kalem).padStart(2, '0')}` : kalem
+      const aciklamaDefault = typeof kalem === 'number' ? `${AYLER[kalem - 1]} ${yil} Muhasebe Ucreti` : `${kalem} Odemesi`
+      await addPayment({
+        client_id: odemeModal.clientId,
+        tutar,
+        odeme_tipi: odemeForm.odeme_tipi,
+        odeme_kanali: 'manuel',
+        durum: 'onaylandi',
+        aciklama: odemeForm.aciklama || aciklamaDefault,
+        donem,
+        odeme_tarihi: odemeForm.odeme_tarihi || new Date().toISOString().split('T')[0]
+      })
+      setOdemeModal(null)
+      const p = await getAllPayments()
+      setPayments(p)
+    } catch (err) {
+      setFormError(err?.message || 'Ödeme kaydedilemedi.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // ============ ONLINE ODEME LINKI ============
+  const openLinkForm = async (row) => {
+    setSelectedClient(row)
+    const ozet = hesaplaBorcOzeti(row.fee, row.clientPayments)
+    const tutar = ozet.kalanBorc > 0 ? Math.round(ozet.kalanBorc) : 0
+    setLinkAmount(tutar > 0 ? String(tutar) : '')
+    setLinkUrl('')
+    setLinkError('')
+    let bankInfo = null
+    try { bankInfo = await getBankInfo() } catch { /* banka satiri atlanir */ }
+    const mesaj = buildBorcMesaji({
+      clientName: row?.name || row?.company || '',
+      fee: row?.fee,
+      ozet,
+      bankInfo,
+      linkUrl: ''
+    })
+    setLinkMessage(`${mesaj}\nKredi Kartı ile ödeme yapmak için linke tıklayın:`)
+    setShowLinkModal(true)
+  }
+
+  const sendLinkViaEmail = async () => {
+    if (!linkUrl) return
+    if (!selectedClient?.email) {
+      alert('Musterinin e-posta adresi kayitli degil. Musteri kartindan e-posta girin.')
+      return
+    }
+    setLinkSending('mail')
+    try {
+      const fullMessage = `${linkMessage.trim()}\n${linkUrl}\n\nSaygilarimizla,`
+      await sendEmail({
+        toEmail: selectedClient.email,
+        toName: selectedClient.name || selectedClient.company || '',
+        subject: 'Online Odeme Linki - Muhasebe Ucreti',
+        message: fullMessage,
+        clientId: selectedClient.id
+      })
+      alert('Odeme linki e-posta ile gonderildi.')
+    } catch (err) {
+      alert('Mail gonderilemedi: ' + (err.message || 'Bilinmeyen hata'))
+    } finally {
+      setLinkSending('')
+    }
+  }
+
+  const sendLinkViaWhatsApp = async () => {
+    if (!linkUrl) return
+    const phone = selectedClient?.phone || selectedClient?.telefon || ''
+    if (!phone) {
+      alert('Musterinin telefon numarasi kayitli degil. Musteri kartindan telefon girin.')
+      return
+    }
+    setLinkSending('whatsapp')
+    try {
+      const fullMessage = `${linkMessage.trim()}\n${linkUrl}\n\nSaygilarimizla, MUBiS ERP`
+      const settings = await getSettings().catch(() => null)
+      const channel = getWhatsAppChannel(settings)
+      if (channel === 'web') {
+        openWhatsAppWeb({ phone, message: fullMessage })
+        await logWhatsAppWebSend({ clientId: selectedClient.id, target: phone, status: 'pending' })
+      } else {
+        await sendShareDocumentsViaWhatsApp({ phone, message: fullMessage, settings })
+      }
+      alert('Odeme linki WhatsApp ile gonderildi.')
+    } catch (err) {
+      alert('WhatsApp gonderilemedi: ' + (err.message || 'Bilinmeyen hata'))
+    } finally {
+      setLinkSending('')
+    }
+  }
+
+  const createPaymentLink = async (event) => {
+    event.preventDefault()
+    if (!selectedClient?.id) return
+    const tutar = parseTurkishNumber(linkAmount)
+    if (!tutar || tutar <= 0) {
+      setLinkError('Gecerli bir tutar girin. Orn: 5.000,00')
+      return
+    }
+    if (linkProvider === 'eft') {
+      setLinkError('Aktif odeme saglayicisi EFT/Havale olarak secilmis. Ayarlar > Odeme Ayarlari bolumunden PayTR veya Odeal secin.')
+      return
+    }
+    setLinkLoading(true)
+    setLinkError('')
+    try {
+      const endpoint = linkProvider === 'odeal' ? '/api/odeal-payment' : '/api/paytr-payment'
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: tutar,
+          clientId: selectedClient.id,
+          customerName: selectedClient.name || selectedClient.company || '',
+          customerEmail: selectedClient.email || '',
+          description: 'Muhasebe Ucreti Odemesi'
+        })
+      })
+      const data = await res.json()
+      if (data.success && data.paymentUrl) {
+        setLinkUrl(data.paymentUrl)
+        navigator.clipboard.writeText(data.paymentUrl).catch(() => {})
+      } else {
+        setLinkError(data.error || 'Link olusturulamadi')
+      }
+    } catch (err) {
+      setLinkError('Hata: ' + (err.message || 'Bilinmeyen hata'))
+    } finally {
+      setLinkLoading(false)
+    }
+  }
+
+  // ============ EXCEL AKTAR ============
+  const exportExcel = () => {
+    const durumText = { odendi: 'Ödendi', bekliyor: 'Bekliyor', geciken: 'Geciken', yok: '-' }
+    const aoa = [['#', 'Adı Soyadı', 'Aylık Ücret', 'Defter Tasdik', 'Önceki Dönem', 'Toplam Borç', ...AYLER, 'Ödenen', 'Kalan']]
+    rows.forEach((r, i) => {
+      aoa.push([
+        i + 1,
+        r.name || r.company || '-',
+        r.aylikUcret,
+        r.defterTasdik,
+        r.oncekiDonem,
+        r.toplamBorc,
+        ...AYLER.map((_, m) => durumText[monthStatus(r, m + 1)] || '-'),
+        r.odenen,
+        r.kalan
+      ])
+    })
+    aoa.push(['', 'Aylık Tahsilat', '', '', '', '', ...aylikTahsilatlar, aylikTahsilatToplam, ''])
+    aoa.push([])
+    aoa.push(['', 'GENEL TOPLAM', tumSatirlar.reduce((s, r) => s + r.aylikUcret, 0), tumSatirlar.reduce((s, r) => s + r.defterTasdik, 0), tumSatirlar.reduce((s, r) => s + r.oncekiDonem, 0), yillikTahsilat, ...AYLER.map(() => ''), odenenToplam, yillikTahsilat - odenenToplam])
+    const ws = XLSX.utils.aoa_to_sheet(aoa)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Odeme Takip')
+    XLSX.writeFile(wb, `muhasebe_hizmet_bedeli_${yil}.xlsx`)
+  }
+
+  // ============ PDF AKTAR ============
+  const exportPDF = async () => {
+    const durumText = { odendi: 'Ödendi', bekliyor: 'Bekliyor', geciken: 'Geciken', yok: '-' }
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
+
+    // Turkce karakter destekli font (yuklenemezse helvetica + ASCII yedegi)
+    const font = await loadTurkishFont()
+    const fontName = font ? 'DejaVuSans' : 'helvetica'
+    if (font) {
+      doc.addFileToVFS('DejaVuSans.ttf', font.base64)
+      doc.addFont('DejaVuSans.ttf', 'DejaVuSans', 'normal')
+    }
+    const t = (v) => (font || typeof v !== 'string') ? v : trAscii(v)
+
+    doc.setFont(fontName)
+    doc.setFontSize(14)
+    doc.setTextColor(30, 58, 138)
+    doc.text(t(`Muhasebe Hizmet Bedeli Takibi - ${yil}`), 40, 32)
+    doc.setFontSize(8)
+    doc.setTextColor(100)
+    doc.text(t(`Rapor Tarihi: ${new Date().toLocaleDateString('tr-TR')}`), 40, 46)
+
+    const head = [t(['#', 'Adı Soyadı', 'Aylık Ücret', 'Defter Tasdik', 'Önceki Dönem', 'Toplam Borç', ...AYLER, 'Ödenen', 'Kalan'])]
+    const body = rows.map((r, i) => [
+      i + 1,
+      kisaAd(r.name || r.company || '-'),
+      r.aylikUcret > 0 ? fmt(r.aylikUcret) : '-',
+      r.defterTasdik > 0 ? fmt(r.defterTasdik) : '-',
+      r.oncekiDonem > 0 ? fmt(r.oncekiDonem) : '-',
+      fmt(r.toplamBorc),
+      ...AYLER.map((_, mi) => durumText[monthStatus(r, mi + 1)] || '-'),
+      r.odenen > 0 ? fmt(r.odenen) : '-',
+      r.kalan !== 0 ? fmt(r.kalan) : '-'
+    ]).map(row => row.map(t))
+
+    const foot = [
+      ['', 'Aylık Tahsilat', '', '', '', '', ...aylikTahsilatlar.map(x => x > 0 ? fmt(x) : '-'), fmt(aylikTahsilatToplam), ''].map(t),
+      ['', 'GENEL TOPLAM',
+        fmt(tumSatirlar.reduce((s, r) => s + r.aylikUcret, 0)),
+        fmt(tumSatirlar.reduce((s, r) => s + r.defterTasdik, 0)),
+        fmt(tumSatirlar.reduce((s, r) => s + r.oncekiDonem, 0)),
+        fmt(yillikTahsilat),
+        ...AYLER.map(() => ''),
+        fmt(odenenToplam),
+        fmt(yillikTahsilat - odenenToplam)
+      ].map(t)
+    ]
+
+    autoTable(doc, {
+      head,
+      body,
+      foot,
+      startY: 58,
+      styles: { font: fontName, fontSize: 6.5, cellPadding: 2 },
+      headStyles: { font: fontName, fillColor: [30, 58, 138], textColor: 255, fontSize: 6.5 },
+      footStyles: { font: fontName, fillColor: [30, 58, 95], textColor: 255, fontStyle: 'normal', fontSize: 6.5 },
+      columnStyles: {
+        0: { cellWidth: 18, halign: 'right' },
+        1: { cellWidth: 120 },
+        ...Array.from({ length: 12 }, (_, i) => ({ [i + 6]: { cellWidth: 30, halign: 'center' } })).reduce((a, b) => ({ ...a, ...b }), {}),
+        18: { halign: 'right' },
+        19: { halign: 'right', fontStyle: 'normal' }
+      },
+      didParseCell: (data) => {
+        // Geciken ay hucrelerini kirmizi vurgula
+        if (data.section === 'body' && data.column.index >= 6 && data.column.index <= 17) {
+          const r = rows[data.row.index]
+          if (r) {
+            const durum = monthStatus(r, data.column.index - 5)
+            if (durum === 'geciken') data.cell.styles.textColor = [220, 38, 38]
+            else if (durum === 'odendi') data.cell.styles.textColor = [22, 163, 74]
+            else if (durum === 'bekliyor') data.cell.styles.textColor = [202, 138, 4]
+          }
+        }
+      }
+    })
+
+    doc.save(`muhasebe_hizmet_bedeli_${yil}.pdf`)
+  }
+
+  const hucreStil = (durum) => {
+    switch (durum) {
+      case 'odendi': return 'text-green-400'
+      case 'bekliyor': return 'text-yellow-400'
+      case 'geciken': return 'text-red-400'
+      default: return 'text-gray-600'
+    }
+  }
+
+  // ============ TOPLU BORC BILDIRIMI ============
+  const toggleSecim = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+
+  const tumunuSec = () => setSelectedIds(selectedIds.length === rows.length ? [] : rows.map(r => r.id))
+
+  const handleTopluGonder = async (channel) => {
+    if (selectedIds.length === 0) return
+    if (channel === 'whatsapp') {
+      // Sirali gonderim: her mesaj tek tek yazilir, siz gonderdikce siradakine gecilir
+      if (!confirm(`${selectedIds.length} müşteri için sıralı WhatsApp gönderimi başlatılsın mı?\n\nHer müşterinin mesajı tek tek açılacak; gönderdikçe "Sıradaki" ile devam edeceksiniz.\nBorcu olmayan müşteriler atlanır.`)) return
+      setTopluGonderiyor(true)
+      try {
+        const liste = []
+        for (const cid of selectedIds) {
+          const p = await buildDebtPayload(cid)
+          if (p) liste.push({ ...p, opened: false })
+        }
+        if (liste.length === 0) {
+          alert('Seçilen müşterilerde borç bulunamadı veya ücret kaydı yok.')
+          return
+        }
+        setWaQueue({ liste, index: 0 })
+        setSelectedIds([])
+      } catch (err) {
+        alert('Hazırlık hatası: ' + (err.message || 'Bilinmeyen hata'))
+      } finally {
+        setTopluGonderiyor(false)
+      }
+      return
+    }
+    if (!confirm(`${selectedIds.length} müşteriye borç bildirimi (E-posta) göndermek istiyor musunuz?\n\nBorcu olmayan müşteriler atlanır.`)) return
+    setTopluGonderiyor(true)
+    try {
+      const result = await sendBulkDebtNotifications(selectedIds, channel)
+      if (result.failed === 0) {
+        alert(`${result.sent} müşteriye borç bildirimi gönderildi.`)
+      } else {
+        const ilkHata = result.errors[0]?.error || ''
+        alert(`${result.sent} gönderildi, ${result.failed} başarısız.${ilkHata ? `\nÖrnek hata: ${ilkHata}` : ''}`)
+      }
+      setSelectedIds([])
+    } catch (err) {
+      alert('Gönderim hatası: ' + (err.message || 'Bilinmeyen hata'))
+    } finally {
+      setTopluGonderiyor(false)
+    }
+  }
+
+  // Sirali WhatsApp: mesaji wa.me uzerinden ac
+  const waMesajiAc = () => {
+    const aktif = waQueue?.liste[waQueue.index]
+    if (!aktif) return
+    if (!aktif.phone) { alert('Müşterinin WhatsApp numarası kayıtlı değil.'); return }
+    openWhatsAppWeb({ phone: aktif.phone, message: aktif.message })
+    setWaQueue(q => {
+      const liste = [...q.liste]
+      liste[q.index] = { ...liste[q.index], opened: true }
+      return { ...q, liste }
+    })
+  }
+
+  // Siradaki musteriye gec (veya bitir)
+  const waIlerle = () => {
+    setWaQueue(q => {
+      if (!q) return null
+      if (q.index + 1 >= q.liste.length) {
+        const acilan = q.liste.filter(x => x.opened).length
+        setTimeout(() => alert(`Tamamlandı! ${acilan}/${q.liste.length} müşteriye mesaj açıldı.`), 0)
+        return null
+      }
+      return { ...q, index: q.index + 1 }
+    })
+  }
+
+  const HucreIkon = ({ durum }) => {
+    switch (durum) {
+      case 'odendi': return <CheckCircle className="w-4 h-4" />
+      case 'bekliyor': return <Clock className="w-4 h-4" />
+      case 'geciken': return <AlertTriangle className="w-4 h-4" />
+      default: return <Minus className="w-4 h-4" />
+    }
+  }
+
+  const waAktif = waQueue ? waQueue.liste[waQueue.index] : null
+
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-8">
+    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Baslik ve kontroller */}
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-2">
         <div>
-          <h1 className="text-3xl font-bold text-white flex items-center space-x-3">
+          <h1 className="text-3xl font-bold text-white flex items-center gap-3">
             <DollarSign className="w-8 h-8 text-yellow-400" />
-            <span>Odeme Takip</span>
+            <span>Muhasebe Hizmet Bedeli Takibi</span>
           </h1>
-          <p className="text-gray-400 mt-1">Tum musterilerin muhasebe odeme durumu</p>
+          <p className="text-gray-400 mt-1">Müşterilerinizin aylık muhasebe ödemelerini kolayca takip edin.</p>
         </div>
-        <button onClick={exportExcel} className="mt-4 md:mt-0 bg-green-600/20 text-green-400 px-4 py-2 rounded-lg text-sm font-medium flex items-center space-x-2 hover:bg-green-600/30 transition-colors">
-          <FileSpreadsheet className="w-4 h-4" /><span>Excel Dokum</span>
-        </button>
-      </div>
-
-      {/* Ozet Kartlari */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30">
-          <p className="text-gray-400 text-xs">Aylik Toplam Gelir</p>
-          <p className="text-2xl font-bold text-blue-400 mt-1">{fmt(toplamlar.aylikGelir)} <span className="text-sm">TL</span></p>
-        </div>
-        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30">
-          <p className="text-gray-400 text-xs">Toplam Alacak</p>
-          <p className="text-2xl font-bold text-yellow-400 mt-1">{fmt(toplamlar.toplamBorc)} <span className="text-sm">TL</span></p>
-        </div>
-        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30">
-          <p className="text-gray-400 text-xs">Toplam Tahsilat</p>
-          <p className="text-2xl font-bold text-green-400 mt-1">{fmt(toplamlar.toplamOdeme)} <span className="text-sm">TL</span></p>
-        </div>
-        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30">
-          <p className="text-gray-400 text-xs">Kalan Alacak</p>
-          <p className={`text-2xl font-bold mt-1 ${toplamlar.kalanBorc > 0 ? 'text-red-400' : 'text-green-400'}`}>{fmt(toplamlar.kalanBorc)} <span className="text-sm">TL</span></p>
-        </div>
-      </div>
-
-      {/* Filtre ve Arama */}
-      <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 mb-6 flex flex-col md:flex-row gap-3 items-start md:items-center">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-          <input type="text" placeholder="Musteri ara..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 pl-9 pr-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
-        </div>
-        <div className="flex items-center space-x-2">
-          <Filter className="w-4 h-4 text-gray-500" />
-          {[
-            { id: 'all', label: 'Tumu', count: clients.length },
-            { id: 'borcu_var', label: 'Borcu Var', count: borcuOlanSayisi },
-            { id: 'borcu_yok', label: 'Borcu Yok', count: clients.length - borcuOlanSayisi }
-          ].map(f => (
-            <button key={f.id} onClick={() => setFilter(f.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${filter === f.id ? 'bg-yellow-500/20 text-yellow-400' : 'text-gray-400 hover:text-white'}`}>
-              {f.label} ({f.count})
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <select value={yil} onChange={(e) => setYil(Number(e.target.value))}
+            className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400">
+            {Array.from({ length: 4 }, (_, i) => nowY - 2 + i).map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <button onClick={() => setBuAyVurgu(!buAyVurgu)}
+            className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${buAyVurgu ? 'bg-yellow-500/20 border-yellow-500/50 text-yellow-400' : 'bg-blue-900/30 border-blue-700/50 text-gray-300 hover:text-white'}`}>
+            Bu Ay
+          </button>
+          <select value={filter} onChange={(e) => setFilter(e.target.value)}
+            className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400">
+            <option value="all">Tümü</option>
+            <option value="borcu_var">Borçlu</option>
+            <option value="borcu_yok">Borcu Yok</option>
+          </select>
+          {selectedIds.length > 0 && (
+            <>
+              <button onClick={() => handleTopluGonder('whatsapp')} disabled={topluGonderiyor}
+                className="bg-green-600 text-white px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-green-500 disabled:opacity-50 transition-colors">
+                <MessageCircle className="w-4 h-4" /> {topluGonderiyor ? 'Gönderiliyor...' : `WhatsApp (${selectedIds.length})`}
+              </button>
+              <button onClick={() => handleTopluGonder('email')} disabled={topluGonderiyor}
+                className="bg-blue-500 text-white px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-blue-400 disabled:opacity-50 transition-colors">
+                <Mail className="w-4 h-4" /> {topluGonderiyor ? 'Gönderiliyor...' : `Mail (${selectedIds.length})`}
+              </button>
+            </>
+          )}
+          <button onClick={exportExcel} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-green-500 transition-colors">
+            <FileSpreadsheet className="w-4 h-4" /> Excel
+          </button>
+          <button onClick={exportPDF} className="bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-red-400 transition-colors">
+            <FileText className="w-4 h-4" /> PDF
+          </button>
         </div>
       </div>
 
-      {/* Tablo */}
+      {/* Ozet kartlari */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 my-6">
+        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0"><Users className="w-5 h-5 text-blue-400" /></div>
+          <div>
+            <p className="text-gray-400 text-xs">Toplam Müşteri</p>
+            <p className="text-xl font-bold text-white">{tumSatirlar.length}</p>
+          </div>
+        </div>
+        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-green-500/20 flex items-center justify-center shrink-0"><DollarSign className="w-5 h-5 text-green-400" /></div>
+          <div>
+            <p className="text-gray-400 text-xs">Toplam Borç (Bugüne Kadar)</p>
+            <p className="text-xl font-bold text-white">₺ {fmt(yillikTahsilat)}</p>
+          </div>
+        </div>
+        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-green-500/20 flex items-center justify-center shrink-0"><CheckCircle className="w-5 h-5 text-green-400" /></div>
+          <div>
+            <p className="text-gray-400 text-xs">Ödenen</p>
+            <p className="text-xl font-bold text-green-400">₺ {fmt(odenenToplam)} <span className="text-xs font-normal text-gray-400">%{yuzde(odenenToplam)}</span></p>
+          </div>
+        </div>
+        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-yellow-500/20 flex items-center justify-center shrink-0"><Clock className="w-5 h-5 text-yellow-400" /></div>
+          <div>
+            <p className="text-gray-400 text-xs">Bekleyen</p>
+            <p className="text-xl font-bold text-yellow-400">₺ {fmt(bekleyenToplam)} <span className="text-xs font-normal text-gray-400">%{yuzde(bekleyenToplam)}</span></p>
+          </div>
+        </div>
+        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-red-500/20 flex items-center justify-center shrink-0"><AlertTriangle className="w-5 h-5 text-red-400" /></div>
+          <div>
+            <p className="text-gray-400 text-xs">Geciken</p>
+            <p className="text-xl font-bold text-red-400">₺ {fmt(gecikenToplam)} <span className="text-xs font-normal text-gray-400">%{yuzde(gecikenToplam)}</span></p>
+          </div>
+        </div>
+      </div>
+
+      {/* Arama */}
+      <div className="relative max-w-md mb-4">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+        <input type="text" placeholder="Müşteri ara (ad, unvan)..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
+          className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 pl-9 pr-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+      </div>
+
+      {/* Matris tablo */}
       <div className="bg-blue-800/20 rounded-2xl border border-blue-700/30 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full text-sm">
             <thead className="bg-blue-900/30">
-              <tr className="text-left text-gray-400 text-xs">
-                <th className="px-4 py-3">#</th>
-                <th className="px-4 py-3">Musteri</th>
-                <th className="px-4 py-3 text-right">Aylik Ucret</th>
-                <th className="px-4 py-3 text-right">Toplam Borc</th>
-                <th className="px-4 py-3 text-right">Odenen</th>
-                <th className="px-4 py-3 text-right">Kalan</th>
-                <th className="px-4 py-3 text-center">Son Odeme</th>
-                <th className="px-4 py-3 text-center">Durum</th>
+              <tr className="text-gray-400 text-xs whitespace-nowrap">
+                <th className="px-3 py-3 text-left">#</th>
+                <th className="px-3 py-3 text-left min-w-[180px]">
+                  <span className="flex items-center gap-2">
+                    <input type="checkbox" checked={rows.length > 0 && selectedIds.length === rows.length} onChange={tumunuSec}
+                      className="accent-yellow-400 w-3.5 h-3.5 cursor-pointer" title="Tümünü seç / kaldır" />
+                    Adı Soyadı
+                  </span>
+                </th>
+                <th className="px-3 py-3 text-right">Aylık Ücret</th>
+                <th className="px-3 py-3 text-right">Defter Tasdik</th>
+                <th className="px-3 py-3 text-right">Önceki Dönem</th>
+                <th className="px-3 py-3 text-right">Toplam Borç</th>
+                {AYLER.map((ay, i) => (
+                  <th key={ay} className={`px-2 py-3 text-center ${buAyVurgu && yil === nowY && i + 1 === nowM ? 'bg-yellow-500/10 text-yellow-400 ring-1 ring-inset ring-yellow-500/30' : ''}`}>{ay}</th>
+                ))}
+                <th className="px-3 py-3 text-right">Ödenen</th>
+                <th className="px-3 py-3 text-right">Kalan</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan="8" className="text-center py-8 text-gray-400">Yukleniyor...</td></tr>
-              ) : musteriOzetleri.length === 0 ? (
-                <tr><td colSpan="8" className="text-center py-8 text-gray-500">Kayit bulunamadi</td></tr>
+                <tr><td colSpan="19" className="text-center py-8 text-gray-400">Yükleniyor...</td></tr>
+              ) : rows.length === 0 ? (
+                <tr><td colSpan="19" className="text-center py-8 text-gray-500">Kayıt bulunamadı</td></tr>
               ) : (
-                musteriOzetleri.map((c, i) => (
-                  <tr key={c.id} onClick={() => setSelectedClient(c)} className="border-t border-blue-700/20 hover:bg-blue-800/20 transition-colors cursor-pointer">
-                    <td className="px-4 py-3 text-gray-500 text-sm">{i + 1}</td>
-                    <td className="px-4 py-3 text-white text-sm font-medium">{c.name || c.company || '-'}</td>
-                    <td className="px-4 py-3 text-right text-gray-300 text-sm">{c.ozet.aylikUcret > 0 ? `${fmt(c.ozet.aylikUcret)} TL` : '-'}</td>
-                    <td className="px-4 py-3 text-right text-yellow-400 text-sm font-medium">{c.ozet.toplamBorc > 0 ? `${fmt(c.ozet.toplamBorc)} TL` : '-'}</td>
-                    <td className="px-4 py-3 text-right text-green-400 text-sm">{c.ozet.toplamOdeme > 0 ? `${fmt(c.ozet.toplamOdeme)} TL` : '-'}</td>
-                    <td className={`px-4 py-3 text-right text-sm font-bold ${c.ozet.kalanBorc > 0 ? 'text-red-400' : c.ozet.kalanBorc < 0 ? 'text-blue-400' : 'text-green-400'}`}>
-                      {c.ozet.kalanBorc !== 0 ? `${fmt(c.ozet.kalanBorc)} TL` : '-'}
+                rows.map((r, i) => (
+                  <tr key={r.id} className="border-t border-blue-700/20 hover:bg-blue-800/10 transition-colors">
+                    <td className="px-3 py-2 text-gray-500">{i + 1}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <input type="checkbox" checked={selectedIds.includes(r.id)} onChange={() => toggleSecim(r.id)}
+                          className="accent-yellow-400 w-3.5 h-3.5 cursor-pointer shrink-0" />
+                        <span className="text-white font-medium" title={r.name || r.company || ''}>{kisaAd(r.name || r.company || '-')}</span>
+                        {linkProvider !== 'eft' && (
+                          <button onClick={() => openLinkForm(r)} title="Online Ödeme Linki Gönder"
+                            className="p-1 rounded text-purple-400 hover:bg-purple-500/20 transition-colors">
+                            <CreditCard className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </td>
-                    <td className="px-4 py-3 text-center text-gray-400 text-xs">
-                      {c.ozet.sonOdeme ? new Date(c.ozet.sonOdeme).toLocaleDateString('tr-TR') : '-'}
+                    <td className="px-3 py-2 text-right text-gray-300 whitespace-nowrap">{r.aylikUcret > 0 ? `₺ ${fmt(r.aylikUcret)}` : '-'}</td>
+                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                      {(() => {
+                        const durum = kalemDurum(r, 'Defter Tasdik')
+                        if (durum !== 'yok') {
+                          return (
+                            <button onClick={() => openOdemeModal(r, 'Defter Tasdik')}
+                              title={durum === 'odendi' ? 'Ödendi - tıklayıp kayıtlı ödemeyi silebilirsiniz' : 'Bekliyor - tıklayıp kayıtlı ödemeyi görün'}
+                              className={`w-7 h-7 mx-auto rounded-full flex items-center justify-center transition-all ${hucreStil(durum)} hover:bg-blue-700/40 hover:scale-110 cursor-pointer`}>
+                              <HucreIkon durum={durum} />
+                            </button>
+                          )
+                        }
+                        if (r.defterTasdik > 0) {
+                          return (
+                            <button onClick={() => openOdemeModal(r, 'Defter Tasdik')}
+                              title="Defter Tasdik - ödeme kaydı ekle"
+                              className="inline-flex items-center gap-1 text-gray-300 hover:text-green-400 hover:bg-blue-700/40 rounded px-1.5 py-0.5 transition-colors">
+                              ₺ {fmt(r.defterTasdik)} <Plus className="w-3 h-3 text-green-400" />
+                            </button>
+                          )
+                        }
+                        return <span className="text-gray-600">-</span>
+                      })()}
                     </td>
-                    <td className="px-4 py-3 text-center">
-                      {c.ozet.kalanBorc > 0 ? (
-                        <span className="inline-flex items-center space-x-1 bg-red-500/20 text-red-400 px-2 py-1 rounded text-xs">
-                          <AlertTriangle className="w-3 h-3" /><span>Borclu</span>
-                        </span>
-                      ) : c.ozet.toplamBorc > 0 ? (
-                        <span className="inline-flex items-center space-x-1 bg-green-500/20 text-green-400 px-2 py-1 rounded text-xs">
-                          <CheckCircle className="w-3 h-3" /><span>Tamam</span>
-                        </span>
-                      ) : (
-                        <span className="text-gray-600 text-xs">-</span>
-                      )}
+                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                      {(() => {
+                        const durum = kalemDurum(r, 'Onceki Donem')
+                        if (durum !== 'yok') {
+                          return (
+                            <button onClick={() => openOdemeModal(r, 'Onceki Donem')}
+                              title={durum === 'odendi' ? 'Ödendi - tıklayıp kayıtlı ödemeyi silebilirsiniz' : 'Bekliyor - tıklayıp kayıtlı ödemeyi görün'}
+                              className={`w-7 h-7 mx-auto rounded-full flex items-center justify-center transition-all ${hucreStil(durum)} hover:bg-blue-700/40 hover:scale-110 cursor-pointer`}>
+                              <HucreIkon durum={durum} />
+                            </button>
+                          )
+                        }
+                        if (r.oncekiDonem > 0) {
+                          return (
+                            <button onClick={() => openOdemeModal(r, 'Onceki Donem')}
+                              title="Önceki Dönem Borcu - ödeme kaydı ekle"
+                              className="inline-flex items-center gap-1 text-red-400 hover:text-red-300 hover:bg-blue-700/40 rounded px-1.5 py-0.5 transition-colors">
+                              ₺ {fmt(r.oncekiDonem)} <Plus className="w-3 h-3 text-green-400" />
+                            </button>
+                          )
+                        }
+                        return <span className="text-gray-600">-</span>
+                      })()}
+                    </td>
+                    <td className="px-3 py-2 text-right text-yellow-400 font-medium whitespace-nowrap">₺ {fmt(r.toplamBorc)}</td>
+                    {AYLER.map((_, mi) => {
+                      const m = mi + 1
+                      const durum = monthStatus(r, m)
+                      return (
+                        <td key={m} className={`px-1 py-2 text-center ${buAyVurgu && yil === nowY && m === nowM ? 'bg-yellow-500/5' : ''}`}>
+                          <button
+                            onClick={() => openOdemeModal(r, m)}
+                            title={durum === 'odendi' ? 'Ödendi - tıklayıp kayıtlı ödemeyi silebilirsiniz' : durum === 'bekliyor' ? 'Bekliyor - tıklayıp ödeme kaydı girin' : durum === 'geciken' ? 'Geciken - tıklayıp ödeme kaydı girin' : 'Ödeme kaydı ekle'}
+                            className={`w-7 h-7 mx-auto rounded-full flex items-center justify-center transition-all ${hucreStil(durum)} hover:bg-blue-700/40 hover:scale-110 cursor-pointer`}
+                          >
+                            <HucreIkon durum={durum} />
+                          </button>
+                        </td>
+                      )
+                    })}
+                    <td className="px-3 py-2 text-right text-green-400 whitespace-nowrap">{r.odenen > 0 ? `₺ ${fmt(r.odenen)}` : '-'}</td>
+                    <td className={`px-3 py-2 text-right font-bold whitespace-nowrap ${r.kalan > 0 ? 'text-red-400' : r.kalan < 0 ? 'text-blue-400' : 'text-green-400'}`}>
+                      {r.kalan !== 0 ? `₺ ${fmt(r.kalan)}` : '-'}
                     </td>
                   </tr>
                 ))
               )}
             </tbody>
-            {musteriOzetleri.length > 0 && (
-              <tfoot className="bg-blue-900/40 border-t-2 border-yellow-400/30">
-                <tr className="text-sm font-bold">
-                  <td className="px-4 py-3" colSpan="2"><span className="text-yellow-400">TOPLAM</span></td>
-                  <td className="px-4 py-3 text-right text-blue-400">{fmt(toplamlar.aylikGelir)} TL</td>
-                  <td className="px-4 py-3 text-right text-yellow-400">{fmt(toplamlar.toplamBorc)} TL</td>
-                  <td className="px-4 py-3 text-right text-green-400">{fmt(toplamlar.toplamOdeme)} TL</td>
-                  <td className={`px-4 py-3 text-right ${toplamlar.kalanBorc > 0 ? 'text-red-400' : 'text-green-400'}`}>{fmt(toplamlar.kalanBorc)} TL</td>
-                  <td colSpan="2"></td>
-                </tr>
-              </tfoot>
-            )}
+            <tfoot>
+              <tr className="bg-blue-900/50 border-t-2 border-blue-700/40 text-xs">
+                <td colSpan="6" className="px-3 py-2 text-right text-gray-400 whitespace-nowrap">Aylık Tahsilat →</td>
+                {aylikTahsilatlar.map((toplam, mi) => (
+                  <td key={mi} className={`px-1 py-2 text-center whitespace-nowrap ${toplam > 0 ? 'text-green-400 font-semibold' : 'text-gray-600'} ${buAyVurgu && yil === nowY && mi + 1 === nowM ? 'bg-yellow-500/5' : ''}`}>
+                    {toplam > 0 ? fmt(toplam) : '-'}
+                  </td>
+                ))}
+                <td className="px-3 py-2 text-right text-green-400 font-bold whitespace-nowrap">{fmt(aylikTahsilatToplam)}</td>
+                <td></td>
+              </tr>
+            </tfoot>
           </table>
         </div>
+
+        {/* Alt bilgi: renkler + genel toplamlar */}
+        <div className="bg-blue-900/40 border-t border-blue-700/30 px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-4 text-xs text-gray-400">
+            <span className="font-medium text-white">Durum Renkleri:</span>
+            <span className="flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5 text-green-400" /> Ödendi</span>
+            <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-yellow-400" /> Bekliyor</span>
+            <span className="flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5 text-red-400" /> Geciken</span>
+            <span className="flex items-center gap-1"><Minus className="w-3.5 h-3.5 text-gray-500" /> Ödeme Yok</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-6 text-sm">
+            <div>
+              <p className="text-xs text-gray-400">Genel Toplam</p>
+              <p className="font-bold text-white">₺ {fmt(yillikTahsilat)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-400">Toplam Ödenen</p>
+              <p className="font-bold text-green-400">₺ {fmt(odenenToplam)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-400">Toplam Kalan</p>
+              <p className="font-bold text-red-400">₺ {fmt(yillikTahsilat - odenenToplam)}</p>
+            </div>
+          </div>
+        </div>
       </div>
+      <p className="text-gray-500 text-xs mt-2">Ay hücresine tıklayarak o ay için ödeme kaydı girebilirsiniz. Müşteri adının yanındaki kart simgesi online ödeme linki gönderir.</p>
 
-      {/* Odeme Detay Modal */}
-      {selectedClient && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setSelectedClient(null)}>
-          <div className="bg-blue-900 rounded-2xl border border-blue-700/50 shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-6 border-b border-blue-700/30">
+      {/* Odeme Kaydi Modal */}
+      {odemeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setOdemeModal(null)}>
+          <div className="bg-blue-900 rounded-2xl border border-blue-700/50 shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-blue-700/30">
+              <h3 className="text-lg font-bold text-white">Ödeme Kaydı - {kalemBaslik(odemeModal.kalem)}</h3>
+              <button onClick={() => setOdemeModal(null)} className="text-gray-400 hover:text-white p-1"><X className="w-5 h-5" /></button>
+            </div>
+            <form onSubmit={saveOdeme} className="p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-gray-400">Müşteri</p>
+                  <p className="text-white font-medium" title={odemeModal.name}>{kisaAd(odemeModal.name)}</p>
+                </div>
+                {odemeModal.varsayilanTutar > 0 && (
+                  <div className="text-right">
+                    <p className="text-xs text-gray-400">{kalemEtiket(odemeModal.kalem)}</p>
+                    <p className="text-blue-400 font-bold">₺ {fmt(odemeModal.varsayilanTutar)}</p>
+                  </div>
+                )}
+              </div>
               <div>
-                <h2 className="text-xl font-bold text-white">{selectedClient.name || selectedClient.company || 'Musteri'}</h2>
-                <p className="text-gray-400 text-sm">Muhasebe Detay Odeme Listesi</p>
-              </div>
-              <button onClick={() => setSelectedClient(null)} className="text-gray-400 hover:text-white p-1"><X className="w-6 h-6" /></button>
-            </div>
-            <div className="p-6 overflow-y-auto max-h-[70vh]">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-                <div className="bg-blue-800/30 rounded-xl p-3 text-center">
-                  <p className="text-xs text-gray-400">Toplam Borc</p>
-                  <p className="text-lg font-bold text-yellow-400">{fmt(selectedClient.ozet.toplamBorc)} TL</p>
-                </div>
-                <div className="bg-blue-800/30 rounded-xl p-3 text-center">
-                  <p className="text-xs text-gray-400">Toplam Odeme</p>
-                  <p className="text-lg font-bold text-green-400">{fmt(selectedClient.ozet.toplamOdeme)} TL</p>
-                </div>
-                <div className="bg-blue-800/30 rounded-xl p-3 text-center">
-                  <p className="text-xs text-gray-400">Kalan Borc</p>
-                  <p className={`text-lg font-bold ${selectedClient.ozet.kalanBorc > 0 ? 'text-red-400' : 'text-green-400'}`}>{fmt(selectedClient.ozet.kalanBorc)} TL</p>
-                </div>
-                <div className="bg-blue-800/30 rounded-xl p-3 text-center">
-                  <p className="text-xs text-gray-400">Aylik Ucret</p>
-                  <p className="text-lg font-bold text-blue-400">{fmt(selectedClient.ozet.aylikUcret)} TL</p>
+                <label className="text-xs text-gray-400 block mb-2">Ödeme Türü</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {ODEME_TURLERI.map(t => (
+                    <button type="button" key={t.value} onClick={() => setOdemeForm(f => ({ ...f, odeme_tipi: t.value }))}
+                      className={`px-2 py-2 rounded-lg text-xs font-medium border transition-all ${odemeForm.odeme_tipi === t.value ? t.renk : 'bg-blue-900/30 border-blue-700/40 text-gray-400 hover:text-white'}`}>
+                      {t.label}
+                    </button>
+                  ))}
                 </div>
               </div>
-
-              <h3 className="text-white font-semibold mb-3">Odeme Gecmisi</h3>
-              {selectedClient.payments.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead className="bg-blue-800/40">
-                      <tr className="text-left text-gray-400 text-xs">
-                        <th className="px-4 py-2">Tarih</th>
-                        <th className="px-4 py-2">Donem</th>
-                        <th className="px-4 py-2 text-right">Tutar</th>
-                        <th className="px-4 py-2">Odeme Tipi</th>
-                        <th className="px-4 py-2">Aciklama</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedClient.payments.slice().sort((a, b) => new Date(b.odeme_tarihi) - new Date(a.odeme_tarihi)).map((p) => (
-                        <tr key={p.id} className="border-t border-blue-700/20">
-                          <td className="px-4 py-2 text-white text-sm">{new Date(p.odeme_tarihi).toLocaleDateString('tr-TR')}</td>
-                          <td className="px-4 py-2 text-gray-300 text-sm">{p.donem || '-'}</td>
-                          <td className="px-4 py-2 text-right text-green-400 text-sm font-medium">{fmt(p.tutar)} TL</td>
-                          <td className="px-4 py-2 text-gray-300 text-sm">
-                            <span className={`px-2 py-0.5 rounded text-xs ${p.odeme_tipi === 'eft' ? 'bg-blue-500/20 text-blue-400' : p.odeme_tipi === 'kredi_karti' ? 'bg-purple-500/20 text-purple-400' : 'bg-gray-500/20 text-gray-400'}`}>
-                              {p.odeme_tipi === 'eft' ? 'EFT/Havale' : p.odeme_tipi === 'kredi_karti' ? 'Kredi Karti' : 'Nakit'}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2 text-gray-400 text-sm">{p.aciklama || '-'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <label className="block space-y-1">
+                <span className="text-xs text-gray-400">Ödeme Tarihi</span>
+                <input type="date" value={odemeForm.odeme_tarihi}
+                  onChange={(e) => setOdemeForm(f => ({ ...f, odeme_tarihi: e.target.value }))}
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs text-gray-400">Tutar (TL)</span>
+                <input type="text" inputMode="decimal" value={odemeForm.tutar} required
+                  onChange={(e) => setOdemeForm(f => ({ ...f, tutar: formatTurkishInput(e.target.value) }))}
+                  placeholder="8.000,00"
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs text-gray-400">Açıklama (opsiyonel)</span>
+                <input type="text" value={odemeForm.aciklama}
+                  onChange={(e) => setOdemeForm(f => ({ ...f, aciklama: e.target.value }))}
+                  placeholder="Açıklama"
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+              </label>
+              {odemeModal.mevcut?.length > 0 && (
+                <div className="rounded-lg border border-blue-700/40 bg-blue-950/30 p-3">
+                  <p className="text-xs text-gray-400 mb-2">Bu dönem için kayıtlı ödemeler (yanlış işaretlemeyi silebilirsiniz):</p>
+                  <div className="space-y-1">
+                    {odemeModal.mevcut.map(mp => (
+                      <div key={mp.id} className="flex items-center justify-between gap-2 text-sm">
+                        <span className="text-gray-300 truncate">
+                          {mp.odeme_tarihi || '-'} • {mp.odeme_tipi === 'eft' ? 'EFT/Havale' : mp.odeme_tipi === 'kredi_karti' ? 'Kredi Kartı' : 'Nakit'}
+                          {mp.aciklama ? <span className="text-gray-500"> • {mp.aciklama}</span> : null}
+                        </span>
+                        <span className="flex items-center gap-2 shrink-0">
+                          <span className="text-green-400 font-medium">{fmt(mp.tutar)} TL</span>
+                          <button type="button" onClick={() => handleSilPayment(mp.id)} title="Ödemeyi Sil"
+                            className="text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded p-1 transition-colors">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ) : (
-                <p className="text-gray-500 text-sm text-center py-6">Henüz odeme kaydi bulunmuyor</p>
               )}
+              {formError && <p className="text-red-400 text-xs">{formError}</p>}
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setOdemeModal(null)} className="px-4 py-2 rounded-lg bg-blue-800/40 text-gray-300 text-sm hover:bg-blue-800/60">Vazgeç</button>
+                <button type="submit" disabled={saving} className="px-5 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-500 disabled:opacity-50">
+                  {saving ? 'Kaydediliyor...' : 'Kaydet'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Online Odeme Linki Modal */}
+      {showLinkModal && selectedClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => { setShowLinkModal(false); setShowLinkModal(false) }}>
+          <div className="bg-blue-900 rounded-2xl border border-purple-700/50 shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-blue-700/30">
+              <div>
+                <h3 className="text-lg font-bold text-white flex items-center gap-2"><CreditCard className="w-5 h-5 text-purple-400" /> Online Ödeme Linki ({linkProvider === 'odeal' ? 'Odeal' : 'PayTR'})</h3>
+                <p className="text-gray-400 text-sm">{selectedClient.name || selectedClient.company}</p>
+              </div>
+              <button onClick={() => setShowLinkModal(false)} className="text-gray-400 hover:text-white p-1"><X className="w-5 h-5" /></button>
             </div>
-            <div className="p-4 border-t border-blue-700/30 text-right">
-              <button onClick={() => setSelectedClient(null)} className="bg-yellow-500 text-blue-950 px-4 py-2 rounded-lg text-sm font-semibold">Kapat</button>
+            <form onSubmit={createPaymentLink} className="p-5 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <span className="text-xs text-gray-400">Ödeme Tutarı (TL)</span>
+                  <input type="text" inputMode="decimal" value={linkAmount} required
+                    onChange={(e) => setLinkAmount(formatTurkishInput(e.target.value))}
+                    placeholder="5.000,00"
+                    className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm" />
+                </label>
+                <div className="flex items-end">
+                  <button type="submit" disabled={linkLoading} className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 w-full">
+                    {linkLoading ? 'Link Oluşturuluyor...' : 'Link Oluştur'}
+                  </button>
+                </div>
+              </div>
+              {linkError && <p className="text-red-400 text-xs">{linkError}</p>}
+              {linkUrl && (
+                <div className="rounded-lg bg-blue-900/40 border border-purple-500/30 p-3 space-y-3">
+                  <p className="text-green-400 text-xs font-medium">Link oluşturuldu ve panoya kopyalandı:</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input type="text" readOnly value={linkUrl} className="flex-1 min-w-[180px] bg-blue-950/50 border border-purple-500/30 rounded-lg px-3 py-2 text-white text-xs" />
+                    <button type="button" onClick={() => { navigator.clipboard.writeText(linkUrl); alert('Link panoya kopyalandi.') }} className="px-3 py-2 bg-purple-500 text-white rounded-lg text-xs font-medium hover:bg-purple-400 flex items-center gap-1">
+                      <Copy className="w-3.5 h-3.5" /> Kopyala
+                    </button>
+                    <button type="button" onClick={sendLinkViaEmail} disabled={linkSending === 'mail'} className="px-3 py-2 bg-blue-500 text-white rounded-lg text-xs font-medium hover:bg-blue-400 flex items-center gap-1 disabled:opacity-50">
+                      <Mail className="w-3.5 h-3.5" /> {linkSending === 'mail' ? 'Gönderiliyor...' : 'Mail'}
+                    </button>
+                    <button type="button" onClick={sendLinkViaWhatsApp} disabled={linkSending === 'whatsapp'} className="px-3 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-500 flex items-center gap-1 disabled:opacity-50">
+                      <MessageCircle className="w-3.5 h-3.5" /> {linkSending === 'whatsapp' ? 'Gönderiliyor...' : 'WhatsApp'}
+                    </button>
+                  </div>
+                  <div>
+                    <label className="text-gray-400 text-xs block mb-1">Açıklama (mesajın metni, link otomatik eklenir)</label>
+                    <textarea value={linkMessage} onChange={(e) => setLinkMessage(e.target.value)} rows={5}
+                      className="w-full bg-blue-950/50 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500" />
+                    <p className="text-gray-500 text-[11px] mt-1">Mail veya WhatsApp butonuna bastığınızda bu açıklama + ödeme linki birlikte gönderilir.</p>
+                  </div>
+                </div>
+              )}
+              <div className="flex justify-end">
+                <button type="button" onClick={() => setShowLinkModal(false)} className="bg-yellow-500 text-blue-950 px-4 py-2 rounded-lg text-sm font-semibold">Kapat</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Sirali WhatsApp Gonderim Modal */}
+      {waAktif && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-blue-900 rounded-2xl border border-green-700/50 shadow-2xl w-full max-w-xl">
+            <div className="flex items-center justify-between p-5 border-b border-blue-700/30">
+              <div>
+                <h3 className="text-lg font-bold text-white flex items-center gap-2"><MessageCircle className="w-5 h-5 text-green-400" /> Sıralı WhatsApp Gönderimi</h3>
+                <p className="text-gray-400 text-sm">{waQueue.index + 1} / {waQueue.liste.length} • {kisaAd(waAktif.clientName)} • Kalan Borç: {fmt(waAktif.kalanBorc)} TL</p>
+              </div>
+              <button onClick={() => { if (confirm('Gönderimden çıkmak istiyor musunuz? Kalan müşteriler atlanacak.')) setWaQueue(null) }} className="text-gray-400 hover:text-white p-1"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <textarea readOnly value={waAktif.message} rows={9}
+                className="w-full bg-blue-950/50 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm" />
+              {!waAktif.phone && <p className="text-red-400 text-xs">Bu müşterinin WhatsApp numarası kayıtlı değil — atlayabilirsiniz.</p>}
+              <div className="flex flex-wrap justify-end gap-2">
+                <button onClick={waIlerle} className="px-4 py-2 rounded-lg bg-blue-800/40 text-gray-300 text-sm hover:bg-blue-800/60">Atla</button>
+                {!waAktif.opened ? (
+                  <button onClick={waMesajiAc} disabled={!waAktif.phone} className="px-5 py-2 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-500 disabled:opacity-50">
+                    WhatsApp'ta Aç
+                  </button>
+                ) : (
+                  <button onClick={waIlerle} className="px-5 py-2 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-500">
+                    Gönderildi - Sıradaki
+                  </button>
+                )}
+              </div>
+              <p className="text-gray-500 text-[11px]">WhatsApp sekmesi açılır, mesaj otomatik yazılır. Gönderdikten sonra "Gönderildi - Sıradaki" ile devam edin.</p>
             </div>
           </div>
         </div>

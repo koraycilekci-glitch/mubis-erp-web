@@ -12,7 +12,7 @@ import {
   Megaphone, DollarSign, Menu as MenuIcon, ChevronLeft, LayoutDashboard,
   Calculator, MessageSquareText
 } from 'lucide-react'
-import { getMonthName, getFormattedBeyanDeadline } from '../utils/dateUtils'
+import { getMonthName, getFormattedBeyanDeadline, formatDateTR } from '../utils/dateUtils'
 
 // ── Beyan tipleri ve son tarih gunleri ──
 const BEYAN_TYPES = [
@@ -210,7 +210,7 @@ function MiniTakvim({ isaretliGunler = [] }) {
 
 // ── Ana Dashboard Bileşeni ──
 export default function AdminDashboard() {
-  const { user } = useAuth()
+  const { user, logout } = useAuth()
   const { clients } = useClients()
   const navigate = useNavigate()
   const [currentTime, setCurrentTime] = useState(new Date())
@@ -457,11 +457,33 @@ export default function AdminDashboard() {
                 {getMonthName(currentTime.getMonth())} {currentTime.getFullYear()}
               </div>
             </div>
-            <img
-              src="/mascot-kalem.png"
-              alt="MUBiS"
-              className="hidden md:block h-28 w-auto object-contain drop-shadow-[0_8px_18px_rgba(0,0,0,0.45)] animate-float-soft"
-            />
+            <div className="relative group">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await logout()
+                  } finally {
+                    window.location.replace('/')
+                  }
+                }}
+                aria-label="Çıkış Yap"
+                title="Çıkış Yap"
+                className="relative rounded-2xl p-1 transition-transform duration-300 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-yellow-300/80"
+              >
+                <img
+                  src="/mascot-kalem.png"
+                  alt="MUBİS kalem asistanı"
+                  className="h-28 w-auto object-contain drop-shadow-[0_8px_18px_rgba(0,0,0,0.45)] animate-float-soft"
+                />
+              </button>
+              <span
+                className="pointer-events-none absolute bottom-full right-0 z-[80] translate-y-1 rounded-xl rounded-br-sm bg-white px-3 py-2 text-xs font-bold text-blue-950 opacity-0 shadow-xl transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100"
+              >
+                Çıkış Yap
+                <span className="absolute -bottom-1 right-6 h-2 w-2 rotate-45 bg-white" />
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -613,7 +635,7 @@ export default function AdminDashboard() {
                           </span>
                         </div>
                         <div className="text-gray-500 text-[11px] mt-0.5">
-                          Son tarih: {group.deadline.toLocaleDateString('tr-TR')}
+                           Son tarih: {formatDateTR(group.deadline)}
                         </div>
                       </div>
 
@@ -665,7 +687,7 @@ export default function AdminDashboard() {
                     }`} />
                     <div className="flex-1 min-w-0">
                       <span className="text-white text-sm font-medium truncate block">{item.client}</span>
-                      <span className="text-gray-500 text-[11px]">{item.type} - Bitis: {new Date(item.endDate).toLocaleDateString('tr-TR')}</span>
+                       <span className="text-gray-500 text-[11px]">{item.type} - Bitis: {formatDateTR(item.endDate)}</span>
                     </div>
                     <div className={`text-xs font-bold ${
                       item.daysLeft <= 15 ? 'text-red-400' : item.daysLeft <= 30 ? 'text-orange-400' : 'text-yellow-400'

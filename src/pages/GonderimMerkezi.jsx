@@ -7,9 +7,10 @@ import {
   CheckCircle, XCircle, Clock, Phone, AtSign, Trash2, AlertTriangle
 } from 'lucide-react'
 import { getClientDocumentUrl } from '../services/documentService'
-import { sendEmail, openWhatsAppWeb, logWhatsAppWebSend } from '../services/whatsappService'
+import { sendEmail, sendDocumentViaWhatsAppChannel } from '../services/whatsappService'
 import { getSettings } from '../services/settingsService'
 import { createNotification } from '../services/notificationService'
+import { formatDateTimeTR } from '../utils/dateUtils'
 
 const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
 
@@ -217,18 +218,21 @@ export default function GonderimMerkezi() {
     })
     if (!docUrl) throw new Error('Dosya URL alinamadi')
 
-    const message = `Sayin ${client.name},\n${item.year} ${MONTHS[item.month]} donemine ait ${item.beyanLabel} ${documentType === 'tahakkuk' ? 'tahakkuk' : 'beyanname'} dosyaniz hazirdir.\n\nIndirmek icin linke tiklayin:\n${docUrl}\n\nSaygilarimizla,\nMUBiS ERP`
+    const label = `${item.year} ${MONTHS[item.month]} - ${item.beyanLabel} ${documentType === 'tahakkuk' ? 'Tahakkuk' : 'Beyanname'}`
+    const caption = `Sayin ${client.name},\n${item.year} ${MONTHS[item.month]} donemine ait ${item.beyanLabel} ${documentType === 'tahakkuk' ? 'tahakkuk' : 'beyanname'} dosyaniz hazirdir.\n\nSaygilarimizla,\nMUBiS ERP`
+    const documentName = `${item.beyanType}_${item.year}_${String(item.month).padStart(2, '0')}_${documentType}.pdf`
 
-    // wa.me ile WhatsApp Web'de hazir mesaj ac (PDF linki mesaj iceriginde)
-    openWhatsAppWeb({ phone, message })
-    await logWhatsAppWebSend({
+    await sendDocumentViaWhatsAppChannel({
+      phone,
+      documentUrl: docUrl,
+      documentName,
+      caption,
       clientId: client.id,
       beyanType: item.beyanType,
       year: item.year,
       month: item.month,
       documentType,
-      target: phone,
-      status: 'pending'
+      settings
     })
 
     await markAsSent(item, 'whatsapp', documentType)
@@ -722,7 +726,7 @@ export default function GonderimMerkezi() {
               ) : (
                 logs.map(log => (
                   <tr key={log.id} className="border-t border-blue-700/30 hover:bg-blue-800/20">
-                    <td className="px-4 py-3 text-gray-300 text-xs">{new Date(log.sent_at).toLocaleString('tr-TR')}</td>
+                     <td className="px-4 py-3 text-gray-300 text-xs">{formatDateTimeTR(log.sent_at)}</td>
                     <td className="px-4 py-3 text-gray-300 text-xs">{log.client_id}</td>
                     <td className="px-4 py-3 text-gray-300 text-xs">{BEYAN_TIPLERI.find(b => b.id === log.beyan_type)?.label || log.beyan_type} ({log.document_type})</td>
                     <td className="px-4 py-3 text-gray-300 text-xs">{log.year} {MONTHS[log.month]}</td>

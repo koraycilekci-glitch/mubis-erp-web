@@ -14,6 +14,29 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
+
+  /* Koyu temada acilir liste (select) secenekleri: tarayici varsayilan beyaz
+     zeminde acik renk yazi okunamaz hale geliyordu. Tum select'lerde secenek
+     zemini koyu, yazi acik olsun — "Musteri Secin" vb. listeler okunabilsin. */
+  select option,
+  select optgroup {
+    background-color: #172554; /* blue-950 */
+    color: #f1f5f9; /* slate-100 */
+  }
+  select option:disabled {
+    color: #64748b; /* slate-500 */
+  }
+
+  /* Tutarli, gorunur klavye odagi — erisilebilirlik ve profesyonel his icin */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: 2px solid #fbbf24;
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
 }
 
 @layer components {
@@ -35,6 +58,32 @@
 
   .btn-gold {
     @apply bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-8 py-3 rounded-lg font-semibold hover:shadow-lg hover:shadow-yellow-500/30 transition-all duration-300;
+  }
+
+  /* Ikincil CTA: birincil (gold) aksiyonla yarismasin diye disari cizgili */
+  .btn-outline {
+    @apply inline-flex items-center justify-center gap-2 bg-transparent border-2 border-white/25 text-white px-8 py-3 rounded-lg font-semibold hover:bg-white/5 hover:border-white/40 transition-all duration-300;
+  }
+
+  /* Site genelinde tek tip section dikey bosluk — dagitik py-16/py-20 karisikligi yerine */
+  .section-py {
+    @apply py-16 md:py-20 lg:py-24;
+  }
+
+  /* Ana zemin uzerinde ikinci bir yuzey katmani — bolumler arasi derinlik icin */
+  .surface-alt {
+    background-color: #0d2145;
+  }
+
+  /* Tum kartlarda ayni cam-panel dili: opacity/border kombinasyonlari sayfa
+     icinde farkli farkli kullanilmasin diye tek kaynak */
+  .panel {
+    @apply bg-white/[0.04] backdrop-blur-sm rounded-2xl p-8 border border-white/10;
+  }
+
+  /* Koyu lacivert zeminde text-gray-400 gibi dusuk kontrastli tonlar yerine */
+  .text-muted {
+    color: rgb(203 213 225 / 0.75); /* slate-300 @ 75% */
   }
 }
 

@@ -10,7 +10,7 @@ export default function Footer() {
             <div className="flex items-center mb-4">
               <img src="/logo-text.png" alt="MUBiS ERP" className="h-11 w-auto object-contain" />
             </div>
-            <p className="text-gray-400 text-sm max-w-md">
+            <p className="text-muted text-sm max-w-md">
               Mali Müşavirin Dijital Çalışma Masası. Beyanlardan tahakkuklara, 
               e-defterden e-tebligata kadar tüm süreçlerinizi tek platformdan yönetin.
             </p>
@@ -19,16 +19,16 @@ export default function Footer() {
           <div>
             <h4 className="text-white font-semibold mb-4">Hızlı Linkler</h4>
             <div className="space-y-2">
-              <Link to="/" className="text-gray-400 hover:text-white text-sm block">Ana Sayfa</Link>
-              <Link to="/ozellikler" className="text-gray-400 hover:text-white text-sm block">Özellikler</Link>
-              <Link to="/iletisim" className="text-gray-400 hover:text-white text-sm block">İletişim</Link>
-              <Link to="/giris" className="text-gray-400 hover:text-white text-sm block">Giriş Yap</Link>
+              <Link to="/" className="text-muted hover:text-white text-sm block transition-colors">Ana Sayfa</Link>
+              <Link to="/ozellikler" className="text-muted hover:text-white text-sm block transition-colors">Özellikler</Link>
+              <Link to="/iletisim" className="text-muted hover:text-white text-sm block transition-colors">İletişim</Link>
+              <Link to="/giris" className="text-muted hover:text-white text-sm block transition-colors">Giriş Yap</Link>
             </div>
           </div>
 
           <div>
             <h4 className="text-white font-semibold mb-4">İletişim</h4>
-            <div className="space-y-2 text-sm text-gray-400">
+            <div className="space-y-2 text-sm text-muted">
               <p className="text-gray-300">{OFIS.unvan}</p>
               <a
                 href={HARITA_URL}
@@ -49,7 +49,7 @@ export default function Footer() {
         </div>
 
         <div className="border-t border-blue-800/50 mt-8 pt-8 text-center">
-          <p className="text-gray-500 text-sm">
+          <p className="text-muted text-sm">
             © 2026 MUBİS ERP. Tüm hakları saklıdır. 
             <span className="text-yellow-400 ml-1">💙</span>
           </p>

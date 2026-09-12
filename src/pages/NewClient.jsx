@@ -1,7 +1,10 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { ArrowLeft, Save, User, Building, MapPin, Calendar, FileText, X, Globe, Users, Newspaper, Eye, EyeOff, Plus } from 'lucide-react'
+import { ArrowLeft, Save, User, Building, MapPin, Calendar, FileText, X, Globe, Users, Newspaper, Eye, EyeOff, Plus, Home, Search } from 'lucide-react'
+import { searchNace, formatNaceCode } from '../utils/naceCodes'
+import { KIRA_STOPAJ_ORANI } from '../utils/kiraUtils'
+import { formatTurkishInput, parseTurkishNumber } from '../utils/numberFormat'
 
 export default function NewClient() {
   const navigate = useNavigate()
@@ -18,7 +21,7 @@ export default function NewClient() {
     email: '',
     phone: '',
     whatsapp: '',
-    phoneNumbers: [{ name: '', phone: '', isWhatsapp: true }],
+    phoneNumbers: [{ name: '', phone: '', email: '', isWhatsapp: true }],
     emails: [{ email: '' }],
     taxOffice: '',
     city: '',
@@ -50,8 +53,109 @@ export default function NewClient() {
     dvdPassword: '',
     portalTicariSicil: false,
     tsgUsername: '',
-    tsgPassword: ''
+    tsgPassword: '',
+    // Kira bilgisi (isyeri kirasi - mal sahipleri)
+    kiraBilgisi: {
+      stopaj: '',
+      kiraBaslangic: '',
+      kiraBitis: '',
+      isyeriSahipleri: []
+    }
   })
+
+  // NACE arama
+  const [naceQuery, setNaceQuery] = useState('')
+  const [naceResults, setNaceResults] = useState([])
+  const [showNaceDropdown, setShowNaceDropdown] = useState(false)
+
+  const handleNaceSearch = (value) => {
+    setNaceQuery(value)
+    if (value.length >= 2) {
+      setNaceResults(searchNace(value))
+      setShowNaceDropdown(true)
+    } else {
+      setNaceResults([])
+      setShowNaceDropdown(false)
+    }
+  }
+
+  const selectNace = (nace) => {
+    setFormData(prev => ({ ...prev, faaliyetKodu: nace.code, activityField: nace.desc }))
+    setNaceQuery(formatNaceCode(nace.code))
+    setShowNaceDropdown(false)
+  }
+
+  // Kira / mal sahibi yardimcilari
+  const setKiraField = (field, value) => {
+    setFormData(prev => ({ ...prev, kiraBilgisi: { ...prev.kiraBilgisi, [field]: value } }))
+  }
+
+  const addMalSahibi = () => {
+    setFormData(prev => ({
+      ...prev,
+      kiraBilgisi: {
+        ...prev.kiraBilgisi,
+        isyeriSahipleri: [...prev.kiraBilgisi.isyeriSahipleri, {
+          tc: '', adSoyad: '', kiraTutarTipi: 'net', netKira: '', brutKira: '',
+          kiraBaslangic: prev.kiraBilgisi.kiraBaslangic || '',
+          kiraBitis: prev.kiraBilgisi.kiraBitis || '',
+          stopaj: prev.kiraBilgisi.stopaj || ''
+        }]
+      }
+    }))
+  }
+
+  const updateMalSahibi = (index, field, value) => {
+    setFormData(prev => {
+      const list = [...prev.kiraBilgisi.isyeriSahipleri]
+      list[index] = { ...list[index], [field]: value }
+      return { ...prev, kiraBilgisi: { ...prev.kiraBilgisi, isyeriSahipleri: list } }
+    })
+  }
+
+  const updateMalSahibiTutar = (index, tip, value) => {
+    setFormData(prev => {
+      const list = [...prev.kiraBilgisi.isyeriSahipleri]
+      // Yazarken ham degeri tut; format ve karsi taraf hesabi blur'da yapilir
+      list[index] = { ...list[index], kiraTutarTipi: tip, [tip === 'brut' ? 'brutKira' : 'netKira']: value }
+      return { ...prev, kiraBilgisi: { ...prev.kiraBilgisi, isyeriSahipleri: list } }
+    })
+  }
+
+  const finalizeMalSahibiTutar = (index) => {
+    setFormData(prev => {
+      const list = [...prev.kiraBilgisi.isyeriSahipleri]
+      const sahip = { ...list[index] }
+      const tip = sahip.kiraTutarTipi === 'brut' ? 'brut' : 'net'
+      const girilen = tip === 'brut' ? sahip.brutKira : sahip.netKira
+      const stopajOrani = sahip.stopaj === 'var' ? KIRA_STOPAJ_ORANI : 0
+      if (girilen === '' || girilen === null || girilen === undefined) {
+        sahip.netKira = ''
+        sahip.brutKira = ''
+      } else {
+        const numericValue = parseTurkishNumber(girilen)
+        if (tip === 'net') {
+          sahip.netKira = formatTurkishInput(girilen)
+          sahip.brutKira = (numericValue / (1 - stopajOrani)).toFixed(2)
+        } else {
+          sahip.brutKira = formatTurkishInput(girilen)
+          sahip.netKira = (numericValue * (1 - stopajOrani)).toFixed(2)
+        }
+      }
+      list[index] = sahip
+      return { ...prev, kiraBilgisi: { ...prev.kiraBilgisi, isyeriSahipleri: list } }
+    })
+  }
+
+  const removeMalSahibi = (index) => {
+    setFormData(prev => ({
+      ...prev,
+      kiraBilgisi: {
+        ...prev.kiraBilgisi,
+        isyeriSahipleri: prev.kiraBilgisi.isyeriSahipleri.filter((_, i) => i !== index)
+      }
+    }))
+  }
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target
@@ -220,7 +324,7 @@ export default function NewClient() {
                   type="button"
                   onClick={() => setFormData(prev => ({
                     ...prev,
-                    phoneNumbers: [...prev.phoneNumbers, { name: '', phone: '', isWhatsapp: true }]
+                    phoneNumbers: [...prev.phoneNumbers, { name: '', phone: '', email: '', isWhatsapp: true }]
                   }))}
                   className="text-xs text-yellow-400 hover:text-yellow-300 flex items-center gap-1"
                 >
@@ -229,7 +333,7 @@ export default function NewClient() {
               </div>
               <div className="space-y-2">
                 {formData.phoneNumbers.map((item, idx) => (
-                  <div key={idx} className="flex gap-2 items-center">
+                  <div key={idx} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center">
                     <input
                       type="text"
                       placeholder="Ad Soyad"
@@ -239,7 +343,7 @@ export default function NewClient() {
                         next[idx] = { ...next[idx], name: e.target.value }
                         setFormData(prev => ({ ...prev, phoneNumbers: next }))
                       }}
-                      className="flex-1 bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-yellow-400"
+                      className="md:col-span-3 bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-yellow-400"
                     />
                     <input
                       type="text"
@@ -250,9 +354,20 @@ export default function NewClient() {
                         next[idx] = { ...next[idx], phone: e.target.value }
                         setFormData(prev => ({ ...prev, phoneNumbers: next }))
                       }}
-                      className="flex-1 bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-yellow-400"
+                      className="md:col-span-3 bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-yellow-400"
                     />
-                    <label className="flex items-center gap-1 text-xs text-gray-400 whitespace-nowrap cursor-pointer">
+                    <input
+                      type="email"
+                      placeholder="E-posta"
+                      value={item.email || ''}
+                      onChange={(e) => {
+                        const next = [...formData.phoneNumbers]
+                        next[idx] = { ...next[idx], email: e.target.value }
+                        setFormData(prev => ({ ...prev, phoneNumbers: next }))
+                      }}
+                      className="md:col-span-4 bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-yellow-400"
+                    />
+                    <label className="md:col-span-1 flex items-center justify-center gap-1 text-xs text-gray-400 whitespace-nowrap cursor-pointer">
                       <input
                         type="checkbox"
                         checked={item.isWhatsapp}
@@ -273,7 +388,7 @@ export default function NewClient() {
                           const next = formData.phoneNumbers.filter((_, i) => i !== idx)
                           setFormData(prev => ({ ...prev, phoneNumbers: next }))
                         }}
-                        className="p-1.5 text-gray-500 hover:text-red-400 transition-colors"
+                        className="md:col-span-1 p-1.5 text-gray-500 hover:text-red-400 transition-colors flex justify-center"
                       >
                         <X className="w-4 h-4" />
                       </button>
@@ -471,7 +586,216 @@ export default function NewClient() {
           </div>
         )}
 
-        {/* ✅ ELEKTRONİK HİZMETLER - e-Defter Periyot Eklendi */}
+        {/* Faaliyet Kodu (NACE) */}
+        <div className="bg-blue-800/20 rounded-2xl p-6 border border-blue-700/30">
+          <h3 className="text-lg font-semibold text-white mb-4 flex items-center space-x-2">
+            <Search className="w-5 h-5 text-yellow-400" />
+            <span>Faaliyet Kodu (NACE)</span>
+          </h3>
+          <div className="grid grid-cols-1 gap-4">
+            <div className="relative">
+              <label className="text-gray-400 text-sm block mb-1">NACE Kodu / Faaliyet Ara</label>
+              <input
+                type="text"
+                value={naceQuery}
+                onChange={(e) => handleNaceSearch(e.target.value)}
+                onFocus={() => naceQuery.length >= 2 && setShowNaceDropdown(true)}
+                onBlur={() => setTimeout(() => setShowNaceDropdown(false), 200)}
+                className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-4 text-white focus:outline-none focus:border-yellow-400 transition-colors"
+                placeholder="Orn: 466415 veya elektrik malzemeleri"
+              />
+              {showNaceDropdown && naceResults.length > 0 && (
+                <div className="absolute z-20 left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-blue-900 border border-blue-700/60 rounded-lg shadow-2xl">
+                  {naceResults.map(n => (
+                    <button
+                      key={n.code}
+                      type="button"
+                      onMouseDown={() => selectNace(n)}
+                      className="w-full text-left px-4 py-2.5 hover:bg-blue-800/60 transition-colors"
+                    >
+                      <span className="text-yellow-400 font-mono text-sm mr-2">{formatNaceCode(n.code)}</span>
+                      <span className="text-gray-200 text-sm">{n.desc}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {showNaceDropdown && naceQuery.length >= 2 && naceResults.length === 0 && (
+                <div className="absolute z-20 left-0 right-0 mt-1 bg-blue-900 border border-yellow-500/40 rounded-lg px-4 py-3 text-sm text-yellow-300">
+                  Bu kod sistemde kayitli degil. Kodu yazip aciklamayi asagiya elle girebilirsiniz.
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-gray-400 text-sm block mb-1">Faaliyet Kodu</label>
+                <input
+                  type="text"
+                  name="faaliyetKodu"
+                  value={formData.faaliyetKodu}
+                  onChange={handleChange}
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-4 text-white focus:outline-none focus:border-yellow-400 transition-colors"
+                  placeholder="466415"
+                />
+              </div>
+              <div>
+                <label className="text-gray-400 text-sm block mb-1">Faaliyet Aciklamasi</label>
+                <input
+                  type="text"
+                  name="activityField"
+                  value={formData.activityField}
+                  onChange={handleChange}
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-4 text-white focus:outline-none focus:border-yellow-400 transition-colors"
+                  placeholder="Kod listede yoksa aciklamayi buraya yazin"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Isyeri Kirasi - Mal Sahipleri */}
+        <div className="bg-blue-800/20 rounded-2xl p-6 border border-blue-700/30">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-white flex items-center space-x-2">
+              <Home className="w-5 h-5 text-yellow-400" />
+              <span>Isyeri Kirasi - Mal Sahipleri</span>
+            </h3>
+            <button
+              type="button"
+              onClick={addMalSahibi}
+              className="text-xs text-yellow-400 hover:text-yellow-300 flex items-center gap-1"
+            >
+              <Plus className="w-3.5 h-3.5" /> Mal Sahibi Ekle
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div>
+              <label className="text-gray-400 text-sm block mb-1">Kira Baslangic</label>
+              <input
+                type="date"
+                value={formData.kiraBilgisi.kiraBaslangic}
+                onChange={(e) => setKiraField('kiraBaslangic', e.target.value)}
+                className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-4 text-white focus:outline-none focus:border-yellow-400 transition-colors"
+              />
+            </div>
+            <div>
+              <label className="text-gray-400 text-sm block mb-1">Kira Bitis</label>
+              <input
+                type="date"
+                value={formData.kiraBilgisi.kiraBitis}
+                onChange={(e) => setKiraField('kiraBitis', e.target.value)}
+                className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-4 text-white focus:outline-none focus:border-yellow-400 transition-colors"
+              />
+            </div>
+            <div>
+              <label className="text-gray-400 text-sm block mb-1">Stopaj</label>
+              <select
+                value={formData.kiraBilgisi.stopaj}
+                onChange={(e) => setKiraField('stopaj', e.target.value)}
+                className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-4 text-white focus:outline-none focus:border-yellow-400 transition-colors"
+              >
+                <option value="">Seciniz</option>
+                <option value="var">Var</option>
+                <option value="yok">Yok</option>
+              </select>
+            </div>
+          </div>
+
+          {formData.kiraBilgisi.isyeriSahipleri.length === 0 ? (
+            <p className="text-gray-500 text-sm">Kirali isyeri yoksa bos birakabilirsiniz. Mal sahibi eklemek icin yukaridaki butonu kullanin.</p>
+          ) : (
+            <div className="space-y-4">
+              {formData.kiraBilgisi.isyeriSahipleri.map((sahip, idx) => (
+                <div key={idx} className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/30">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-gray-300 text-sm font-medium">Mal Sahibi {idx + 1}</span>
+                    <button type="button" onClick={() => removeMalSahibi(idx)} className="p-1.5 text-gray-500 hover:text-red-400 transition-colors">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-gray-500 text-xs block mb-1">TC Kimlik No</label>
+                      <input
+                        type="text"
+                        value={sahip.tc}
+                        onChange={(e) => updateMalSahibi(idx, 'tc', e.target.value)}
+                        className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400"
+                        placeholder="11 haneli TC"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 text-xs block mb-1">Ad Soyad</label>
+                      <input
+                        type="text"
+                        value={sahip.adSoyad}
+                        onChange={(e) => updateMalSahibi(idx, 'adSoyad', e.target.value)}
+                        className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400"
+                        placeholder="Mal sahibi adi"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 text-xs block mb-1">Stopaj</label>
+                      <select
+                        value={sahip.stopaj}
+                        onChange={(e) => updateMalSahibi(idx, 'stopaj', e.target.value)}
+                        className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400"
+                      >
+                        <option value="">Seciniz</option>
+                        <option value="var">Var</option>
+                        <option value="yok">Yok</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-gray-500 text-xs block mb-1">Kira Giris Tipi</label>
+                      <div className="flex rounded-lg overflow-hidden border border-blue-700/50">
+                        <button
+                          type="button"
+                          onClick={() => updateMalSahibiTutar(idx, 'net', sahip.netKira)}
+                          className={`flex-1 py-2 text-sm transition-colors ${sahip.kiraTutarTipi === 'net' ? 'bg-yellow-500 text-blue-950 font-semibold' : 'bg-blue-900/30 text-gray-300 hover:bg-blue-800/50'}`}
+                        >
+                          Net
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateMalSahibiTutar(idx, 'brut', sahip.brutKira)}
+                          className={`flex-1 py-2 text-sm transition-colors ${sahip.kiraTutarTipi === 'brut' ? 'bg-yellow-500 text-blue-950 font-semibold' : 'bg-blue-900/30 text-gray-300 hover:bg-blue-800/50'}`}
+                        >
+                          Brut
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-gray-500 text-xs block mb-1">
+                        {sahip.kiraTutarTipi === 'net' ? 'Net Kira (TL)' : 'Brut Kira (TL)'}
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={sahip.kiraTutarTipi === 'net' ? sahip.netKira : sahip.brutKira}
+                        onChange={(e) => updateMalSahibiTutar(idx, sahip.kiraTutarTipi, e.target.value)}
+                        onBlur={() => finalizeMalSahibiTutar(idx)}
+                        className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400"
+                        placeholder="Orn: 18.000,00"
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <div className="w-full bg-blue-950/50 rounded-lg px-3 py-2 text-sm">
+                        <span className="text-gray-500 text-xs block">
+                          {sahip.kiraTutarTipi === 'net' ? 'Hesaplanan Brut' : 'Hesaplanan Net'}
+                        </span>
+                        <span className="text-green-400 font-semibold">
+                          {sahip.kiraTutarTipi === 'net' ? (sahip.brutKira || '-') : (sahip.netKira || '-')}
+                          {(sahip.netKira || sahip.brutKira) ? ' TL' : ''}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="bg-blue-800/20 rounded-2xl p-6 border border-blue-700/30">
           <h3 className="text-lg font-semibold text-white mb-4 flex items-center space-x-2">
             <FileText className="w-5 h-5 text-yellow-400" />

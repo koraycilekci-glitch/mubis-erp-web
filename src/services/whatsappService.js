@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase'
-import { getWhatsAppConfig, getSMTPConfig } from './settingsService'
+import { getWhatsAppConfig, getSMTPConfig, getSettings } from './settingsService'
 
 const WHATSAPP_API_VERSION = 'v18.0'
 
@@ -13,6 +13,66 @@ function normalizePhone(phone) {
   if (cleaned.startsWith('0')) cleaned = cleaned.slice(1)
   if (!cleaned.startsWith('90')) cleaned = '90' + cleaned
   return cleaned
+}
+
+export function getWhatsAppChannel(settings) {
+  return settings?.whatsapp_channel === 'web' ? 'web' : 'api'
+}
+
+/**
+ * Ayarlardaki kanala gore WhatsApp gonderimi yapar.
+ * - api: WhatsApp Business API uzerinden dosya eki ile gonderir.
+ * - web: web.whatsapp.com uzerinden link iceren hazir mesaj acar.
+ */
+export async function sendDocumentViaWhatsAppChannel({
+  phone,
+  documentUrl,
+  documentName,
+  caption,
+  clientId,
+  beyanType,
+  year,
+  month,
+  documentType,
+  settings = null
+}) {
+  const channel = getWhatsAppChannel(settings)
+
+  if (channel === 'web') {
+    const message = [
+      caption || 'Merhaba, dosyaniz asagidaki linktedir:',
+      documentUrl
+    ].join('\n')
+
+    const result = openWhatsAppWeb({ phone, message })
+
+    await logSend({
+      clientId,
+      beyanType,
+      year,
+      month,
+      documentType,
+      channel: 'whatsapp_web',
+      target: normalizePhone(phone),
+      status: 'pending',
+      messageId: ''
+    })
+
+    return { ...result, channel: 'whatsapp_web' }
+  }
+
+  return sendDocumentToWhatsApp({
+    phone,
+    documentUrl,
+    documentName,
+    caption,
+    clientId,
+    beyanType,
+    year,
+    month,
+    documentType,
+    settings
+  })
 }
 
 /**
@@ -128,7 +188,13 @@ export async function sendEmail({
   documentType,
   settings = null
 }) {
-  const config = getSMTPConfig(settings)
+  // Ayarlar parametre gelmediyse veya eksikse ayarlardan yukle
+  let smtpSettings = settings
+  let config = getSMTPConfig(smtpSettings)
+  if (!config.host || !config.user || !config.pass) {
+    try { smtpSettings = await getSettings() } catch { /* ayarlar okunamadi */ }
+    config = getSMTPConfig(smtpSettings)
+  }
   if (!config.host || !config.user || !config.pass) {
     throw new Error('SMTP ayarlari eksik. Lutfen Ayarlar > Iletisim kismindan girin.')
   }
@@ -260,11 +326,18 @@ export async function logWhatsAppWebSend({
 }
 
 /**
- * Secili evraklarin linklerini iceren text mesaji WhatsApp'tan gonderir.
- * 24 saat kurali icin oncelikle hello_world sablonu ile gonderim dener,
- * basarisiz olursa normal text mesaji dener.
+ * Secili evraklarin linklerini iceren mesaji WhatsApp'tan gonderir.
+ * Ayarlardaki kanala gore:
+ * - api: WhatsApp Business API uzerinden text mesaji olarak gonderir.
+ * - web: web.whatsapp.com uzerinden hazir mesaj acar.
  */
 export async function sendShareDocumentsViaWhatsApp({ phone, message, settings = null }) {
+  const channel = getWhatsAppChannel(settings)
+
+  if (channel === 'web') {
+    return openWhatsAppWeb({ phone, message })
+  }
+
   const config = getWhatsAppConfig(settings)
   if (!config.phoneNumberId || !config.accessToken) {
     throw new Error('WhatsApp API ayarlari eksik')

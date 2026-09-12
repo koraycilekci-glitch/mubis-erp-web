@@ -1,13 +1,64 @@
 import { supabase } from '../lib/supabase'
 import { getMyOffice, buildClientLoginEmail } from './officeService'
+import { parseMoneyInput } from '../utils/numberFormat'
 
 // ============ CLIENTS ============
 
+function safeParseJson(val) {
+  if (val === null || val === undefined) return {}
+  if (typeof val === 'object') return val
+  if (typeof val === 'string' && val.trim()) {
+    try {
+      const parsed = JSON.parse(val)
+      // Cift katmanli string JSON icin (text kolonuna iki kez JSON.stringify atilmis olabilir)
+      if (typeof parsed === 'string') return safeParseJson(parsed)
+      return parsed
+    } catch { return {} }
+  }
+  return {}
+}
+
+const normalizeEmployeeSalaryPayload = (payload) => {
+  const normalized = { ...payload }
+  const salaryType = normalized.ucret_tipi === 'net' ? 'net' : 'brut'
+  const value = salaryType === 'net' ? normalized.net_ucret : normalized.brut_ucret
+  const parsedValue = value === '' || value === null || value === undefined
+    ? null
+    : Number(String(value).replace(',', '.'))
+
+  normalized.ucret_tipi = salaryType
+  normalized.net_ucret = salaryType === 'net' && Number.isFinite(parsedValue) ? parsedValue : null
+  normalized.brut_ucret = salaryType === 'brut' && Number.isFinite(parsedValue) ? parsedValue : null
+  normalized.net_maas = normalized.net_ucret
+  normalized.brut_maas = normalized.brut_ucret
+
+  return normalized
+}
+
+const withEmployeeSalary = (payload) => normalizeEmployeeSalaryPayload(payload)
+
 export async function getClients() {
-  const { data, error } = await supabase
+  let query = supabase
     .from('clients')
     .select('*')
     .order('created_at', { ascending: false })
+
+  // Ikinci katman guvenlik: super_admin degilse kendi ofisinin
+  // musterilerini iste (RLS ek olarak veritabaninda da filtreler)
+  const { data: { user } } = await supabase.auth.getUser()
+  if (user) {
+    const { data: prof } = await supabase
+      .from('profiles')
+      .select('role, office_id')
+      .eq('id', user.id)
+      .maybeSingle()
+    if (prof && prof.role !== 'super_admin' && prof.role !== 'musteri' && prof.role !== 'client') {
+      const officeId = prof.office_id || (await getMyOffice())?.id
+      if (officeId) query = query.eq('office_id', officeId)
+    }
+  }
+
+  const { data, error } = await query
   if (error) throw error
   return data || []
 }
@@ -53,8 +104,8 @@ export async function addClient(clientData) {
     open_date: clientData.openDate || '',
     close_date: clientData.closeDate || '',
     musteri_sinifi: clientData.musteriSinifi || '',
-    nace_code: clientData.naceCode || '',
-    nace_desc: clientData.naceDesc || '',
+    nace_code: clientData.naceCode || clientData.faaliyetKodu || '',
+    nace_desc: clientData.naceDesc || clientData.activityField || clientData.faaliyetAlani || '',
     efatura: clientData.efatura || false,
     earsiv: clientData.earsiv || false,
     esmm: clientData.esmm || false,
@@ -65,7 +116,7 @@ export async function addClient(clientData) {
     eimza_end: clientData.eimzaEnd || '',
     kart_tipi: clientData.kartTipi || '',
     kart_sifre: clientData.kartSifre || '',
-    kira_bilgisi: typeof clientData.kiraBilgisi === 'object' && clientData.kiraBilgisi !== null ? JSON.stringify(clientData.kiraBilgisi) : (clientData.kiraBilgisi || ''),
+    kira_bilgisi: typeof clientData.kiraBilgisi === 'object' && clientData.kiraBilgisi !== null ? JSON.stringify(clientData.kiraBilgisi) : '{}',
     kira_kontrat_bitis: clientData.kiraKontratBitis || '',
     phonenumbers: clientData.phoneNumbers && clientData.phoneNumbers.length > 0 ? clientData.phoneNumbers : [],
     emails: clientData.emails && clientData.emails.length > 0 ? clientData.emails : [],
@@ -203,8 +254,8 @@ export async function bulkAddClients(clientsList) {
       close_date: c.closeDate || '',
       musteri_sinifi: c.musteriSinifi || '',
       short_name: c.shortName || c.kisaAd || '',
-      nace_code: c.naceCode || '',
-      nace_desc: c.naceDesc || '',
+      nace_code: c.naceCode || c.faaliyetKodu || '',
+      nace_desc: c.naceDesc || c.activityField || c.faaliyetAlani || '',
       tax_no: c.taxNo || '',
       efatura: parseBool(c.efatura),
       earsiv: parseBool(c.earsiv),
@@ -216,7 +267,7 @@ export async function bulkAddClients(clientsList) {
       eimza_end: c.eimzaEnd || '',
       kart_tipi: c.kartTipi || '',
       kart_sifre: c.kartSifre || '',
-      kira_bilgisi: typeof c.kiraBilgisi === 'object' && c.kiraBilgisi !== null ? JSON.stringify(c.kiraBilgisi) : (c.kiraBilgisi || ''),
+      kira_bilgisi: typeof c.kiraBilgisi === 'object' && c.kiraBilgisi !== null ? c.kiraBilgisi : {},
       kira_kontrat_bitis: c.kiraKontratBitis || '',
       dvs_username: c.dvsUsername || '',
       dvs_password: c.dvsPassword || '',
@@ -342,12 +393,14 @@ export async function updateClient(id, updateData) {
     capital: 'capital', openDate: 'open_date', closeDate: 'close_date',
     musteriSinifi: 'musteri_sinifi', shortName: 'short_name', kisaAd: 'short_name',
     naceCode: 'nace_code', naceDesc: 'nace_desc',
+    faaliyetKodu: 'nace_code', activityField: 'nace_desc', faaliyetAlani: 'nace_desc',
     efatura: 'efatura', earsiv: 'earsiv', esmm: 'esmm',
     edefter: 'edefter', edefterPeriod: 'edefter_period',
     serbestMeslek: 'serbest_meslek',
     eimzaStart: 'eimza_start', eimzaEnd: 'eimza_end',
     kartTipi: 'kart_tipi', kartSifre: 'kart_sifre',
     kiraBilgisi: 'kira_bilgisi', kiraKontratBitis: 'kira_kontrat_bitis',
+    kira_bilgisi: 'kira_bilgisi',
     dvsUsername: 'dvs_username', dvsPassword: 'dvs_password',
     dvdUsername: 'dvs_username', dvdPassword: 'dvs_password',
     sgkUser: 'sgk_user', sgkUsername: 'sgk_user',
@@ -358,6 +411,7 @@ export async function updateClient(id, updateData) {
     edevletUser: 'edevlet_user', edevletPass: 'edevlet_pass',
     ticaretSicilNo: 'ticaret_sicil_no', tsgUsername: 'ticaret_sicil_no',
     beyanProfile: 'beyan_profile',
+    beyanDurumlari: 'beyan_durumlari',
     status: 'status', username: 'username', password: 'password',
     tempPassword: 'temp_password',
     officials: 'officials',
@@ -433,6 +487,9 @@ export async function addPartner(clientId, partnerData) {
       email: partnerData.email || '',
       address: partnerData.address || '',
       title: partnerData.title || '',
+      sermaye: partnerData.sermaye ?? null,
+      pay_sayisi: partnerData.paySayisi ?? null,
+      edevlet_sifre: partnerData.edevletSifre || '',
     })
     .select()
     .single()
@@ -500,6 +557,9 @@ export async function updatePartner(id, partnerData) {
       email: partnerData.email || '',
       address: partnerData.address || '',
       title: partnerData.title || '',
+      sermaye: partnerData.sermaye ?? null,
+      pay_sayisi: partnerData.paySayisi ?? null,
+      edevlet_sifre: partnerData.edevletSifre || '',
     })
     .eq('id', id)
     .select()
@@ -539,6 +599,59 @@ export async function deletePartner(id) {
 
   const { error } = await supabase.from('partners').delete().eq('id', id)
   if (error) throw error
+}
+
+// e-Devlet islemlerinin (e-Tebligat, SGK odemesi) hangi ortak uzerinden
+// yapilacigini isaretler. aktif=true -> yalniz bu ortak isaretli (tek secim),
+// aktif=false -> isaret kaldirilir.
+export async function setEdevletAktifPartner(clientId, partnerId, aktif) {
+  if (aktif) {
+    await supabase.from('partners').update({ edevlet_aktif: false }).eq('client_id', clientId)
+  }
+  const { error } = await supabase
+    .from('partners')
+    .update({ edevlet_aktif: aktif })
+    .eq('id', partnerId)
+  if (error) throw error
+}
+
+// Portal: sirket kullanici kendi TC + e-Devlet sifresini girer.
+// TC eslesen ortak guncellenir, yoksa yeni ortak eklenir; isaret digerlerinden alinip
+// bu ortaga verilir (boylece otomasyonlar bu bilgileri kullanir).
+export async function ortakEdevletBilgisiKaydet(clientId, { name = '', tc = '', edevletSifre = '' }) {
+  if (!tc) throw new Error('TC Kimlik No zorunlu')
+  const { data: mevcut } = await supabase
+    .from('partners')
+    .select('id')
+    .eq('client_id', clientId)
+    .eq('tc', tc)
+    .maybeSingle()
+
+  let partnerId = mevcut?.id
+  if (partnerId) {
+    const { error } = await supabase
+      .from('partners')
+      .update({ name, tc, edevlet_sifre: edevletSifre })
+      .eq('id', partnerId)
+    if (error) throw error
+  } else {
+    const { data: yeni, error } = await supabase
+      .from('partners')
+      .insert({
+        client_id: clientId,
+        name,
+        tc,
+        edevlet_sifre: edevletSifre,
+        title: 'Yetkili',
+      })
+      .select('id')
+      .single()
+    if (error) throw error
+    partnerId = yeni.id
+  }
+
+  await setEdevletAktifPartner(clientId, partnerId, true)
+  return partnerId
 }
 
 // ============ BANKS ============
@@ -607,6 +720,7 @@ export async function getAccountPlans(clientId) {
     .select('*')
     .eq('client_id', clientId)
     .order('code')
+    .limit(10000)
   if (error) throw error
   return data || []
 }
@@ -657,6 +771,53 @@ export async function getAutoAddedAccounts(clientId) {
 
 // ============ EMPLOYEES (Personel) ============
 
+// gecmis_yil_izinleri_kullanildi kolonu Supabase'de her zaman gercek boolean
+// olarak donmeyebilir (elle eklenmis eski kayitlarda "true"/"false" metni ya da
+// 1/0 olarak gelebilir); bu yuzden okuma tarafinda da guvenli sekilde cevriliyor.
+const coerceBoolean = (value) => {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value === 1
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLocaleLowerCase('tr-TR')
+    return normalized === 'true' || normalized === '1'
+  }
+  return false
+}
+
+// gecmis_yil_bakiyeleri kolonu jsonb yerine text olarak saklanmis olabilir;
+// bu durumda JSON metni olarak doner, guvenli sekilde diziye cevrilir.
+const coerceBalanceArray = (value) => {
+  let raw = value
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw)
+    } catch {
+      raw = []
+    }
+  }
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((item) => ({ yil: Number(item?.yil) || 0, gun: Number(item?.gun) || 0 }))
+    .filter((item) => item.yil > 0)
+}
+
+const normalizeEmployeeRecord = (employee) => {
+  if (!employee) return employee
+  return {
+    ...employee,
+    ise_giris: employee.ise_giris || employee.ise_giris_tarihi || employee.iseGiris || null,
+    isten_cikis: employee.isten_cikis || employee.cikis_tarihi || employee.istenCikis || null,
+    dogum_tarihi: employee.dogum_tarihi || employee.dogumTarihi || null,
+    ise_giris_tarihi: employee.ise_giris || employee.ise_giris_tarihi || employee.iseGiris || null,
+    cikis_tarihi: employee.isten_cikis || employee.cikis_tarihi || employee.istenCikis || null,
+    sgk_durumu: employee.sgk_durumu || 'calisan',
+    ise_giris_bildirge_url: employee.ise_giris_bildirge_url || null,
+    isten_cikis_bildirge_url: employee.isten_cikis_bildirge_url || null,
+    gecmis_yil_izinleri_kullanildi: coerceBoolean(employee.gecmis_yil_izinleri_kullanildi),
+    gecmis_yil_bakiyeleri: coerceBalanceArray(employee.gecmis_yil_bakiyeleri)
+  }
+}
+
 export async function getEmployees(clientId) {
   const { data, error } = await supabase
     .from('employees')
@@ -664,36 +825,59 @@ export async function getEmployees(clientId) {
     .eq('client_id', clientId)
     .order('ad_soyad')
   if (error) throw error
-  return data || []
+  return (data || []).map(normalizeEmployeeRecord)
 }
 
-export async function addEmployee(clientId, employeeData) {
+export async function addEmployee(clientId, employeeData = {}) {
+  if (typeof clientId === 'object' && clientId !== null) {
+    employeeData = clientId
+    clientId = employeeData.client_id || employeeData.clientId
+  }
+  const resolvedClientId = Number(clientId)
+  if (!Number.isInteger(resolvedClientId) || resolvedClientId <= 0) {
+    throw new Error('Personel kaydı için geçerli bir müşteri seçilmelidir.')
+  }
+
   const { data, error } = await supabase
     .from('employees')
     .insert({
-      client_id: clientId,
+      client_id: resolvedClientId,
       ad_soyad: employeeData.ad_soyad || employeeData.adSoyad || '',
       tc_kimlik: employeeData.tc_kimlik || employeeData.tcKimlik || '',
-      ise_giris: employeeData.ise_giris || employeeData.iseGiris || null,
-      isten_cikis: employeeData.isten_cikis || employeeData.istenCikis || null,
-      brut_ucret: employeeData.brut_ucret || employeeData.brutUcret || 0,
+      ise_giris: employeeData.ise_giris || employeeData.ise_giris_tarihi || employeeData.iseGiris || null,
+      isten_cikis: employeeData.isten_cikis || employeeData.cikis_tarihi || employeeData.cikis_tarihi || employeeData.istenCikis || null,
+      brut_ucret: parseMoneyInput(employeeData.brut_ucret ?? employeeData.brut_maas ?? employeeData.brutUcret) ?? 0,
+      net_ucret: parseMoneyInput(employeeData.net_ucret ?? employeeData.net_maas),
+      ucret_tipi: employeeData.ucret_tipi || 'brut',
+      gecmis_yil_izinleri_kullanildi: coerceBoolean(employeeData.gecmis_yil_izinleri_kullanildi),
+      gecmis_yil_bakiyeleri: coerceBalanceArray(employeeData.gecmis_yil_bakiyeleri),
       dogum_tarihi: employeeData.dogum_tarihi || employeeData.dogumTarihi || null,
+      sgk_durumu: employeeData.sgk_durumu || 'calisan',
+      ise_giris_bildirge_url: employeeData.ise_giris_bildirge_url || null,
+      isten_cikis_bildirge_url: employeeData.isten_cikis_bildirge_url || null,
       aktif: employeeData.aktif !== undefined ? employeeData.aktif : true
     })
     .select()
     .single()
   if (error) throw error
-  return data
+  return normalizeEmployeeRecord(data)
 }
 
 export async function updateEmployee(id, employeeData) {
   const mapped = {}
   if (employeeData.ad_soyad !== undefined || employeeData.adSoyad !== undefined) mapped.ad_soyad = employeeData.ad_soyad || employeeData.adSoyad
   if (employeeData.tc_kimlik !== undefined || employeeData.tcKimlik !== undefined) mapped.tc_kimlik = employeeData.tc_kimlik || employeeData.tcKimlik
-  if (employeeData.ise_giris !== undefined || employeeData.iseGiris !== undefined) mapped.ise_giris = employeeData.ise_giris || employeeData.iseGiris
-  if (employeeData.isten_cikis !== undefined || employeeData.istenCikis !== undefined) mapped.isten_cikis = employeeData.isten_cikis || employeeData.istenCikis
-  if (employeeData.brut_ucret !== undefined || employeeData.brutUcret !== undefined) mapped.brut_ucret = employeeData.brut_ucret || employeeData.brutUcret
+  if (employeeData.ise_giris !== undefined || employeeData.ise_giris_tarihi !== undefined || employeeData.iseGiris !== undefined) mapped.ise_giris = employeeData.ise_giris || employeeData.ise_giris_tarihi || employeeData.iseGiris || null
+  if (employeeData.isten_cikis !== undefined || employeeData.cikis_tarihi !== undefined || employeeData.istenCikis !== undefined) mapped.isten_cikis = employeeData.isten_cikis || employeeData.cikis_tarihi || employeeData.istenCikis || null
+  if (employeeData.brut_ucret !== undefined || employeeData.brut_maas !== undefined || employeeData.brutUcret !== undefined) mapped.brut_ucret = parseMoneyInput(employeeData.brut_ucret ?? employeeData.brut_maas ?? employeeData.brutUcret) ?? 0
+  if (employeeData.net_ucret !== undefined || employeeData.net_maas !== undefined) mapped.net_ucret = parseMoneyInput(employeeData.net_ucret ?? employeeData.net_maas)
+  if (employeeData.ucret_tipi !== undefined) mapped.ucret_tipi = employeeData.ucret_tipi
+  if (employeeData.gecmis_yil_izinleri_kullanildi !== undefined) mapped.gecmis_yil_izinleri_kullanildi = coerceBoolean(employeeData.gecmis_yil_izinleri_kullanildi)
+  if (employeeData.gecmis_yil_bakiyeleri !== undefined) mapped.gecmis_yil_bakiyeleri = coerceBalanceArray(employeeData.gecmis_yil_bakiyeleri)
   if (employeeData.dogum_tarihi !== undefined || employeeData.dogumTarihi !== undefined) mapped.dogum_tarihi = employeeData.dogum_tarihi || employeeData.dogumTarihi || null
+  if (employeeData.sgk_durumu !== undefined) mapped.sgk_durumu = employeeData.sgk_durumu || 'calisan'
+  if (employeeData.ise_giris_bildirge_url !== undefined) mapped.ise_giris_bildirge_url = employeeData.ise_giris_bildirge_url || null
+  if (employeeData.isten_cikis_bildirge_url !== undefined) mapped.isten_cikis_bildirge_url = employeeData.isten_cikis_bildirge_url || null
   if (employeeData.aktif !== undefined) mapped.aktif = employeeData.aktif
   mapped.updated_at = new Date().toISOString()
 
@@ -704,7 +888,7 @@ export async function updateEmployee(id, employeeData) {
     .select()
     .single()
   if (error) throw error
-  return data
+  return normalizeEmployeeRecord(data)
 }
 
 export async function deleteEmployee(id) {
@@ -715,8 +899,12 @@ export async function deleteEmployee(id) {
 }
 
 export async function saveEmployeesFromExcel(clientId, employees) {
+  const resolvedClientId = Number(clientId)
+  if (!Number.isInteger(resolvedClientId) || resolvedClientId <= 0) {
+    throw new Error('Personel kaydı için geçerli bir müşteri seçilmelidir.')
+  }
   const rows = employees.map(e => ({
-    client_id: clientId,
+    client_id: resolvedClientId,
     ad_soyad: e.ad_soyad || '',
     tc_kimlik: e.tc_kimlik || '',
     ise_giris: e.ise_giris || null,
@@ -730,7 +918,7 @@ export async function saveEmployeesFromExcel(clientId, employees) {
     .insert(rows)
     .select()
   if (error) throw error
-  return data || []
+  return (data || []).map(normalizeEmployeeRecord)
 }
 
 // ============ LEAVE RECORDS (Izin Takip) ============
@@ -765,10 +953,10 @@ export async function addLeaveRecord(record) {
     .insert({
       employee_id: record.employee_id || record.employeeId,
       client_id: record.client_id || record.clientId,
-      yil: record.yil,
-      baslangic: record.baslangic,
-      bitis: record.bitis,
-      is_gunu: record.is_gunu || record.isGunu,
+      yil: record.yil || new Date(record.baslangic || record.baslangic_tarihi || Date.now()).getFullYear(),
+      baslangic: record.baslangic || record.baslangic_tarihi,
+      bitis: record.bitis || record.bitis_tarihi || record.baslangic || record.baslangic_tarihi,
+      is_gunu: record.is_gunu ?? record.gun ?? record.isGunu,
       aciklama: record.aciklama || ''
     })
     .select()
@@ -815,6 +1003,8 @@ export function dbToFrontend(dbClient) {
     kisaAd: dbClient.short_name || '',
     naceCode: dbClient.nace_code,
     naceDesc: dbClient.nace_desc,
+    faaliyetKodu: dbClient.nace_code,
+    activityField: dbClient.nace_desc,
     efatura: dbClient.efatura,
     earsiv: dbClient.earsiv,
     esmm: dbClient.esmm,
@@ -825,7 +1015,7 @@ export function dbToFrontend(dbClient) {
     eimzaEnd: dbClient.eimza_end,
     kartTipi: dbClient.kart_tipi,
     kartSifre: dbClient.kart_sifre,
-    kiraBilgisi: dbClient.kira_bilgisi,
+    kiraBilgisi: safeParseJson(dbClient.kira_bilgisi),
     kiraKontratBitis: dbClient.kira_kontrat_bitis,
     dvdUsername: dbClient.dvs_username,
     dvsUsername: dbClient.dvs_username,

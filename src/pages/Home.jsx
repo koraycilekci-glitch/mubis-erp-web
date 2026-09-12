@@ -1,4 +1,6 @@
 import { Link } from 'react-router-dom'
+import { useEffect } from 'react'
+import { recordSiteVisit } from '../services/statsService'
 import {
   ArrowRight, Shield, Zap, Users, BarChart3, Clock, Star, Calculator,
   FileText, ClipboardCheck, UserCog, ShieldCheck, Headphones, Bot
@@ -28,7 +30,7 @@ function DashboardOnizleme() {
               <img src="/logo-icon.png" alt="" className="w-5 h-5 object-contain" />
               <span className="text-white font-bold">MUBiS</span>
             </div>
-            {['Ana Sayfa', 'Müşteriler', 'Beyanlar', 'e-Belgeler', 'Raporlar', 'Takvim', 'Duyurular', 'Ayarlar'].map((m, i) => (
+            {['Dashboard', 'Müşteriler', 'Beyanlar', 'Yükleme', 'Gönderim', 'Otomasyon', 'Ödeme', 'Ayarlar'].map((m, i) => (
               <div key={m} className={`px-2 py-1.5 rounded-md ${i === 0 ? 'bg-blue-600 text-white' : 'text-blue-300/70'}`}>
                 {m}
               </div>
@@ -93,6 +95,9 @@ function DashboardOnizleme() {
 }
 
 export default function Home() {
+  // Site ziyaretci sayaci: ana sayfa acildiginda oturum basina bir kez kaydedilir
+  useEffect(() => { recordSiteVisit('/') }, [])
+
   const features = [
     { icon: Shield, title: 'Güvenli', description: 'E-İmza ve Mali Mühür entegrasyonu' },
     { icon: Zap, title: 'Hızlı', description: 'AI destekli otomasyon sistemi' },
@@ -120,29 +125,30 @@ export default function Home() {
 
               <h1 className="text-4xl sm:text-5xl xl:text-6xl font-black text-white mb-6 leading-[1.08]">
                 Mali Müşavirin
-                <span className="block bg-gradient-to-r from-blue-400 via-sky-300 to-yellow-400 bg-clip-text text-transparent">
+                <span className="block bg-gradient-to-r from-sky-300 via-blue-200 to-amber-300 bg-clip-text text-transparent">
                   Dijital Çalışma Masası
                 </span>
               </h1>
 
-              <p className="text-lg text-blue-100/80 mb-9 max-w-xl leading-relaxed">
+              <p className="text-lg text-slate-300/90 mb-9 max-w-xl leading-relaxed">
                 MUBİS ERP ile tüm mali müşavirlik süreçlerinizi tek platformdan yönetin.
                 Beyanlardan tahakkuklara, e-defterden e-tebligata kadar her şey parmaklarınızın ucunda.
               </p>
 
+              {/* Birincil aksiyon (gold) tek basina one cikar; ikincil aksiyon disari cizgili */}
               <div className="flex flex-col sm:flex-row gap-4">
                 <Link
-                  to="/ozellikler"
-                  className="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-yellow-400 to-amber-500 text-blue-950 px-8 py-4 rounded-xl font-bold text-lg shadow-lg shadow-amber-900/30 hover:shadow-amber-500/40 hover:-translate-y-0.5 transition-all"
+                  to="/giris"
+                  className="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-yellow-400 to-amber-500 text-blue-950 px-9 py-4 rounded-xl font-bold text-lg shadow-lg shadow-amber-900/30 hover:shadow-amber-500/40 hover:-translate-y-0.5 transition-all"
                 >
-                  Özellikleri Keşfet
+                  Hemen Başla
                   <ArrowRight className="w-5 h-5" />
                 </Link>
                 <Link
-                  to="/giris"
-                  className="inline-flex items-center justify-center bg-blue-600 hover:bg-blue-500 text-white px-9 py-4 rounded-xl font-bold text-lg shadow-lg shadow-blue-900/40 transition-colors"
+                  to="/ozellikler"
+                  className="btn-outline text-lg px-8 py-4"
                 >
-                  Hemen Başla
+                  Özellikleri Keşfet
                 </Link>
               </div>
             </div>
@@ -160,7 +166,7 @@ export default function Home() {
                 <div key={o.title} className="px-4 text-center">
                   <o.icon className="w-8 h-8 text-blue-300 mx-auto mb-3" strokeWidth={1.6} />
                   <div className="text-white font-semibold text-sm mb-1.5">{o.title}</div>
-                  <p className="text-blue-200/60 text-xs leading-relaxed">{o.desc}</p>
+                  <p className="text-slate-300/70 text-xs leading-relaxed">{o.desc}</p>
                 </div>
               ))}
             </div>
@@ -168,20 +174,20 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Ozellikler Grid */}
-      <section className="py-20 bg-blue-900/50">
+      {/* Ozellikler Grid — hero'dan ayrisan ikinci bir yuzey katmani */}
+      <section className="section-py surface-alt">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-4xl font-bold text-white mb-4">Neden MUBİS ERP?</h2>
-            <p className="text-gray-400 text-lg">Mali müşavirlik süreçlerinizi dönüştüren özellikler</p>
+            <p className="text-muted text-lg">Mali müşavirlik süreçlerinizi dönüştüren özellikler</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {features.map((feature, index) => (
-              <div key={index} className="bg-blue-950/30 backdrop-blur-sm rounded-2xl p-8 card-hover border border-blue-800/30">
+              <div key={index} className="panel card-hover">
                 <feature.icon className="w-12 h-12 text-yellow-500 mb-4" />
                 <h3 className="text-xl font-semibold text-white mb-2">{feature.title}</h3>
-                <p className="text-gray-400">{feature.description}</p>
+                <p className="text-muted">{feature.description}</p>
               </div>
             ))}
           </div>
@@ -189,7 +195,7 @@ export default function Home() {
       </section>
 
       {/* MUBIS AI Tanitim */}
-      <section className="py-20 bg-blue-950/30 border-y border-blue-800/30">
+      <section className="section-py border-y border-blue-800/30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <div className="inline-flex items-center gap-2 bg-blue-600/20 border border-blue-500/40 rounded-full px-4 py-1.5 mb-4">
@@ -197,21 +203,21 @@ export default function Home() {
               <span className="text-blue-200 text-sm font-medium">Yapay Zeka Destekli</span>
             </div>
             <h2 className="text-3xl lg:text-4xl font-bold text-white mb-4">MUBİS AI Asistan</h2>
-            <p className="text-gray-400 text-lg max-w-2xl mx-auto">
+            <p className="text-muted text-lg max-w-2xl mx-auto">
               7/24 yanınızda dijital mali müşavir asistanı. Vergi, SGK ve muhasebe konularında
               anında, güvenilir cevaplar alın.
             </p>
           </div>
 
           <div className="grid md:grid-cols-2 gap-8">
-            <div className="bg-blue-900/30 backdrop-blur-sm rounded-2xl p-8 border border-blue-700/30">
+            <div className="panel">
               <div className="flex items-center gap-3 mb-5">
                 <div className="bg-emerald-500/20 p-3 rounded-xl">
                   <Users className="w-7 h-7 text-emerald-400" />
                 </div>
                 <h3 className="text-xl font-bold text-white">Müşteriler İçin</h3>
               </div>
-              <ul className="space-y-3 text-gray-300">
+              <ul className="space-y-3 text-slate-200/90">
                 {[
                   'Bu ay ne kadar vergi/SGK ödeyeceğimi öğren',
                   'KDV, muhtasar ve SGK tahakkuk tutarlarımı gör',
@@ -227,14 +233,14 @@ export default function Home() {
               </ul>
             </div>
 
-            <div className="bg-blue-900/30 backdrop-blur-sm rounded-2xl p-8 border border-blue-700/30">
+            <div className="panel">
               <div className="flex items-center gap-3 mb-5">
                 <div className="bg-yellow-500/20 p-3 rounded-xl">
                   <UserCog className="w-7 h-7 text-yellow-400" />
                 </div>
                 <h3 className="text-xl font-bold text-white">Mali Müşavirler İçin</h3>
               </div>
-              <ul className="space-y-3 text-gray-300">
+              <ul className="space-y-3 text-slate-200/90">
                 {[
                   'Mevzuata uygun, kaynaklı teknik cevaplar al',
                   'Müşteri adı + ay + evrak tipi ile belgeyi anında bul',
@@ -254,20 +260,20 @@ export default function Home() {
       </section>
 
       {/* Ucretsiz Hesaplama Araclari */}
-      <section className="py-20">
+      <section className="section-py">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="bg-blue-900/40 border border-blue-700/30 rounded-3xl p-10 lg:p-14 flex flex-col lg:flex-row items-center gap-10">
+          <div className="panel !p-10 lg:!p-14 flex flex-col lg:flex-row items-center gap-10">
             <div className="flex-1 text-center lg:text-left">
               <div className="inline-flex items-center gap-2 bg-orange-500/20 border border-orange-500/40 rounded-full px-4 py-1.5 mb-5">
                 <Calculator className="w-4 h-4 text-orange-400" />
                 <span className="text-orange-300 text-sm font-medium">Ücretsiz - Üyelik Gerektirmez</span>
               </div>
               <h2 className="text-3xl lg:text-4xl font-bold text-white mb-4">Pratik Hesaplama Araçları</h2>
-              <p className="text-gray-300 text-lg mb-3">
+              <p className="text-slate-200/90 text-lg mb-3">
                 Kıdem ve ihbar tazminatı, kira artışı (güncel TÜİK oranıyla), gelir/kurumlar vergisi,
                 GMSİ, SSK primleri, tevkifatlı fatura, borçlanma ve daha fazlası.
               </p>
-              <p className="text-gray-500 text-sm">
+              <p className="text-muted text-sm">
                 Giriş yapmadan hemen kullanın.
               </p>
             </div>
@@ -282,10 +288,10 @@ export default function Home() {
       </section>
 
       {/* CTA */}
-      <section className="py-20 bg-gradient-to-r from-blue-900 to-blue-950">
+      <section className="section-py bg-gradient-to-r from-blue-900 to-blue-950">
         <div className="max-w-4xl mx-auto text-center px-4">
           <h2 className="text-4xl font-bold text-white mb-6">MUBİS ERP ile Tanışmaya Hazır mısınız?</h2>
-          <p className="text-gray-300 text-lg mb-10">
+          <p className="text-slate-200/90 text-lg mb-10">
             Hemen ücretsiz denemeye başlayın, mali müşavirlik süreçlerinizi dijitale taşıyın.
           </p>
           <Link to="/giris" className="btn-gold text-xl px-12 py-5 inline-flex items-center">

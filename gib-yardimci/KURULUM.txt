@@ -1,0 +1,45 @@
+==========================================================
+MUBiS GIB YARDIMCI PROGRAMI - KURULUM (Windows)
+==========================================================
+
+Bu program MUBiS ERP ile bilgisariniz arasinda kopru kurar.
+GIB (Dijital Vergi Dairesi) sayfalarindaki formlari otomatik
+doldurur, beyanname/tahakkuk ve e-Bildirge islemlerinde giris
+bilgilerinizi hazirlar.
+
+--- KURULUM (bir kere) ---
+
+1. Node.js kurulu mu? Degilse https://nodejs.org adresinden
+   "LTS" surumunu kurun (bir kere, 2 dakika).
+
+2. Bu klasordeki "kur.bat" dosyasina cift tiklayin.
+   (Gerekli paketleri indirir, internet gerekli)
+
+3. "config.ornek.json" dosyasini kopyalayip adini "config.json"
+   yapin ve icine GIB / e-Bildirge sifrelerinizi girin.
+   NOT: Bu dosya SADECE sizin bilgisayarinizda kalir,
+   hicbir sunucuya gonderilmez.
+
+4. "baslat.bat" dosyasina cift tiklayin.
+   Siyah bir pencere acilir ve acik kalir (kucultun).
+   Program bu pencereyle calisir.
+
+--- KULLANIM ---
+
+MUBiS'te bir tahakkuksan "Dijital Vergi Dairesi'nde Ode"
+butonuna basin. Program yuklu ve calisiyorsa GIB odeme
+sayfasi otomatik acilir ve form doldurulur; guvenlik kodunu
+siz girip SORGULA'ya basarsiniz.
+
+Indirilen belgeler "indirilenler" klasorune kaydedilir.
+
+--- BILGISAYAR ACILISINDA OTOMATIK BASLAMA (istege bagli) ---
+
+1. Windows + R tuslarina basin, "shell:startup" yazip Enter.
+2. "baslat.bat" dosyasini bu klasore sag tik > Kopyala ile
+   kopyalayin, acilan pencerede sag tik > Kopyaladi ozel >
+   "Kisayol" secenegiyle yapistirin.
+
+==========================================================
+Destek: www.mubiserp.com.tr
+==========================================================

@@ -11,3 +11,4 @@ mubis-automation/.env
 mubis-automation/downloads
 mubis-automation/__pycache__
 
+.env*

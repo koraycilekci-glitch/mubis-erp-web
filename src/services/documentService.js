@@ -1,3 +1,29 @@
+export const createTahakkukDocumentMetadata = ({
+  documentType = 'tahakkuk',
+  name,
+  fileName,
+  url,
+  storagePath,
+  uploadedAt = new Date().toISOString(),
+  ...metadata
+} = {}) => ({
+  ...metadata,
+  documentType,
+  label: documentType,
+  name: name || fileName || getDocumentTypeLabel(documentType),
+  fileName: fileName || name || '',
+  url: url || '',
+  storagePath: storagePath || '',
+  uploadedAt,
+})
+
+export const normalizeClientDocument = (document, fallbackType = 'tahakkuk') =>
+  typeof document === 'string'
+    ? { url: document, documentType: fallbackType, label: fallbackType }
+    : { ...document, documentType: document.documentType || document.type || fallbackType }
+
+export const getClientDocumentTypeLabel = (documentType) => documentType || 'Evrak'
+
 import { supabase } from '../lib/supabase'
 import { officePrefix, getMyOfficeId } from './officeService'
 
@@ -202,7 +228,8 @@ async function uploadGenericDocument(client, path, file) {
 export async function uploadGelirBeyanDocument({ client, year, documentType, file }) {
   const folder = (await getPrefix(client)) + getClientFolderName(client)
   const safeDocType = slugify(documentType)
-  const path = `${folder}/mali_veriler/gelir_beyani/${year}/${safeDocType}.pdf`
+  const ext = file.name.match(/\.(xlsx|xls)$/i) ? '.xlsx' : '.pdf'
+  const path = `${folder}/mali_veriler/gelir_beyani/${year}/${safeDocType}${ext}`
   return uploadGenericDocument(client, path, file)
 }
 
@@ -212,7 +239,8 @@ export async function uploadGelirBeyanDocument({ client, year, documentType, fil
 export async function uploadGeciciVergiDocument({ client, year, period, documentType, file }) {
   const folder = (await getPrefix(client)) + getClientFolderName(client)
   const safeDocType = slugify(documentType)
-  const path = `${folder}/mali_veriler/gecici_vergi/${year}/${period}/${safeDocType}.pdf`
+  const ext = file.name.match(/\.(xlsx|xls)$/i) ? '.xlsx' : '.pdf'
+  const path = `${folder}/mali_veriler/gecici_vergi/${year}/${period}/${safeDocType}${ext}`
   return uploadGenericDocument(client, path, file)
 }
 
@@ -244,6 +272,16 @@ export async function uploadAdminDocument({ client, folderPath, file }) {
   const safePath = folderPath.split('/').map(slugify).join('/')
   const safeName = slugify(file.name.replace(/\.pdf$/i, ''))
   const path = `${folder}/${safePath}/${safeName}.pdf`
+  return uploadGenericDocument(client, path, file)
+}
+
+/**
+ * Serbest meslek makbuzu yukleme (musteri "Faturalarim" bolumunde gorur)
+ */
+export async function uploadMakbuz({ client, name, file }) {
+  const folder = (await getPrefix(client)) + getClientFolderName(client)
+  const safeName = slugify(name || file.name.replace(/\.pdf$/i, ''))
+  const path = `${folder}/makbuzlar/${safeName}_${Date.now()}.pdf`
   return uploadGenericDocument(client, path, file)
 }
 
@@ -324,3 +362,23 @@ export async function uploadBulkBeyanDocuments(items) {
 
   return results
 }
+
+/**
+ * Ise Giris / Isten Cikis Bildirgesi belgesini AI ile okutur.
+ * fileUrl: Supabase Storage'a yuklenmis belgenin herkese acik URL'i
+ * bildirgeTipi: 'ise_giris' | 'isten_cikis'
+ * Donen JSON: { success, tc_kimlik, ad_soyad, dogum_tarihi, ise_giris_tarihi|isten_cikis_tarihi }
+ */
+export async function analyzePersonnelDocument({ fileUrl, bildirgeTipi }) {
+  const response = await fetch('/api/analyze-personnel-document', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileUrl, bildirgeTipi })
+  })
+  const result = await response.json()
+  if (!result.success) {
+    throw new Error(result.error || 'Belge okunamadı.')
+  }
+  return result
+}
+

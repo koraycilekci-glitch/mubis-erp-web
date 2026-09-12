@@ -1,167 +1,145 @@
 // Kira yenileme talebi akisi
 // Musteri yeni net kirayi bildirir -> mali musavir onaylar -> kira bilgileri guncellenir.
-// Talep, ayri tablo gerektirmemesi icin clients.kira_bilgisi JSON alani icinde tutulur.
 
 import { getClient, updateClient, dbToFrontend } from './clientService'
 import { parseKiraBilgisi, yeniDonemTarihleri, paraTR, tarihTR } from '../utils/kiraUtils'
+import { parseTurkishNumber } from '../utils/numberFormat'
+import * as kiraArtisService from './kiraArtisService'
+import { supabase } from '../lib/supabase'
 
-async function kiraBilgisiniAl(clientId) {
-  const db = await getClient(clientId)
-  const client = dbToFrontend(db)
-  return { client, kb: parseKiraBilgisi(client) }
+export async function getKiraTalebi(clientId) {
+  const client = await getClient(clientId)
+  const kira = parseKiraBilgisi(client)
+  return kira?.kiraDegisikligiTalebi || null
 }
 
-async function kiraBilgisiniKaydet(clientId, kb) {
-  await updateClient(clientId, { kiraBilgisi: kb })
-  return kb
-}
-
-/**
- * Musteri yeni net kira tutarini bildirir.
- * Mali musavire mesaj birakilir (client_messages tablosu yoksa sessizce gecilir).
- */
-export async function kiraYenilemeTalebiOlustur(clientId, { yeniNetKira, aciklama = '', clientName = '' }) {
-  const tutar = Number(yeniNetKira)
-  if (!clientId) throw new Error('Musteri bulunamadi')
-  if (!tutar || tutar <= 0) throw new Error('Gecerli bir kira tutari girin')
-
-  const { client, kb } = await kiraBilgisiniAl(clientId)
-  const donem = yeniDonemTarihleri(kb)
-  const eskiNet = Number(kb.kiraNet || kb.isYeriKirasi || 0) || 0
-
-  kb.yenilemeTalebi = {
-    yeniNetKira: tutar,
-    eskiNetKira: eskiNet,
-    yeniBaslangic: donem.baslangic,
-    yeniBitis: donem.bitis,
-    aciklama: String(aciklama || '').trim(),
-    durum: 'bekliyor',
-    talepTarihi: new Date().toISOString()
+export async function submitKiraTalebi(clientId, payload) {
+  const client = await getClient(clientId)
+  const kira = parseKiraBilgisi(client)
+  const nextKira = {
+    ...kira,
+    kiraDegisikligiTalebi: {
+      ...payload,
+      durum: 'bekliyor',
+      olusturmaTarihi: new Date().toISOString(),
+      talepTarihi: new Date().toISOString()
+    }
   }
-
-  await kiraBilgisiniKaydet(clientId, kb)
-
-  // Mali musavire bilgi mesaji
-  try {
-    const { replyFromClient } = await import('./messageService')
-    const artis = eskiNet > 0 ? ` (önceki: ${paraTR(eskiNet)} TL, artış %${(((tutar - eskiNet) / eskiNet) * 100).toFixed(2)})` : ''
-    await replyFromClient({
-      clientId,
-      clientName: clientName || client?.company || client?.name || '',
-      message:
-        `KİRA YENİLEME BİLDİRİMİ\n` +
-        `Yeni net kira tutarı: ${paraTR(tutar)} TL${artis}\n` +
-        `Yeni dönem: ${tarihTR(donem.baslangic)} - ${tarihTR(donem.bitis)}` +
-        (aciklama ? `\nAçıklama: ${aciklama}` : '') +
-        `\n\nOnayınız sonrası kira bilgileri güncellenecektir.`
-    })
-  } catch (e) {
-    console.warn('Kira bildirimi mesaji gonderilemedi:', e?.message || e)
-  }
-
-  return kb.yenilemeTalebi
-}
-
-/**
- * Mali musavir talebi onaylar: kira tutari ve kontrat tarihleri guncellenir.
- * @param {object} override - { yeniNetKira, yeniBaslangic, yeniBitis } ile duzeltme yapilabilir
- */
-export async function kiraTalebiOnayla(clientId, override = {}, onaylayan = '') {
-  const { kb } = await kiraBilgisiniAl(clientId)
-  const t = kb.yenilemeTalebi
-  if (!t) throw new Error('Bekleyen kira yenileme talebi yok')
-
-  const yeniNet = Number(override.yeniNetKira ?? t.yeniNetKira)
-  const yeniBaslangic = override.yeniBaslangic || t.yeniBaslangic
-  const yeniBitis = override.yeniBitis || t.yeniBitis
-
-  // Gecmis kayit
-  kb.gecmis = Array.isArray(kb.gecmis) ? kb.gecmis : []
-  kb.gecmis.push({
-    netKira: Number(kb.kiraNet || kb.isYeriKirasi || 0) || 0,
-    baslangic: kb.kiraBaslangic || null,
-    bitis: kb.kiraBitis || null,
-    kapanisTarihi: new Date().toISOString()
+  const updated = await updateClient(clientId, { kiraBilgisi: nextKira })
+  const clientName = client?.name || client?.company || client?.shortName || `Müşteri #${clientId}`
+  const { error: notificationError } = await supabase.from('notifications').insert({
+    client_id: clientId,
+    type: 'kira_yenileme',
+    title: 'Yeni kira artışı bildirimi',
+    message: `${clientName} yeni kira tutarını onayınıza gönderdi.`,
+    route: `/admin/client/${clientId}?tab=kira`,
+    metadata: {
+      client_id: clientId,
+      kira_talebi: nextKira.kiraDegisikligiTalebi
+    },
+    read: false,
+    is_read: false,
+    okundu: false
   })
-
-  // Guncel kira bilgileri
-  kb.isYeriKirasi = yeniNet
-  kb.kiraNet = yeniNet
-  kb.kiraBrut = ''
-  kb.kiraBaslangic = yeniBaslangic
-  kb.kiraBitis = yeniBitis
-
-  kb.yenilemeTalebi = {
-    ...t,
-    yeniNetKira: yeniNet,
-    yeniBaslangic,
-    yeniBitis,
-    durum: 'onaylandi',
-    onayTarihi: new Date().toISOString(),
-    onaylayan
-  }
-
-  await kiraBilgisiniKaydet(clientId, kb)
-
-  // Musteriye bilgi mesaji
-  try {
-    const { sendMessageToClient } = await import('./messageService')
-    await sendMessageToClient({
-      clientId,
-      message:
-        `Kira yenileme bildiriminiz onaylandı.\n` +
-        `Yeni net kira: ${paraTR(yeniNet)} TL\n` +
-        `Yeni kontrat dönemi: ${tarihTR(yeniBaslangic)} - ${tarihTR(yeniBitis)}`,
-      priority: 'normal',
-      actionType: 'bilgi',
-      channels: ['portal']
+  if (notificationError) {
+    await supabase.from('notifications').insert({
+      client_id: clientId,
+      type: 'kira_yenileme',
+      title: 'Yeni kira artışı bildirimi',
+      message: `${clientName} yeni kira tutarını onayınıza gönderdi.`,
+      route: `/admin/client/${clientId}?tab=kira`,
+      metadata: { client_id: clientId, kira_talebi: nextKira.kiraDegisikligiTalebi },
+      is_read: false
     })
-  } catch (e) {
-    console.warn('Kira onay mesaji gonderilemedi:', e?.message || e)
   }
-
-  return kb
+  return dbToFrontend(updated)
 }
 
-/** Talebi reddet (kira bilgileri degismez) */
-export async function kiraTalebiReddet(clientId, neden = '', reddeden = '') {
-  const { kb } = await kiraBilgisiniAl(clientId)
-  const t = kb.yenilemeTalebi
-  if (!t) throw new Error('Bekleyen kira yenileme talebi yok')
-
-  kb.yenilemeTalebi = {
-    ...t,
-    durum: 'reddedildi',
-    redTarihi: new Date().toISOString(),
-    redNedeni: neden,
-    reddeden
+export async function approveKiraTalebi(clientId, payloadOrReviewer = '', reviewer = '') {
+  const client = await getClient(clientId)
+  const kira = parseKiraBilgisi(client)
+  const payload = payloadOrReviewer && typeof payloadOrReviewer === 'object'
+    ? payloadOrReviewer
+    : {}
+  const talep = {
+    ...(kira?.kiraDegisikligiTalebi || {}),
+    ...payload
   }
-  await kiraBilgisiniKaydet(clientId, kb)
+  const onaylayan = typeof payloadOrReviewer === 'string' ? payloadOrReviewer : reviewer
+  if (!talep) throw new Error('Onaylanacak kira talebi bulunamadı')
 
-  try {
-    const { sendMessageToClient } = await import('./messageService')
-    await sendMessageToClient({
-      clientId,
-      message: `Kira yenileme bildiriminiz onaylanmadı.${neden ? `\nGerekçe: ${neden}` : ''}\nLütfen mali müşavirinizle görüşün.`,
-      priority: 'onemli',
-      actionType: 'bilgi',
-      channels: ['portal']
-    })
-  } catch (e) {
-    console.warn('Kira red mesaji gonderilemedi:', e?.message || e)
+  const netKira = parseTurkishNumber(talep.yeniNetKira)
+  const brutKira = parseTurkishNumber(talep.yeniBrutKira)
+  const eskiDonem = {
+    netKira: Number(kira.netKira || kira.kiraNet || kira.isYeriKirasi || 0) || 0,
+    brutKira: Number(kira.brutKira || kira.kiraBrut || 0) || 0,
+    kiraBaslangic: kira.kiraBaslangic || kira.kiraBaslangicTarihi || null,
+    kiraBitis: kira.kiraBitis || kira.kiraBitisTarihi || null,
+    stopaj: kira.stopaj || null,
+    isyeriSahipleri: Array.isArray(kira.isyeriSahipleri) ? kira.isyeriSahipleri : [],
+    evSahipleri: Array.isArray(kira.evSahipleri) ? kira.evSahipleri : [],
+    kayitTarihi: new Date().toISOString(),
+    kaynak: 'kira_yenileme_onayi'
   }
-
-  return kb
+  const kiraGecmisi = Array.isArray(kira.kiraGecmisi) ? kira.kiraGecmisi : []
+  const updatedKira = {
+    ...kira,
+    netKira: netKira || kira.netKira || 0,
+    brutKira: brutKira || kira.brutKira || 0,
+    kiraBaslangic: talep.yeniBaslangic || kira.kiraBaslangic,
+    kiraBitis: talep.yeniBitis || kira.kiraBitis,
+    kiraBaslangicTarihi: talep.yeniBaslangic || kira.kiraBaslangicTarihi,
+    kiraBitisTarihi: talep.yeniBitis || kira.kiraBitisTarihi,
+    kiraGecmisi: eskiDonem.netKira > 0 || eskiDonem.brutKira > 0
+      ? [...kiraGecmisi, eskiDonem]
+      : kiraGecmisi,
+    kiraDegisikligiTalebi: {
+      ...talep,
+      durum: 'onaylandi',
+      onaylayan,
+      onayTarihi: new Date().toISOString()
+    }
+  }
+  const updated = await updateClient(clientId, { kiraBilgisi: updatedKira })
+  return dbToFrontend(updated)
 }
 
-/** Tum musterilerdeki bekleyen kira yenileme taleplerini listeler (admin) */
-export async function getBekleyenKiraTalepleri(clients = []) {
-  return clients
-    .map(c => {
-      const kb = parseKiraBilgisi(c)
-      const t = kb.yenilemeTalebi
-      if (!t || t.durum !== 'bekliyor') return null
-      return { clientId: c.id, client: c, talep: t, kiraBilgisi: kb }
-    })
-    .filter(Boolean)
+export async function rejectKiraTalebi(clientId, reviewer = '', reason = '') {
+  const client = await getClient(clientId)
+  const kira = parseKiraBilgisi(client)
+  const talep = kira?.kiraDegisikligiTalebi
+  if (!talep) throw new Error('Reddedilecek kira talebi bulunamadı')
+  const updatedKira = {
+    ...kira,
+    kiraDegisikligiTalebi: {
+      ...talep,
+      durum: 'reddedildi',
+      onaylayan: reviewer,
+      redNedeni: reason,
+      onayTarihi: new Date().toISOString()
+    }
+  }
+  const updated = await updateClient(clientId, { kiraBilgisi: updatedKira })
+  return dbToFrontend(updated)
 }
+
+export { yeniDonemTarihleri, paraTR, tarihTR }
+
+export const kiraArtisBildirimleriniOlustur = kiraArtisService.kiraArtisBildirimleriniOlustur
+export const kiraArtisiYanitiniKaydet = kiraArtisService.kiraArtisiYanitiniKaydet
+export const kiraArtisiTalebiOlustur = kiraArtisService.kiraArtisiTalebiOlustur
+export const adminKiraArtisiOnayla = kiraArtisService.adminKiraArtisiOnayla
+export const kiraYenilemeTalebiOlustur = async (clientId, payload) => {
+  const client = await getClient(clientId)
+  const kira = parseKiraBilgisi(client)
+  const donem = yeniDonemTarihleri(kira)
+  return submitKiraTalebi(clientId, {
+    ...payload,
+    yeniBaslangic: payload?.yeniBaslangic || donem.baslangic,
+    yeniBitis: payload?.yeniBitis || donem.bitis
+  })
+}
+export const kiraTalebiOnayla = approveKiraTalebi
+export const kiraTalebiReddet = (clientId, reason = '', reviewer = '') => (
+  rejectKiraTalebi(clientId, reviewer, reason)
+)

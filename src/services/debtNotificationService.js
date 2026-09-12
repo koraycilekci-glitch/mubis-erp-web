@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase'
-import { getAccountingFee, getPayments, hesaplaBorcOzeti } from './paymentService'
-import { getWhatsAppConfig, getSMTPConfig } from './settingsService'
+import { getAccountingFee, getPayments, hesaplaBorcOzeti, getBankInfo, buildBorcMesaji, getActivePaymentProvider } from './paymentService'
+import { getWhatsAppConfig, getSMTPConfig, getSettings } from './settingsService'
+import { getWhatsAppChannel, openWhatsAppWeb } from './whatsappService'
 
 const WHATSAPP_API_VERSION = 'v18.0'
 
@@ -84,46 +85,84 @@ async function sendWhatsAppText({ phone, message, phoneNumberId, accessToken }) 
   return result
 }
 
-async function sendEmailMessage({ to, subject, body, smtpConfig }) {
+async function sendEmailMessage({ to, subject, body }) {
   const { sendEmail } = await import('./whatsappService')
-  return sendEmail({ to, subject, body, smtpConfig })
+  // sendEmail duz metin message bekler; firma imzasini /api/send-email ekler
+  return sendEmail({ toEmail: to, subject, message: body })
 }
 
-function formatDebtMessage(client, ozet) {
-  const name = client.company || client.name || 'Degerli Musterimiz'
-  const borc = ozet.kalanBorc.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-
-  return `Sayin ${name},
-
-Muhasebe hizmetlerimize iliskin borc durumunuz asagidaki gibidir:
-
-Toplam Borc: ${borc} TL
-
-Lutfen en kisa surede odemenizi gerceklestiriniz.
-Odeme yapmak icin musteri portalimizdan kredi karti ile odeme yapabilirsiniz.
-
-Saygilarimizla,
-MUBiS ERP`
+function buildDebtText(client, ozet, fee = null, bankInfo = null, linkUrl = '') {
+  const name = client.company || client.name || 'Değerli Müşterimiz'
+  return buildBorcMesaji({ clientName: name, fee, ozet, bankInfo, linkUrl })
 }
 
-function formatDebtEmailHtml(client, ozet) {
-  const name = client.company || client.name || 'Degerli Musterimiz'
-  const borc = ozet.kalanBorc.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+// Musteri icin kalan borc tutarinda online odeme linki olusturur
+async function createClientPaymentLink(client, ozet) {
+  try {
+    if (!(Number(ozet?.kalanBorc) > 0)) return ''
+    const provider = await getActivePaymentProvider()
+    if (provider !== 'paytr' && provider !== 'odeal') return ''
+    const res = await fetch(`/api/${provider}-payment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amount: Math.round(Number(ozet.kalanBorc) * 100) / 100,
+        clientId: client.id,
+        customerName: client.company || client.name || '',
+        customerEmail: client.email || '',
+        description: 'Muhasebe Ucreti Odemesi'
+      })
+    })
+    const data = await res.json()
+    return data?.success && data?.paymentUrl ? data.paymentUrl : ''
+  } catch (err) {
+    console.warn('Odeme linki olusturulamadi:', err.message)
+    return ''
+  }
+}
 
-  return `
-<html>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-  <p>Sayin <strong>${name}</strong>,</p>
-  <p>Muhasebe hizmetlerimize iliskin borc durumunuz asagidaki gibidir:</p>
-  <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 15px 0;">
-    <p style="margin: 0; font-size: 18px;"><strong>Toplam Borc: ${borc} TL</strong></p>
-  </div>
-  <p>Lutfen en kisa surede odemenizi gerceklestiriniz.</p>
-  <p>Odeme yapmak icin <a href="https://mubiserp.com/portal">musteri portalimizdan</a> kredi karti ile odeme yapabilirsiniz.</p>
-  <p>Saygilarimizla,<br/><strong>MUBiS ERP</strong></p>
-</body>
-</html>
-  `.trim()
+// Sirali (etkilesimli) WhatsApp gonderimi icin musteri verisini hazirlar
+// Borcu yoksa / ucret kaydi yoksa null doner
+export async function buildDebtPayload(clientId, { settings = null, bankInfo = null } = {}) {
+  try {
+    const { data: client, error } = await supabase
+      .from('clients')
+      .select('id, name, company, phone, email, phonenumbers, emails')
+      .eq('id', clientId)
+      .single()
+    if (error || !client) return null
+
+    const fee = await getAccountingFee(clientId)
+    if (!fee) return null
+    const clientPayments = await getPayments(clientId)
+    const ozet = hesaplaBorcOzeti(fee, clientPayments)
+    if (!(Number(ozet.kalanBorc) > 0)) return null
+
+    let effSettings = settings
+    if (!effSettings) {
+      try { effSettings = await getSettings() } catch { effSettings = null }
+    }
+    let effBank = bankInfo
+    if (!effBank) {
+      try { effBank = await getBankInfo() } catch { effBank = null }
+    }
+
+    const linkUrl = await createClientPaymentLink(client, ozet)
+    const message = `${buildDebtText(client, ozet, fee, effBank, linkUrl)}\n\nSaygılarımızla,\nMUBiS ERP`
+
+    const waNumbers = []
+    if (client?.phone) waNumbers.push(client.phone)
+    if (Array.isArray(client?.phonenumbers)) {
+      client.phonenumbers.forEach(pn => {
+        if (pn.isWhatsapp && pn.phone && !waNumbers.includes(pn.phone)) waNumbers.push(pn.phone)
+      })
+    }
+
+    return { clientId: client.id, clientName: client.company || client.name || '', message, phone: waNumbers[0] || '', kalanBorc: ozet.kalanBorc }
+  } catch (err) {
+    console.warn('Borc bildirim verisi hazirlanamadi:', err.message)
+    return null
+  }
 }
 
 export async function sendDebtNotification(clientId, channel, settings = null) {
@@ -144,9 +183,19 @@ export async function sendDebtNotification(clientId, channel, settings = null) {
     throw new Error('Musterinin borcu bulunmamaktadir')
   }
 
+  // Ayarlar parametre gelmediyse yukle
+  let effSettings = settings
+  if (!effSettings) {
+    try { effSettings = await getSettings() } catch { effSettings = null }
+  }
+
   // WhatsApp config
-  const waConfig = getWhatsAppConfig(settings)
-  const smtpConfig = getSMTPConfig(settings)
+  const waConfig = getWhatsAppConfig(effSettings)
+  const smtpConfig = getSMTPConfig(effSettings)
+  const bankInfo = await getBankInfo().catch(() => null)
+
+  // Musteriye ozel online odeme linki (kalan borc tutariyla)
+  const linkUrl = await createClientPaymentLink(client, ozet)
 
   // Kayit olustur
   const { data: notifRecord, error: nErr } = await supabase
@@ -178,20 +227,31 @@ export async function sendDebtNotification(clientId, channel, settings = null) {
       
       if (waNumbers.length === 0) throw new Error('Telefon numarasi yok')
       
-      const message = formatDebtMessage(client, ozet)
-      
+      const message = `${buildDebtText(client, ozet, fee, bankInfo, linkUrl)}\n\nSaygılarımızla,\nMUBiS ERP`
+
+      const waChannel = getWhatsAppChannel(effSettings)
+      let gonderilen = 0
+      let sonHata = ''
       for (const phone of waNumbers) {
         try {
-          await sendWhatsAppText({
-            phone,
-            message,
-            phoneNumberId: waConfig.phoneNumberId,
-            accessToken: waConfig.accessToken
-          })
+          if (waChannel === 'web') {
+            // Kullanicinin kendi WhatsApp'i uzerinden hazir mesaj acar
+            openWhatsAppWeb({ phone, message })
+          } else {
+            await sendWhatsAppText({
+              phone,
+              message,
+              phoneNumberId: waConfig.phoneNumberId,
+              accessToken: waConfig.accessToken
+            })
+          }
+          gonderilen++
         } catch (err) {
+          sonHata = err.message
           console.warn(`WhatsApp gonderim hatasi (${phone}):`, err.message)
         }
       }
+      if (gonderilen === 0) throw new Error(sonHata || 'WhatsApp gonderilemedi')
     } else if (channel === 'email') {
       // Birden fazla e-posta varsa hepsine gonder
       const emailList = []
@@ -208,7 +268,7 @@ export async function sendDebtNotification(clientId, channel, settings = null) {
       
       if (emailList.length === 0) throw new Error('E-posta adresi yok')
       
-      const html = formatDebtEmailHtml(client, ozet)
+      const html = buildDebtText(client, ozet, fee, bankInfo, linkUrl)
       
       for (const to of emailList) {
         try {

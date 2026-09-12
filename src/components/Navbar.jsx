@@ -29,9 +29,12 @@ export default function Navbar() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const handleLogout = () => {
-    logout()
-    navigate('/')
+  const handleLogout = async () => {
+    try {
+      await logout()
+    } finally {
+      window.location.replace('/')
+    }
     setIsMenuOpen(false)
   }
 

@@ -196,6 +196,23 @@ export async function replyFromClient({ clientId, message, parentId = null, clie
     console.error('Cevap gönderilemedi:', error)
     throw new Error('Cevap gönderilemedi: ' + error.message)
   }
+
+  // Admin tarafinda zil bildirimi olustur (tiklayinca Mesaj Merkezi acilir)
+  try {
+    await supabase.from('notifications').insert({
+      client_id: clientId,
+      audience: 'admin',
+      type: 'client_message',
+      title: `Yeni mesaj: ${clientName || 'Müşteri'}`,
+      message: message.trim().slice(0, 140),
+      route: `/admin/mesaj-merkezi?clientId=${clientId}`,
+      metadata: { client_id: clientId, message_id: data?.id },
+      is_read: false
+    })
+  } catch (e) {
+    console.warn('Mesaj bildirimi olusturulamadi:', e.message)
+  }
+
   return data
 }
 
@@ -251,12 +268,13 @@ export async function markAsRead(messageId) {
 export async function markAllAsRead(clientId, sender = 'admin') {
   if (!clientId) return
   try {
-    await supabase
+    const { error } = await supabase
       .from('client_messages')
       .update({ is_read: true, read_at: new Date().toISOString() })
       .eq('client_id', clientId)
       .eq('sender', sender)
       .eq('is_read', false)
+    if (error) console.warn('Mesajlar okundu işaretlenemedi:', error.message)
   } catch (e) {
     console.warn('Mesajlar okundu işaretlenemedi:', e.message)
   }

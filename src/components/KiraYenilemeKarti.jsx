@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { Home, AlertTriangle, Clock, CheckCircle, X, Send, RefreshCw, Info } from 'lucide-react'
 import {
   parseKiraBilgisi, hesaplaKiraTutarlari, kontratKalanGun,
-  bekleyenTalep, yeniDonemTarihleri, paraTR, tarihTR
+  bekleyenTalep, yeniDonemTarihleri, kiraGecmisi, paraTR, tarihTR
 } from '../utils/kiraUtils'
 import { kiraYenilemeTalebiOlustur } from '../services/kiraService'
 import { getKiraArtisOraniDetay } from '../data/defaults'
@@ -257,6 +257,21 @@ export default function KiraYenilemeKarti({ client, clientId, clientName = '', m
                 </p>
               </div>
             </div>
+            {kiraGecmisi(kb).length > 0 && (
+              <details className="mt-4 rounded-xl border border-blue-800/40 bg-blue-950/30 p-3">
+                <summary className="cursor-pointer text-sm font-semibold text-white">Eski kira kayıtlarını göster</summary>
+                <div className="mt-3 space-y-2">
+                  {kiraGecmisi(kb).slice().reverse().map((donem, index) => (
+                    <div key={`${donem.kayitTarihi || 'donem'}-${index}`} className="grid grid-cols-2 gap-2 rounded-lg bg-blue-900/30 p-3 text-xs sm:grid-cols-4">
+                      <span className="text-slate-400">Dönem<br /><b className="text-slate-200">{tarihTR(donem.kiraBaslangic)} - {tarihTR(donem.kiraBitis)}</b></span>
+                      <span className="text-slate-400">Net<br /><b className="text-slate-200">{paraTR(donem.netKira)} TL</b></span>
+                      <span className="text-slate-400">Brüt<br /><b className="text-slate-200">{paraTR(donem.brutKira)} TL</b></span>
+                      <span className="text-slate-400">Kayıt<br /><b className="text-slate-200">{tarihTR(donem.kayitTarihi)}</b></span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
 
             {talep ? (
               <div className="mt-4 bg-blue-500/10 border border-blue-500/30 rounded-xl p-3.5 flex items-start gap-2.5">

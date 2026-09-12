@@ -113,12 +113,14 @@ export function getDamgaVergisiOrani(yil) {
 }
 
 // Kidem Tazminati Tavani (donem bazli)
+// Kaynak: verginet / CSGB resmi tutarlari
 export const KIDEM_TAVANI = {
   '2024-1': 35058.58,
-  '2024-2': 37369.76,
-  '2025-1': 41828.42,
-  '2025-2': 46485.00,
-  '2026-1': 52000.00
+  '2024-2': 41828.42,
+  '2025-1': 46655.43,
+  '2025-2': 53919.68,
+  '2026-1': 64948.77,
+  '2026-2': 73729.87
 }
 
 // GMS Iradi Istisna Tutarlari (yil bazli konut)
@@ -279,12 +281,17 @@ export function hesaplaIzinHakki(iseGiris, referansTarih = new Date(), dogumTari
   
   if (yil < 1) return 0 // 1 yildan az calisma - izin hakki yok
   
-  let hakEdilenGun = 0
-  for (const dilim of IZIN_GUNLERI) {
-    if (yil >= dilim.minYil && yil < dilim.maxYil) {
-      hakEdilenGun = dilim.gun
-      break
-    }
+  // Is Kanunu Md.53: "1 yildan 5 yila kadar (5 yil DAHIL)" 14 gun,
+  // "5 yildan fazla 15 yildan az" 20 gun, "15 yil (DAHIL) ve fazlasi" 26 gun.
+  // Sinir degerlerin (tam 5 yil, tam 15 yil) hangi dilime dahil oldugu onemli;
+  // asagidaki <= / < kullanimi bu "dahil" ifadelerini birebir yansitir.
+  let hakEdilenGun
+  if (yil <= 5) {
+    hakEdilenGun = 14
+  } else if (yil < 15) {
+    hakEdilenGun = 20
+  } else {
+    hakEdilenGun = 26
   }
   
   // 18 yas alti veya 50 yas ustu: en az 20 gun
@@ -342,6 +349,29 @@ export function getIhbarSuresi(giris, cikis) {
   const d1 = new Date(giris), d2 = new Date(cikis)
   const ay = (d2 - d1) / (30.44 * 24 * 60 * 60 * 1000)
   return IHBAR_SURELERI.find(s => ay < s.maxAy) || IHBAR_SURELERI[IHBAR_SURELERI.length - 1]
+}
+
+// Kidem tazminatina esas calisma suresi (tam yil/ay/gun kirilimi)
+// Her tam yil icin 30 gun, artan her ay icin 30/12 gun, artan her gun icin 30/365 gun.
+export function getCalismaSuresi(giris, cikis) {
+  const bos = { yil: 0, ay: 0, gun: 0, toplamYil: 0, kidemGunu: 0 }
+  if (!giris || !cikis) return bos
+  const d1 = new Date(giris)
+  const d2 = new Date(cikis)
+  if (Number.isNaN(d1.getTime()) || Number.isNaN(d2.getTime()) || d2 < d1) return bos
+  let yil = d2.getFullYear() - d1.getFullYear()
+  let ay = d2.getMonth() - d1.getMonth()
+  let gun = d2.getDate() - d1.getDate()
+  if (gun < 0) {
+    ay -= 1
+    gun += new Date(d2.getFullYear(), d2.getMonth(), 0).getDate()
+  }
+  if (ay < 0) {
+    yil -= 1
+    ay += 12
+  }
+  const kidemGunu = yil * 30 + ay * (30 / 12) + gun * (30 / 365)
+  return { yil, ay, gun, toplamYil: yil + ay / 12 + gun / 365, kidemGunu }
 }
 
 // Brut -> Net hesapla

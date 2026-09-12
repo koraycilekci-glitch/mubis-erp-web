@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useClients } from '../hooks/useClients'
 import { useAuth } from '../context/AuthContext'
 import {
@@ -65,6 +66,7 @@ const ONCELIK_STIL = {
 export default function MesajMerkezi() {
   const { clients, loading: clientsLoading } = useClients()
   const { user } = useAuth()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [arama, setArama] = useState('')
   const [seciliId, setSeciliId] = useState(null)
@@ -93,6 +95,15 @@ export default function MesajMerkezi() {
   useEffect(() => { loadOzet() }, [])
   useEffect(() => { if (seciliId) loadMesajlar(seciliId) }, [seciliId])
   useEffect(() => { listeSonu.current?.scrollIntoView({ behavior: 'smooth' }) }, [mesajlar])
+
+  // Bildirimden gelindiyse (?clientId=...) ilgili musteriyi otomatik sec
+  useEffect(() => {
+    const cid = searchParams.get('clientId')
+    if (cid) {
+      setSeciliId(cid)
+      setSearchParams({}, { replace: true })
+    }
+  }, [searchParams])
 
   const loadOzet = async () => {
     setOzet(await getMessageSummaryByClient())

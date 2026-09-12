@@ -1,14 +1,34 @@
-import { useState } from 'react'
-import { Bell, CheckCircle, AlertTriangle, Info, X, Clock } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Bell, CheckCircle, AlertTriangle, Info, X, Clock, ExternalLink } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import {
+  getNotifications,
+  markAllNotificationsRead,
+  markNotificationRead
+} from '../services/notificationService'
+import { formatDateTimeTR } from '../utils/dateUtils'
+import { kiraArtisBildirimleriniOlustur } from '../services/kiraService'
+import { useClients } from '../hooks/useClients'
 
 export default function Notifications() {
-  const [notifications, setNotifications] = useState([
-    { id: 1, type: 'warning', title: 'e-İmza Süresi Doluyor', message: 'ABC Ltd. Şti. e-İmza sertifikası 15 gün içinde dolacak.', date: '2026-07-14', read: false },
-    { id: 2, type: 'info', title: 'Yeni Tebligat', message: 'XYZ Ticaret A.Ş. için yeni e-tebligat geldi.', date: '2026-07-14', read: false },
-    { id: 3, type: 'success', title: 'Beyan Gönderildi', message: 'Demo İnşaat Ltd. Şti. KDV beyannamesi başarıyla gönderildi.', date: '2026-07-13', read: true },
-    { id: 4, type: 'warning', title: 'Mali Mühür Yenileme', message: 'Mavi Teknoloji A.Ş. mali mühür yenileme tarihi yaklaşıyor.', date: '2026-07-12', read: true },
-    { id: 5, type: 'info', title: 'Yeni Müşteri Eklendi', message: 'Yeşil Enerji A.Ş. sisteme eklendi.', date: '2026-07-11', read: true },
-  ])
+  const navigate = useNavigate()
+  const { clients } = useClients()
+  const [notifications, setNotifications] = useState([])
+
+  useEffect(() => {
+    getNotifications().then(setNotifications).catch(() => setNotifications([]))
+  }, [])
+
+  useEffect(() => {
+    if (!clients?.length) return
+    kiraArtisBildirimleriniOlustur(clients)
+      .then((created) => {
+        if (created?.length) {
+          setNotifications((current) => [...created, ...current])
+        }
+      })
+      .catch(() => {})
+  }, [clients])
 
   const getIcon = (type) => {
     switch(type) {
@@ -28,18 +48,20 @@ export default function Notifications() {
     }
   }
 
-  const markAsRead = (id) => {
-    setNotifications(notifications.map(n => 
+  const markAsRead = async (id) => {
+    await markNotificationRead(id)
+    setNotifications(current => current.map(n =>
       n.id === id ? { ...n, read: true } : n
     ))
   }
 
   const deleteNotification = (id) => {
-    setNotifications(notifications.filter(n => n.id !== id))
+    setNotifications(current => current.filter(n => n.id !== id))
   }
 
-  const markAllAsRead = () => {
-    setNotifications(notifications.map(n => ({ ...n, read: true })))
+  const markAllAsRead = async () => {
+    await markAllNotificationsRead()
+    setNotifications(current => current.map(n => ({ ...n, read: true })))
   }
 
   const unreadCount = notifications.filter(n => !n.read).length
@@ -103,7 +125,7 @@ export default function Notifications() {
                     <div className="flex items-center space-x-3 mt-2 md:mt-0">
                       <span className="text-gray-500 text-xs flex items-center">
                         <Clock className="w-3 h-3 mr-1" />
-                        {notif.date}
+                          {notif.created_at ? formatDateTimeTR(notif.created_at) : notif.date}
                       </span>
                       <button 
                         onClick={() => markAsRead(notif.id)}
@@ -112,6 +134,19 @@ export default function Notifications() {
                       >
                         {notif.read ? 'Okundu' : 'Okundu İşaretle'}
                       </button>
+                      {(notif.route || notif.client_id) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            markAsRead(notif.id)
+                            navigate(notif.route || `/admin/client/${notif.client_id}?tab=kira`)
+                          }}
+                          className="text-blue-400 hover:text-blue-300"
+                          title="İlgili sayfayı aç"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </button>
+                      )}
                       <button 
                         onClick={() => deleteNotification(notif.id)}
                         className="text-gray-500 hover:text-red-400 transition-colors"
@@ -120,7 +155,17 @@ export default function Notifications() {
                       </button>
                     </div>
                   </div>
-                  <p className="text-gray-300 text-sm mt-2">{notif.message}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      markAsRead(notif.id)
+                      if (notif.route) navigate(notif.route)
+                      else if (notif.client_id) navigate(`/admin/client/${notif.client_id}?tab=kira`)
+                    }}
+                    className="block w-full text-left"
+                  >
+                    <p className="text-gray-300 text-sm mt-2">{notif.message}</p>
+                  </button>
                 </div>
               </div>
             </div>

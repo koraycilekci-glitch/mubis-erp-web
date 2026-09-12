@@ -18,6 +18,33 @@ const BEYAN_TYPES = [
   { id: 'edefter', name: 'e-Defter', color: 'text-cyan-400', bg: 'bg-cyan-500/10' },
 ]
 
+// Beyan durum anahtari cozumleyici — AylikBeyanTakip'in yazdigi formata birebir uyar.
+// Anahtarlar "ait oldugu ay" bazlidir: ${belongYear}_${belongMonth}_${type}
+const resolveBeyanStatusKey = (typeId, month, year, client) => {
+  if (typeId === 'gecici_vergi') {
+    // Ceyrek son ayi seciliyken anahtar ceyrek baslangic ayidir
+    const qStart = month - 2
+    return qStart >= 0 ? `${year}_${qStart}_gecici_vergi` : `${year - 1}_${12 + qStart}_gecici_vergi`
+  }
+  if (typeId === 'kurumlar_vergi' || typeId === 'gelir_vergi') {
+    // Yillik beyanlarin anahtari 0. aya yazilir (Aralik ayi gorunumunde)
+    return `${year}_0_${typeId}`
+  }
+  if (typeId === 'edefter') {
+    const rawPeriod = String(client?.edefterPeriod ?? 'aylik').toLowerCase().replace(/[\s_-]/g, '')
+    const uc3 = rawPeriod === '3aylik' || rawPeriod === 'ucaylik' || rawPeriod === '3ay'
+    if (uc3) {
+      const qStart = month - 2
+      return qStart >= 0 ? `${year}_${qStart}_edefter` : `${year - 1}_${12 + qStart}_edefter`
+    }
+    // Aylik e-defter: ilgili ayi takip eden 4. ayda yuklenir -> ait oldugu ay = month - 3
+    const edM = (month + 9) % 12
+    const edY = month <= 2 ? year - 1 : year
+    return `${edY}_${edM}_edefter`
+  }
+  return `${year}_${month}_${typeId}`
+}
+
 export default function AllBeyanReport() {
   const { updateClient } = useAuth()
   const { clients } = useClients()
@@ -45,7 +72,7 @@ export default function AllBeyanReport() {
         const monthConfig = profile[beyanType.id]?.[selectedMonth]
         if (!monthConfig?.active) return
 
-        const statusKey = `${selectedYear}_${selectedMonth}_${beyanType.id}`
+        const statusKey = resolveBeyanStatusKey(beyanType.id, selectedMonth, selectedYear, client)
         const status = durumlari[statusKey] || 'yapilmadi'
         const period = monthConfig.period || 'aylik'
 
@@ -101,8 +128,9 @@ export default function AllBeyanReport() {
     if (!client) return
 
     const durumlari = { ...(client.beyanDurumlari || {}) }
-    const statusKey = `${selectedYear}_${selectedMonth}_${beyanId}`
+    const statusKey = resolveBeyanStatusKey(beyanId, selectedMonth, selectedYear, client)
     durumlari[statusKey] = newStatus
+    durumlari[`${statusKey}_tarih`] = new Date().toISOString()
 
     await updateClient(clientId, { ...client, beyanDurumlari: durumlari })
     // State'i guncellemek icin sayfayi yenile

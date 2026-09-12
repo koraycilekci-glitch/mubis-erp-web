@@ -4,6 +4,10 @@ import { useParameters } from '../hooks/useParameters'
 import { useClients } from '../hooks/useClients'
 import * as D from '../data/defaults'
 import { jsPDF } from 'jspdf'
+import { formatTurkishInput, parseTurkishNumber } from '../utils/numberFormat'
+import { formatDateTR } from '../utils/dateUtils'
+import { createUnicodePdf } from '../utils/unicodePdf'
+import { getGuncelParametreler, kidemTavaniGuncel, asgariUcretBrutGuncel } from '../services/parametreService'
 
 // ========== ORTAK KOMPONENTLER ==========
 
@@ -17,11 +21,17 @@ function Card({ title, children, className = '' }) {
 }
 
 function Input({ label, value, onChange, type = 'number', placeholder = '', suffix = '', disabled = false, className = '' }) {
+  const amountInput = type === 'number'
   return (
     <div className={className}>
       <label className="text-gray-400 text-xs block mb-1">{label}</label>
       <div className="relative">
-        <input type={type} value={value} onChange={e => onChange(e.target.value)} disabled={disabled}
+        <input
+          type={amountInput ? 'text' : type}
+          inputMode={amountInput ? 'decimal' : undefined}
+          value={value}
+          onChange={e => onChange(amountInput ? formatTurkishInput(e.target.value) : e.target.value)}
+          disabled={disabled}
           className={`w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-yellow-500 ${disabled ? 'opacity-60' : ''}`}
           placeholder={placeholder} />
         {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">{suffix}</span>}
@@ -103,6 +113,9 @@ function IhbarKidem() {
   const [cikis, setCikis] = useState('')
   const [cikisSebebi, setCikisSebebi] = useState('isveren')
   const [emekliKagit, setEmekliKagit] = useState(false)
+  const [iban, setIban] = useState('')
+  const [odemeTarihi, setOdemeTarihi] = useState('')
+  const [odemeYontemi, setOdemeYontemi] = useState('banka')
   
   // Isveren
   const [isverenKaynak, setIsverenKaynak] = useState('elle')
@@ -115,12 +128,21 @@ function IhbarKidem() {
   const [ucretTip, setUcretTip] = useState('brut')
   const [ucretTutar, setUcretTutar] = useState('')
   const [ekOdeme, setEkOdeme] = useState('')
+  const [kullanilmayanIzin, setKullanilmayanIzin] = useState('')
   const [kidemChecked, setKidemChecked] = useState(true)
   const [ihbarChecked, setIhbarChecked] = useState(true)
   
   // Kayit
   const [savedId, setSavedId] = useState(null)
   const [msg, setMsg] = useState('')
+  const [webParams, setWebParams] = useState(null)
+
+  // Güncel yasal parametreler (kıdem tavanı, asgari ücret) web'den alınır.
+  useEffect(() => {
+    let active = true
+    getGuncelParametreler().then((p) => { if (active && p) setWebParams(p) })
+    return () => { active = false }
+  }, [])
 
   // Musteri secince isveren bilgilerini doldur
   useEffect(() => {
@@ -138,6 +160,7 @@ function IhbarKidem() {
   useEffect(() => {
     switch (cikisSebebi) {
       case 'istifa':
+      case 'emeklilik':
         setKidemChecked(emekliKagit)
         setIhbarChecked(false)
         break
@@ -156,26 +179,32 @@ function IhbarKidem() {
   }, [cikisSebebi, emekliKagit])
 
   // Brut ucret hesapla
-  const yil = cikis ? new Date(cikis).getFullYear() : 2025
+  const yil = cikis ? new Date(cikis).getFullYear() : new Date().getFullYear()
   let brutUcret = 0
   if (ucretTip === 'asgari') {
-    brutUcret = D.ASGARI_UCRET[yil]?.brut || D.ASGARI_UCRET[2025].brut
+    brutUcret = asgariUcretBrutGuncel(webParams, yil)
   } else if (ucretTip === 'brut') {
-    brutUcret = Number(ucretTutar) || 0
+    brutUcret = parseTurkishNumber(ucretTutar)
   } else if (ucretTip === 'net') {
-    brutUcret = D.nettenBrute(Number(ucretTutar) || 0, yil)
+    brutUcret = D.nettenBrute(parseTurkishNumber(ucretTutar), yil)
   }
-  const ekOdemeTutar = Number(ekOdeme) || 0
+  const ekOdemeTutar = parseTurkishNumber(ekOdeme)
+  const kullanilmayanIzinGun = parseTurkishNumber(kullanilmayanIzin)
+  const izinUcretiBrut = (brutUcret / 30) * kullanilmayanIzinGun
   const toplamBrut = brutUcret + ekOdemeTutar
 
   // Hesaplamalar
   const ihbarSuresi = giris && cikis ? D.getIhbarSuresi(giris, cikis) : null
-  const calismaSuresi = giris && cikis ? ((new Date(cikis) - new Date(giris)) / (365.25 * 24 * 60 * 60 * 1000)) : 0
-  const kidemTavani = cikis ? params.getKidemTavani(cikis) : D.getKidemTavani(new Date())
+  const calisma = D.getCalismaSuresi(giris, cikis)
+  const calismaSuresi = calisma.toplamYil
+  const kidemTavani = kidemTavaniGuncel(webParams, cikis || new Date())
 
   // Kidem
   const gunlukBrut = Math.min(toplamBrut / 30, kidemTavani / 30)
-  const kidemBrut = kidemChecked ? calismaSuresi * 30 * gunlukBrut : 0
+    const kidemEligible = (cikisSebebi === 'istifa' || cikisSebebi === 'emeklilik')
+      ? emekliKagit
+      : true
+    const kidemBrut = kidemChecked && kidemEligible && calismaSuresi >= 1 ? calisma.kidemGunu * gunlukBrut : 0
   const kidemDamga = kidemBrut * D.DAMGA_VERGISI
   const kidemNet = kidemBrut - kidemDamga
 
@@ -184,16 +213,17 @@ function IhbarKidem() {
   const ihbarBrut = ihbarChecked ? (toplamBrut / 30) * ihbarGun : 0
   const ihbarGelirV = ihbarBrut * 0.15  // gelir vergisi
   const ihbarDamga = ihbarBrut * D.DAMGA_VERGISI
-  const ihbarSgk = ihbarBrut * (D.SGK.isci + D.SGK.issizlik_isci)
-  const ihbarNet = ihbarBrut - ihbarGelirV - ihbarDamga - ihbarSgk
-
-  const toplamNet = kidemNet + ihbarNet
+  const ihbarNet = ihbarBrut - ihbarGelirV - ihbarDamga
+  const izinGelirV = izinUcretiBrut * 0.15
+  const izinDamga = izinUcretiBrut * D.DAMGA_VERGISI
+  const izinNet = izinUcretiBrut - izinGelirV - izinDamga
+  const toplamNet = kidemNet + ihbarNet + izinNet
 
   const temizle = () => {
     setAdSoyad(''); setTc(''); setAdres(''); setGiris(''); setCikis('')
     setCikisSebebi('isveren'); setEmekliKagit(false)
     setIsverenKaynak('elle'); setSelectedClient(''); setIsverenAd(''); setIsverenAdres(''); setSgkIsyeriNo('')
-    setUcretTip('brut'); setUcretTutar(''); setEkOdeme('')
+    setUcretTip('brut'); setUcretTutar(''); setEkOdeme(''); setKullanilmayanIzin('')
     setKidemChecked(true); setIhbarChecked(true); setSavedId(null); setMsg('')
   }
 
@@ -201,10 +231,11 @@ function IhbarKidem() {
     const data = {
       adSoyad, tc, adres, giris, cikis, cikisSebebi, emekliKagit,
       isverenAd, isverenAdres, sgkIsyeriNo,
-      ucretTip, ucretTutar, ekOdeme, brutUcret, toplamBrut,
+      ucretTip, ucretTutar, ekOdeme, kullanilmayanIzin, brutUcret, toplamBrut,
       kidemChecked, ihbarChecked,
       kidemBrut, kidemDamga, kidemNet,
-      ihbarBrut, ihbarGelirV, ihbarDamga, ihbarSgk, ihbarNet, toplamNet
+      ihbarBrut, ihbarGelirV, ihbarDamga, ihbarNet,
+      izinUcretiBrut, izinGelirV, izinDamga, izinNet, toplamNet
     }
     if (savedId) {
       await params.updateCalculation(savedId, data)
@@ -224,73 +255,144 @@ function IhbarKidem() {
   }
 
   const ibranameOlustur = () => {
-    const doc = new jsPDF()
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(16)
-    doc.text('IBRANAME', 105, 25, { align: 'center' })
-    
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(10)
-    let y = 45
-    const line = (text) => { doc.text(text, 20, y); y += 7 }
-    
-    line(`Isverenin Adi/Unvani: ${isverenAd}`)
-    line(`Isverenin Adresi: ${isverenAdres}`)
-    line(`SGK Isyeri No: ${sgkIsyeriNo}`)
-    y += 5
-    line(`Sigortali Adi Soyadi: ${adSoyad}`)
-    line(`TC Kimlik No: ${tc}`)
-    line(`Ikamet Adresi: ${adres}`)
-    y += 5
-    line(`Ise Giris Tarihi: ${giris ? new Date(giris).toLocaleDateString('tr-TR') : '-'}`)
-    line(`Isten Cikis Tarihi: ${cikis ? new Date(cikis).toLocaleDateString('tr-TR') : '-'}`)
-    line(`Cikis Sebebi: ${cikisSebebi.toUpperCase()}`)
-    line(`Calisma Suresi: ${calismaSuresi.toFixed(2)} yil`)
-    y += 5
-    line(`Son Brut Ucret: ${D.fmt(brutUcret)} TL`)
-    if (ekOdemeTutar > 0) line(`Ek Odemeler: ${D.fmt(ekOdemeTutar)} TL`)
-    line(`Toplam Brut Ucret: ${D.fmt(toplamBrut)} TL`)
-    y += 10
+    const doc = createUnicodePdf()
+    const pdfText = (value) => String(value ?? '')
+    const colors = {
+      navy: '#12375d',
+      navyDark: '#0b2948',
+      gold: '#d6a13a',
+      ink: '#25364a',
+      muted: '#607387',
+      pale: '#f4f7fa',
+      border: '#d9e2eb',
+      success: '#176b4b'
+    }
+    let y = 0
 
-    if (kidemChecked) {
+    const addPageHeader = (continuation = false) => {
+      doc.setFillColor(colors.navy)
+      doc.rect(14, 12, 182, continuation ? 18 : 34, 'F')
+      doc.setFillColor(colors.gold)
+      doc.rect(14, continuation ? 30 : 46, 182, 2, 'F')
+      doc.setTextColor('#ffffff')
       doc.setFont('helvetica', 'bold')
-      line('KIDEM TAZMINATI')
-      doc.setFont('helvetica', 'normal')
-      line(`Brut Kidem Tazminati: ${D.fmt(kidemBrut)} TL`)
-      line(`Damga Vergisi Kesintisi: ${D.fmt(kidemDamga)} TL`)
-      line(`Net Kidem Tazminati: ${D.fmt(kidemNet)} TL`)
-      y += 3
+      doc.setFontSize(continuation ? 13 : 19)
+      doc.text(continuation ? 'İŞÇİ İBRANAMESİ · DEVAM' : 'İŞÇİ İBRANAMESİ', 105, continuation ? 24 : 27, { align: 'center' })
+      if (!continuation) {
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(9.5)
+        doc.text('6098 Sayılı Türk Borçlar Kanunu ve 4857 Sayılı İş Kanunu', 105, 37, { align: 'center' })
+        y = 58
+      } else {
+        y = 44
+      }
+      doc.setTextColor(colors.ink)
     }
 
-    if (ihbarChecked) {
-      doc.setFont('helvetica', 'bold')
-      line('IHBAR TAZMINATI')
-      doc.setFont('helvetica', 'normal')
-      line(`Ihbar Suresi: ${ihbarSuresi?.hafta || 0} hafta (${ihbarGun} gun)`)
-      line(`Brut Ihbar Tazminati: ${D.fmt(ihbarBrut)} TL`)
-      line(`Gelir Vergisi: ${D.fmt(ihbarGelirV)} TL`)
-      line(`Damga Vergisi: ${D.fmt(ihbarDamga)} TL`)
-      line(`SGK Kesintisi: ${D.fmt(ihbarSgk)} TL`)
-      line(`Net Ihbar Tazminati: ${D.fmt(ihbarNet)} TL`)
-      y += 3
+    const ensureSpace = (height) => {
+      if (y + height <= 276) return
+      doc.addPage()
+      addPageHeader(true)
     }
 
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(12)
-    line(`TOPLAM NET TAZMINAT: ${D.fmt(toplamNet)} TL`)
-    
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(9)
-    y += 15
-    doc.text('Yukaridaki tutarlari tam ve eksiksiz olarak aldim.', 20, y); y += 5
-    doc.text('Isverenimden herhangi bir alacagim kalmadigini beyan ederim.', 20, y); y += 15
-    doc.text(`Tarih: ${new Date().toLocaleDateString('tr-TR')}`, 20, y)
-    doc.text('Imza: ........................', 130, y)
-    y += 10
-    doc.text(`Adi Soyadi: ${adSoyad}`, 20, y)
-    doc.text(`TC: ${tc}`, 130, y)
+    const addSection = (title) => {
+      ensureSpace(17)
+      doc.setFillColor(colors.navyDark)
+      doc.rect(14, y - 5, 182, 10, 'F')
+      doc.setFillColor(colors.gold)
+      doc.rect(14, y + 5, 182, 1.5, 'F')
+      doc.setTextColor('#ffffff')
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(10.5)
+      doc.text(pdfText(title), 19, y + 1.5)
+      doc.setTextColor(colors.ink)
+      y += 16
+    }
 
-    doc.save(`ibraname_${adSoyad.replace(/\s/g, '_') || 'belge'}.pdf`)
+    const addInfoRow = (label, value, highlighted = false) => {
+      ensureSpace(10)
+      doc.setFillColor(highlighted ? '#e9f4ef' : colors.pale)
+      doc.setDrawColor(colors.border)
+      doc.rect(14, y - 5, 182, 9, 'FD')
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(9)
+      doc.setTextColor(colors.muted)
+      doc.text(pdfText(label), 19, y + 1)
+      doc.setFont('helvetica', highlighted ? 'bold' : 'normal')
+      doc.setTextColor(highlighted ? colors.success : colors.ink)
+      doc.text(pdfText(value), 191, y + 1, { align: 'right' })
+      doc.setTextColor(colors.ink)
+      y += 10
+    }
+
+    const addParagraph = (text, size = 9.6, gap = 4.8) => {
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(size)
+      const wrapped = doc.splitTextToSize(pdfText(text), 174)
+      ensureSpace((wrapped.length * gap) + 4)
+      doc.text(wrapped, 18, y)
+      y += wrapped.length * gap + 4
+    }
+
+    const addAmountRow = (label, value, highlighted = false) => {
+      ensureSpace(10)
+      doc.setFillColor(highlighted ? '#e9f4ef' : '#fbfcfd')
+      doc.setDrawColor(colors.border)
+      doc.rect(14, y - 5, 182, 9, 'FD')
+      doc.setFont('helvetica', highlighted ? 'bold' : 'normal')
+      doc.setFontSize(highlighted ? 10 : 9.2)
+      doc.setTextColor(highlighted ? colors.success : colors.ink)
+      doc.text(pdfText(label), 19, y + 1)
+      doc.text(pdfText(value), 191, y + 1, { align: 'right' })
+      doc.setTextColor(colors.ink)
+      y += 10
+    }
+
+    addPageHeader()
+    addSection('İŞÇİ BİLGİLERİ')
+    addInfoRow('Adı soyadı', adSoyad || '-')
+    addInfoRow('T.C. kimlik no', tc || '-')
+    addInfoRow('İşe giriş tarihi', formatDateTR(giris))
+    addInfoRow('İşten ayrılış tarihi', formatDateTR(cikis))
+    addSection('İŞVEREN BİLGİLERİ')
+    addInfoRow('Unvanı', isverenAd || '-')
+    addInfoRow('Adresi', isverenAdres || '-')
+    addSection('İBRA BEYANI')
+    addParagraph("Yukarıda bilgileri yer alan işyerinde çalıştığım süre boyunca hak etmiş olduğum ücret alacaklarımı, fazla çalışma ücretlerimi, hafta tatili ücretlerimi, ulusal bayram ve genel tatil ücretlerimi, kullanılmayan yıllık izin ücretlerimi, ihbar tazminatımı, kıdem tazminatımı ve iş sözleşmesinden kaynaklanan diğer tüm yasal hak ve alacaklarımı eksiksiz olarak banka aracılığıyla aldığımı kabul ve beyan ederim. İşbu ibranamenin kendi özgür irademle düzenlendiğini, herhangi bir baskı altında kalmadan imzaladığımı, işverene karşı maddi veya manevi herhangi bir talebimin bulunmadığını beyan ederim. Bu ibraname, 6098 sayılı Türk Borçlar Kanunu'nun 420. maddesi hükümlerine uygun olarak düzenlenmiştir.")
+
+    doc.addPage()
+    addPageHeader(true)
+    addSection('ÖDENEN TUTARLAR')
+    addAmountRow('Alacak türü', 'Tutar (TL)', true)
+    addAmountRow('Fazla çalışma ücreti', `${D.fmt(ekOdemeTutar)} TL`)
+    addAmountRow('Yıllık izin ücreti (brüt)', `${D.fmt(izinUcretiBrut)} TL`)
+    addAmountRow('İzin gelir vergisi', `-${D.fmt(izinGelirV)} TL`)
+    addAmountRow('İzin damga vergisi', `-${D.fmt(izinDamga)} TL`)
+    addAmountRow('Yıllık izin ücreti (net)', `${D.fmt(izinNet)} TL`)
+    addAmountRow('İhbar tazminatı', `${D.fmt(ihbarNet)} TL`)
+    addAmountRow('Kıdem tazminatı', `${D.fmt(kidemNet)} TL`)
+    if (kullanilmayanIzinGun > 0) addAmountRow('Kullanılmayan izin günü', `${D.fmt(kullanilmayanIzinGun)} gün`)
+    addAmountRow('TOPLAM NET ÖDEME', `${D.fmt(toplamNet)} TL`, true)
+    addSection('ÖDEME VE İMZA')
+    addInfoRow('Düzenleme tarihi', formatDateTR(odemeTarihi || new Date()))
+    addInfoRow('Ödeme tarihi', odemeTarihi ? formatDateTR(odemeTarihi) : 'Ödeme sırasında doldurulacaktır')
+    addInfoRow('Ödeme yöntemi', odemeYontemi === 'banka' ? 'Banka' : 'Diğer')
+    addInfoRow('IBAN', iban || 'Ödeme sırasında yazılacaktır')
+    addParagraph('Önemli not: Türk Borçlar Kanunu’nun 420. maddesine göre ibranamenin geçerli olabilmesi için iş sözleşmesinin sona ermesinden itibaren en az 1 ay geçmiş olması ve ödemenin banka aracılığıyla yapılmış olması gerekir.', 8.7, 4.2)
+    ensureSpace(35)
+    doc.setFillColor('#f8fafc')
+    doc.setDrawColor(colors.border)
+    doc.rect(14, y - 5, 182, 29, 'FD')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9.5)
+    doc.setTextColor(colors.navy)
+    doc.text('PERSONEL BEYANI VE İMZA', 19, y + 2)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(colors.ink)
+    doc.text(pdfText(`Personel: ${adSoyad || '-'}`), 19, y + 11)
+    doc.text(pdfText(`T.C.: ${tc || '-'}`), 19, y + 18)
+    doc.text('İmza: ______________________________', 125, y + 18)
+    doc.save(`ibraname_${(adSoyad || 'belge').replace(/\s/g, '_')}.pdf`)
   }
 
   return (
@@ -310,12 +412,13 @@ function IhbarKidem() {
               <Select label="Isten Cikis Sebebi" value={cikisSebebi} onChange={setCikisSebebi} options={[
                 { value: 'isveren', label: 'Isveren Tarafindan' },
                 { value: 'istifa', label: 'Istifa' },
+                 { value: 'emeklilik', label: 'Emeklilik (yas disi sartlar)' },
                 { value: 'askerlik', label: 'Askerlik' },
                 { value: 'evlilik', label: 'Evlilik' },
                 { value: 'diger', label: 'Diger' }
               ]} />
-              {cikisSebebi === 'istifa' && (
-                <Checkbox label="SGK'dan emekli olabilir kagidi var" checked={emekliKagit} onChange={setEmekliKagit} />
+              {(cikisSebebi === 'istifa' || cikisSebebi === 'emeklilik') && (
+                <Checkbox label="Yastan emeklilik icin SGK'dan yazi alindi" checked={emekliKagit} onChange={setEmekliKagit} />
               )}
             </div>
           </Card>
@@ -341,7 +444,9 @@ function IhbarKidem() {
               <div className="grid grid-cols-2 gap-3">
                 <Select label="Ucret Tipi" value={ucretTip} onChange={(v) => {
                   setUcretTip(v)
-                  if (v === 'asgari') setUcretTutar(String(D.ASGARI_UCRET[yil]?.brut || D.ASGARI_UCRET[2025].brut))
+                  if (v === 'asgari') {
+                    setUcretTutar(String(asgariUcretBrutGuncel(webParams, yil)))
+                  }
                 }} options={[
                   { value: 'asgari', label: 'Asgari Ucret' },
                   { value: 'brut', label: 'Brut Ucret' },
@@ -353,6 +458,13 @@ function IhbarKidem() {
               {ucretTip === 'net' && brutUcret > 0 && (
                 <p className="text-yellow-400/70 text-xs">Hesaplanan Brut: {D.fmt(brutUcret)} TL</p>
               )}
+              <Input
+                label="Kullanılmayan İzinler"
+                value={kullanilmayanIzin}
+                onChange={setKullanilmayanIzin}
+                suffix="gün"
+                placeholder="0"
+              />
               <Input label="Ek Odemeler (varsa)" value={ekOdeme} onChange={setEkOdeme} suffix="TL" placeholder="0" />
               <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-2.5">
                 <span className="text-yellow-400 text-sm font-semibold">Toplam Brut: {D.fmt(toplamBrut)} TL</span>
@@ -370,8 +482,11 @@ function IhbarKidem() {
           <Card title="Hesaplama Sonucu">
             {toplamBrut > 0 && giris && cikis ? (
               <div className="space-y-1">
-                <Result label="Calisma Suresi" value={`${calismaSuresi.toFixed(2)} yil`} />
+                <Result label="Calisma Suresi" value={`${calisma.yil} yil ${calisma.ay} ay ${calisma.gun} gun`} />
                 <Result label="Cikis Sebebi" value={cikisSebebi.toUpperCase()} />
+                {kidemChecked && calismaSuresi > 0 && calismaSuresi < 1 && (
+                  <p className="text-red-400 text-xs">Calisma suresi 1 yildan az: kidem tazminati hakki dogmaz.</p>
+                )}
 
                 {kidemChecked && (
                   <>
@@ -392,8 +507,19 @@ function IhbarKidem() {
                     <Result label="Brut Ihbar" value={`${D.fmt(ihbarBrut)} TL`} />
                     <Result label="Gelir Vergisi" value={`-${D.fmt(ihbarGelirV)} TL`} negative />
                     <Result label="Damga Vergisi" value={`-${D.fmt(ihbarDamga)} TL`} negative />
-                    <Result label="SGK Kesintisi" value={`-${D.fmt(ihbarSgk)} TL`} negative />
                     <Result label="Net Ihbar Tazminati" value={`${D.fmt(ihbarNet)} TL`} highlight />
+                  </>
+                )}
+
+                {kullanilmayanIzinGun > 0 && (
+                  <>
+                    <div className="my-2 border-t border-blue-700/30" />
+                    <p className="text-yellow-400/70 text-xs font-semibold">KULLANILMAYAN İZİNLER</p>
+                    <Result label="İzin Günü" value={`${D.fmt(kullanilmayanIzinGun)} gün`} />
+                    <Result label="Brüt İzin Ücreti" value={`${D.fmt(izinUcretiBrut)} TL`} />
+                    <Result label="Gelir Vergisi" value={`-${D.fmt(izinGelirV)} TL`} negative />
+                    <Result label="Damga Vergisi" value={`-${D.fmt(izinDamga)} TL`} negative />
+                    <Result label="Net İzin Ücreti" value={`${D.fmt(izinNet)} TL`} highlight />
                   </>
                 )}
 
@@ -442,14 +568,16 @@ function IzinHesap() {
 
   let hakEdilen = 0
   if (yil >= 1) {
-    const izin = D.IZIN_GUNLERI.find(i => yil >= i.minYil && yil < i.maxYil)
-    hakEdilen = izin ? izin.gun : 0
+    // Is Kanunu Md.53: 5 yil DAHIL 14 gun, 5 yildan fazla-15'ten az 20 gun, 15 yil DAHIL ve fazlasi 26 gun.
+    if (yil <= 5) hakEdilen = 14
+    else if (yil < 15) hakEdilen = 20
+    else hakEdilen = 26
     // 18 yas alti ve 50 yas ustu en az 20 gun (Is Kanunu Md.53)
     if (ozelDurum && hakEdilen < 20) hakEdilen = 20
   }
 
-  const kalan = Math.max(0, hakEdilen - Number(kullanilanGun))
-  const gunlukUcret = (Number(brut) || 0) / 30
+  const kalan = Math.max(0, hakEdilen - parseTurkishNumber(kullanilanGun))
+  const gunlukUcret = parseTurkishNumber(brut) / 30
   const izinUcreti = kalan * gunlukUcret
 
   return (
@@ -471,7 +599,7 @@ function IzinHesap() {
             <Result label="Yillik Izin Hakki" value={`${hakEdilen} gun`} />
             <Result label="Kullanilan" value={`${kullanilanGun} gun`} />
             <Result label="Kalan Izin" value={`${kalan} gun`} highlight />
-            {Number(brut) > 0 && <Result label="Izin Ucreti" value={`${D.fmt(izinUcreti)} TL`} highlight />}
+            {parseTurkishNumber(brut) > 0 && <Result label="Izin Ucreti" value={`${D.fmt(izinUcreti)} TL`} highlight />}
             <div className="mt-3 text-[10px] text-gray-500 space-y-0.5">
               {D.IZIN_GUNLERI.map((i, idx) => (
                 <div key={idx}>{i.aciklama}: {i.gun} gun</div>
@@ -492,7 +620,7 @@ function GelirKurumlarVergisi() {
   const [tip, setTip] = useState('ucret_disi')
   const [karsilastir, setKarsilastir] = useState(false)
   
-  const m = Number(matrah) || 0
+  const m = parseTurkishNumber(matrah)
   const y = Number(yil)
   const gv = D.hesaplaGV(m, y, tip)
   const kv = m * (D.KV_ORANLARI[y] || 0.25)
@@ -576,8 +704,8 @@ function GMSIradi() {
   const y = Number(yil)
   const istisna = params.getGmsIstisna(y)
   
-  let yillikKonut = Number(konutKira) || 0
-  let yillikIsyeri = Number(isyeriKira) || 0
+  let yillikKonut = parseTurkishNumber(konutKira)
+  let yillikIsyeri = parseTurkishNumber(isyeriKira)
 
   // Konut kirasi nettir; brut/net secimi SADECE isyeri kirasina uygulanir
   let stopajIsyeri = 0
@@ -603,18 +731,18 @@ function GMSIradi() {
   if (giderYontemi === 'goturu') {
     gider = toplamMatrah * 0.15
   } else {
-    gider = Number(gercekGider) || 0
+    gider = parseTurkishNumber(gercekGider)
   }
 
   // Egitim-saglik (matrahin %10'unu gecemez)
   const egitimSaglik = Math.min(
-    (Number(egitimGider) || 0) + (Number(saglikGider) || 0),
+    parseTurkishNumber(egitimGider) + parseTurkishNumber(saglikGider),
     toplamMatrah * 0.10
   )
 
   // Sigorta primleri (brut ucretin %15'ini gecemez - GMS icin matrah baz)
   const sigortaPrim = Math.min(
-    (Number(hayatSig) || 0) + (Number(saglikSig) || 0),
+    parseTurkishNumber(hayatSig) + parseTurkishNumber(saglikSig),
     toplamMatrah * 0.15
   )
 
@@ -709,12 +837,12 @@ function DegerArtisKazanci() {
     }
   }, [satisTarih])
 
-  const alis = Number(alisBedel) || 0
-  const satis = Number(satisBedel) || 0
-  const gider = Number(satisGider) || 0
-  const aYiufe = Number(alisYiufe) || 1
-  const sYiufe = Number(satisYiufe) || 1
-  const ist = Number(istisna) || 0
+  const alis = parseTurkishNumber(alisBedel)
+  const satis = parseTurkishNumber(satisBedel)
+  const gider = parseTurkishNumber(satisGider)
+  const aYiufe = parseTurkishNumber(alisYiufe) || 1
+  const sYiufe = parseTurkishNumber(satisYiufe) || 1
+  const ist = parseTurkishNumber(istisna)
 
   const endeksliMaliyet = alis * (sYiufe / aYiufe)
   const endeksliGider = gider // giderler de endekslenebilir ama basit tutalim
@@ -818,8 +946,8 @@ function KiraArtis() {
     return () => { cancelled = true }
   }, [])
 
-  const kira = Number(mevcutKira) || 0
-  const oran = Number(tufeOran) || 0
+  const kira = parseTurkishNumber(mevcutKira)
+  const oran = parseTurkishNumber(tufeOran)
   const yeniKira = kira * (1 + oran / 100)
   const artis = yeniKira - kira
 
@@ -852,7 +980,7 @@ function KiraArtis() {
 function DamgaVergisi() {
   const [tutar, setTutar] = useState('')
   const [yil, setYil] = useState(String(new Date().getFullYear()))
-  const t = Number(tutar) || 0
+  const t = parseTurkishNumber(tutar)
   const oran = D.getDamgaVergisiOrani(Number(yil))
   const damga = t * oran
 
@@ -893,7 +1021,7 @@ function BrutNetHesap() {
   const [yon, setYon] = useState('brut_net')
   const [yil, setYil] = useState('2025')
   
-  const t = Number(tutar) || 0
+  const t = parseTurkishNumber(tutar)
   const y = Number(yil)
   
   let brut = t
@@ -949,7 +1077,7 @@ function EmeklilikHesabi() {
   let yasLimit = cinsiyet === 'erkek' ? 60 : 58
   let primGunLimit = tip === '4a' ? 7200 : 9000
   const emeklilikYas = dogumDate ? new Date(dogumDate.getTime() + yasLimit * 365.25 * 24 * 60 * 60 * 1000) : null
-  const mevcutPrim = Number(primGun) || 0
+  const mevcutPrim = parseTurkishNumber(primGun)
   const kalanPrim = Math.max(0, primGunLimit - mevcutPrim)
 
   return (
@@ -973,7 +1101,7 @@ function EmeklilikHesabi() {
         {dogumDate && girisDate ? (
           <div className="space-y-1">
             <Result label="Yas Siniri" value={`${yasLimit} yas`} />
-            <Result label="Emeklilik Yasi Tarihi" value={emeklilikYas?.toLocaleDateString('tr-TR') || '-'} />
+             <Result label="Emeklilik Yasi Tarihi" value={formatDateTR(emeklilikYas)} />
             <Result label="Gerekli Prim" value={`${primGunLimit} gun`} />
             <Result label="Mevcut Prim" value={`${mevcutPrim} gun`} />
             <Result label="Kalan Prim" value={`${kalanPrim} gun`} highlight />
@@ -998,8 +1126,8 @@ function BorclanmaHesabi() {
     setPek(String(sinirlar.asgari.toFixed(2)))
   }, [])
 
-  const g = Number(gun) || 0
-  const p = Number(pek) || 0
+  const g = parseTurkishNumber(gun)
+  const p = parseTurkishNumber(pek)
   const borc = g * p * 0.32
   const borcAsgari = g * sinirlar.asgari * 0.32
   const borcTavan = g * sinirlar.tavan * 0.32
@@ -1042,7 +1170,7 @@ function SSKHisseHesabi() {
   const [yil, setYil] = useState(String(new Date().getFullYear()))
   const [indirim, setIndirim] = useState('2')
   const y = Number(yil)
-  const b = Number(brut) || 0
+  const b = parseTurkishNumber(brut)
   const tavan = D.SGK.tavan[y] || D.SGK.tavan[2026]
   const sgkMatrah = Math.min(b, tavan)
   const sgkIsci = sgkMatrah * D.SGK.isci
@@ -1105,7 +1233,7 @@ function KDVHesapMakinesi() {
   const [tutar, setTutar] = useState('')
   const [kdvOran, setKdvOran] = useState('20')
   const [yon, setYon] = useState('haric')
-  const t = Number(tutar) || 0
+  const t = parseTurkishNumber(tutar)
   const oran = Number(kdvOran) / 100
   let kdvTutar, kdvHaric, kdvDahil
   if (yon === 'haric') { kdvHaric = t; kdvTutar = t * oran; kdvDahil = t + kdvTutar }
@@ -1146,7 +1274,7 @@ function TevkifatliStopajliFatura() {
   const [tip, setTip] = useState('tevkifat')
   const [tevOran, setTevOran] = useState('50')
   const [stopajOran, setStopajOran] = useState('20')
-  const t = Number(tutar) || 0
+  const t = parseTurkishNumber(tutar)
   const kdvTutar = t * (Number(kdvOran) / 100)
   let sonuc = {}
   if (tip === 'tevkifat') {

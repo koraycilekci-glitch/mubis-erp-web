@@ -70,7 +70,7 @@ export default async function handler(req, res) {
 
     try {
 
-        const { pdfUrl } = req.body;
+        const { pdfUrl, pdfText: clientPdfText } = req.body;
 
         if(!pdfUrl){
 
@@ -90,7 +90,7 @@ export default async function handler(req, res) {
             return res.status(200).json(cached);
         }
 
-        const promise = runAnalysis(pdfUrl);
+        const promise = runAnalysis(pdfUrl, clientPdfText);
         analysisInFlight.set(pdfUrl, promise);
 
         try {
@@ -115,12 +115,15 @@ export default async function handler(req, res) {
     }
 }
 
-async function runAnalysis(pdfUrl) {
+async function runAnalysis(pdfUrl, clientPdfText = "") {
 
         console.log("================================");
         console.log("MUBIS DOCUMENT INTELLIGENCE");
         console.log("================================");
         console.log("PDF :",pdfUrl);
+
+        // Analiz asamalari basarisiz olursa sebebi kullaniciya gostermek icin
+        const diag = { ai: "" };
 
         //--------------------------------------------------
         // PDF İNDİR
@@ -144,44 +147,62 @@ async function runAnalysis(pdfUrl) {
 
         let pdfText="";
 
-        try{
+        // Client tarafinda (tarayicida) cikarilan metin varsa onu kullan;
+        // sunucu tarafinda pdfjs/pdf-parse importu bazen Vercel bundle
+        // sorunlariyla basarisiz oluyor.
+        if (clientPdfText && String(clientPdfText).length > 100) {
 
-            const pdfjs=await getPdfJs();
+            console.log("Client-side metin kullaniliyor :",String(clientPdfText).length);
 
-            const loadingTask=pdfjs.getDocument({
-
-                data:new Uint8Array(arrayBuffer)
-
-            });
-
-            const pdf=await loadingTask.promise;
-
-            console.log("Sayfa :",pdf.numPages);
-
-            for(let pageNo=1;pageNo<=pdf.numPages;pageNo++){
-
-                const page=await pdf.getPage(pageNo);
-
-                const textContent=await page.getTextContent();
-
-                const pageText=textContent.items
-                    .map(item=>item.str)
-                    .join(" ");
-
-                pdfText += pageText + "\n";
-
-            }
-
-            pdfText = pdfText
+            pdfText = String(clientPdfText)
                 .replace(/\s+/g," ")
-                .replace(/\n\s+/g,"\n")
                 .trim();
 
-            console.log("Metin uzunluğu :",pdfText.length);
+        }
 
-        }catch(err){
+        // Client metni zaten varsa sunucu cikarimini atlama (metin iki kez eklenmesin)
+        if(!pdfText){
 
-            console.error("PDF Parser Hatası :",err);
+            try{
+
+                const pdfjs=await getPdfJs();
+
+                const loadingTask=pdfjs.getDocument({
+
+                    data:new Uint8Array(arrayBuffer)
+
+                });
+
+                const pdf=await loadingTask.promise;
+
+                console.log("Sayfa :",pdf.numPages);
+
+                for(let pageNo=1;pageNo<=pdf.numPages;pageNo++){
+
+                    const page=await pdf.getPage(pageNo);
+
+                    const textContent=await page.getTextContent();
+
+                    const pageText=textContent.items
+                        .map(item=>item.str)
+                        .join(" ");
+
+                    pdfText += pageText + "\n";
+
+                }
+
+                pdfText = pdfText
+                    .replace(/\s+/g," ")
+                    .replace(/\n\s+/g,"\n")
+                    .trim();
+
+                console.log("Metin uzunluğu :",pdfText.length);
+
+            }catch(err){
+
+                console.error("PDF Parser Hatası :",err);
+
+            }
 
         }
 
@@ -227,9 +248,12 @@ async function runAnalysis(pdfUrl) {
 
             }
 
+            if(!process.env.OPENAI_API_KEY) diag.ai = "OPENAI_API_KEY tanımlı değil (görüntü belge okunamadı)";
+            else diag.ai = "OpenAI dosya analizi başarısız";
+
             return {
                 success:false,
-                error:"PDF metni çıkarılamadı.",
+                error:"PDF metni çıkarılamadı (taranan görüntü belge olabilir). " + diag.ai,
                 document_type:"BILINMIYOR",
                 tax_type:"",
                 amount:0,
@@ -662,6 +686,19 @@ function parseTahakkukRegex(text,taxType){
     if(tah){
 
         result.accrual_no=tah[1];
+
+    }
+
+    // GIB belge (tahakkuk fis) numarasi formati: 2026091001NBK0000066
+    if(!result.accrual_no){
+
+        const belge=text.match(/\b(20\d{8}[A-Z]{1,5}\d{5,12})\b/);
+
+        if(belge){
+
+            result.accrual_no=belge[1];
+
+        }
 
     }
 
@@ -1134,11 +1171,18 @@ if (process.env.GROQ_API_KEY) {
             return aiResult;
         }
 
+        diag.ai = `Groq analizi başarısız: ${aiResult?.error || "bilinmeyen"}`;
+
     } catch (aiErr) {
 
         console.error("AI fallback hatası", aiErr);
+        diag.ai = `Groq analizi başarısız: ${aiErr.message}`;
 
     }
+
+} else {
+
+    diag.ai = "GROQ_API_KEY tanımlı değil";
 
 }
 
@@ -1154,9 +1198,14 @@ if (openAiResult && openAiResult.success) {
 
 }
 
+if (!process.env.OPENAI_API_KEY) diag.ai += "; OPENAI_API_KEY tanımlı değil";
+else diag.ai += "; OpenAI dosya analizi başarısız";
+
 return {
     success:false,
-    error:"PDF metni çıkarılamadı veya güvenilir analiz yapılamadı.",
+    error: pdfText.length > 100
+        ? `Tahakkuk metni okundu (${pdfText.length} karakter) ancak tutar güvenilir bulunamadı. AI fallback: ${diag.ai}`
+        : `PDF metni çıkarılamadı (taranan görüntü belge olabilir). AI fallback: ${diag.ai}`,
     document_type: "BILINMIYOR",
     tax_type: "",
     amount: 0,

@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { useClients } from '../hooks/useClients'
+import { getTahakkukDocuments, getDocumentTypeLabel } from '../utils/tahakkukUtils'
 import { 
   FolderOpen, Download, Eye, 
   Search, Plus, Trash2, Clock,
@@ -6,17 +8,32 @@ import {
 } from 'lucide-react'
 
 export default function DocumentCenter() {
+  const { clients } = useClients()
   const [searchTerm, setSearchTerm] = useState('')
   const [filterType, setFilterType] = useState('all')
   const [viewMode, setViewMode] = useState('grid')
 
-  const documents = [
+  const demoDocuments = [
     { id: 1, name: 'Temmuz 2026 Tahakkuk', type: 'pdf', size: '245 KB', date: '2026-07-12', client: 'ABC Ltd. Şti.', category: 'tahakkuk' },
     { id: 2, name: 'Haziran 2026 KDV Beyannamesi', type: 'pdf', size: '180 KB', date: '2026-06-25', client: 'ABC Ltd. Şti.', category: 'beyan' },
     { id: 3, name: '2026 2.Dönem Geçici Vergi', type: 'pdf', size: '320 KB', date: '2026-06-15', client: 'XYZ Ticaret A.Ş.', category: 'beyan' },
     { id: 4, name: 'e-Defter Berat 2026-06', type: 'xml', size: '1.2 MB', date: '2026-06-30', client: 'Demo İnşaat Ltd. Şti.', category: 'edefter' },
     { id: 5, name: 'e-Fatura 2026-06-01', type: 'pdf', size: '156 KB', date: '2026-06-01', client: 'Mavi Teknoloji A.Ş.', category: 'fatura' },
   ]
+
+  const documents = clients?.flatMap((client) => {
+    const clientDocuments = getTahakkukDocuments(client.beyanDurumlari || {})
+    return clientDocuments.map((document, index) => ({
+      id: document.id || `${client.id}-${index}`,
+      name: document.name || document.label,
+      type: document.name?.split('.').pop()?.toLowerCase() || 'pdf',
+      size: document.size || '-',
+      date: document.uploadedAt || document.createdAt || '-',
+      client: client.name,
+      category: getDocumentTypeLabel(document.documentType),
+      url: document.url,
+    }))
+  }) || demoDocuments
 
   const getIcon = (type) => {
     switch(type) {
@@ -140,10 +157,10 @@ export default function DocumentCenter() {
                   {getIcon(doc.type)}
                 </div>
                 <div className="flex space-x-1">
-                  <button className="text-gray-400 hover:text-yellow-400 transition-colors p-1">
+                  <button onClick={() => doc.url && window.open(doc.url, '_blank')} className="text-gray-400 hover:text-yellow-400 transition-colors p-1">
                     <Eye className="w-4 h-4" />
                   </button>
-                  <button className="text-gray-400 hover:text-blue-400 transition-colors p-1">
+                  <button onClick={() => doc.url && window.open(doc.url, '_blank')} className="text-gray-400 hover:text-blue-400 transition-colors p-1">
                     <Download className="w-4 h-4" />
                   </button>
                   <button className="text-gray-400 hover:text-red-400 transition-colors p-1">
@@ -201,10 +218,10 @@ export default function DocumentCenter() {
                     <td className="px-6 py-4 text-gray-400 text-sm">{doc.date}</td>
                     <td className="px-6 py-4">
                       <div className="flex space-x-2">
-                        <button className="text-gray-400 hover:text-yellow-400 transition-colors">
+                        <button onClick={() => doc.url && window.open(doc.url, '_blank')} className="text-gray-400 hover:text-yellow-400 transition-colors">
                           <Eye className="w-4 h-4" />
                         </button>
-                        <button className="text-gray-400 hover:text-blue-400 transition-colors">
+                        <button onClick={() => doc.url && window.open(doc.url, '_blank')} className="text-gray-400 hover:text-blue-400 transition-colors">
                           <Download className="w-4 h-4" />
                         </button>
                         <button className="text-gray-400 hover:text-red-400 transition-colors">

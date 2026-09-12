@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Camera, Upload, Trash2, Save, X, Eye, CheckCircle, AlertTriangle, FileText, Download } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { processZReportImage, convertToAccountingEntry } from '../services/zReportOCRService'
+import { processZReportImage, processZReportImagesBatch, convertToAccountingEntry } from '../services/zReportOCRService'
 import { saveZReport, updateZReportParsedData, createAccountingEntries } from '../services/zReportService'
 import { convertToLucaFormat, downloadLucaCSV, downloadLucaExcel, convertToDefterFormat, downloadDefterExcel } from '../services/zReportExportService'
 
@@ -113,21 +113,16 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
     
     try {
       if (isBatchMode) {
-        // Coklu mod - tum resimleri sirayla oku
-        const results = []
-        for (let i = 0; i < selectedFiles.length; i++) {
-          setCurrentFileIndex(i)
-          setMsg(`${i + 1}/${selectedFiles.length} resim isleniyor...`)
-          
-          const result = await processZReportImage(previewUrls[i])
-          results.push({
-            file: selectedFiles[i],
-            previewUrl: previewUrls[i],
-            ...result
-          })
-        }
-        setBatchResults(results)
-        setMsg(`${results.length} resim basariyla okundu`)
+        // Coklu mod - tek worker ile tum resimleri sirayla oku
+        setMsg('Toplu OCR islemi basladi...')
+        const results = await processZReportImagesBatch(previewUrls)
+        const enriched = results.map((result, i) => ({
+          file: selectedFiles[i],
+          previewUrl: previewUrls[i],
+          ...result
+        }))
+        setBatchResults(enriched)
+        setMsg(`${enriched.length} resim basariyla okundu`)
         setShowOcrModal(true)
       } else {
         // Tekli mod

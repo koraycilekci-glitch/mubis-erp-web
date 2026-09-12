@@ -1,0 +1,15 @@
+[protokol-hatasi] Unexpected token 'ÔøΩ', "ÔøΩ" is not valid JSON
+[protokol-hatasi] Unexpected token 'ÔøΩ', "ÔøΩ" is not valid JSON
+[protokol-hatasi] Unexpected token 'ÔøΩ', "ÔøΩ" is not valid JSON
+[protokol] payload cozumlenemedi: Unexpected token 'ÔøΩ', "ÔøΩ" is not valid JSON
+^CERROR: The process "4500" not found.
+ERROR: The process with PID 29164 (child process of PID 15468) could not be terminated.
+Reason: Yapçlmak istenen iülem desteklenmiyor.
+ERROR: The process with PID 15468 (child process of PID 15316) could not be terminated.
+Reason: Gîrevin áalçüan îrneßi yok.
+ERROR: The process with PID 18416 (child process of PID 25964) could not be terminated.
+Reason: Gîrevin áalçüan îrneßi yok.
+ERROR: The process with PID 14376 (child process of PID 25964) could not be terminated.
+Reason: Gîrevin áalçüan îrneßi yok.
+ERROR: The process "5596" not found.
+ERROR: The process "28448" not found.

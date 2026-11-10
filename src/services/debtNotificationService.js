@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase'
-import { getAccountingFee, getPayments, hesaplaBorcOzeti, getBankInfo, buildBorcMesaji, getActivePaymentProvider } from './paymentService'
+import { getAccountingFee, getPayments, hesaplaBorcOzeti, getBankInfo, getBankAccounts, buildBorcMesaji, getActivePaymentProvider } from './paymentService'
 import { getWhatsAppConfig, getSMTPConfig, getSettings } from './settingsService'
 import { getWhatsAppChannel, openWhatsAppWeb } from './whatsappService'
 

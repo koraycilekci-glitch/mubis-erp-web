@@ -3,6 +3,13 @@ import { getMyOfficeId } from './officeService'
 
 const DEFAULT_SETTINGS = {
   whatsapp_channel: 'api', // 'api' | 'web'
+  // WhatsApp Web gonderiminin hangi makineden yapilacagi:
+  // 'vps' = Istanbul sunucusundaki yardimci (ofis kapali olsa da calisir)
+  // 'yerel' = bu bilgisayardaki yardimci program (QR bir kez okutulur)
+  whatsapp_web_kaynak: 'vps',
+  // Otomatik borç bildirimi planı (JSON):
+  // { aktif, gunler:[1,3,5] (0=Pazar), saat:'10:00', kanal:'whatsapp'|'email' }
+  borc_bildirim_plan: JSON.stringify({ aktif: false, gunler: [1], saat: '10:00', kanal: 'whatsapp' }),
   whatsapp_phone_number_id: '',
   whatsapp_access_token: '',
   whatsapp_template_name: 'beyanname_bildirim',
@@ -190,6 +197,93 @@ export async function saveSettings(settings) {
     .upsert(rows, { onConflict: 'office_id,key' })
   if (error) throw error
   return true
+}
+
+// Tek anahtar okuma/yazma (e-imza bayraklari, fatura kesim taslaklari vb.)
+// Ofis bazli app_settings tablosunu kullanir; DDL gerektirmez.
+export async function getAppSetting(key) {
+  let ofisId = null
+  try { ofisId = await getMyOfficeId() } catch { /* filtresiz devam */ }
+  let sorgu = supabase.from('app_settings').select('value').eq('key', key)
+  if (ofisId) sorgu = sorgu.eq('office_id', ofisId)
+  const { data, error } = await sorgu.maybeSingle()
+  if (error) throw error
+  return data?.value ?? null
+}
+
+export async function setAppSetting(key, value) {
+  const ofisId = await getMyOfficeId()
+  const { error } = await supabase
+    .from('app_settings')
+    .upsert({ key, value: value ?? '', office_id: ofisId }, { onConflict: 'office_id,key' })
+  if (!error) return true
+  // Musteri rolleri app_settings RLS insert politikasindan gecemez —
+  // servis anahtari kullanan /api/app-settings koprusune dus.
+  const { data: { session } } = await supabase.auth.getSession()
+  const r = await fetch('/api/app-settings', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {})
+    },
+    body: JSON.stringify({ key, value: value ?? '', office_id: ofisId })
+  })
+  if (r.ok) return true
+  const hata = await r.json().catch(() => ({}))
+  throw new Error(hata.error || `Taslak kaydetme API hatasi (${r.status})`)
+}
+
+// Verilen onekle baslayan anahtarlari döner: [{ key, value }]
+export async function listAppSettings(prefix) {
+  let ofisId = null
+  try { ofisId = await getMyOfficeId() } catch { /* filtresiz devam */ }
+  let sorgu = supabase.from('app_settings').select('key, value').like('key', `${prefix}%`)
+  if (ofisId) sorgu = sorgu.eq('office_id', ofisId)
+  const { data, error } = await sorgu
+  if (error) throw error
+  return data || []
+}
+
+export async function deleteAppSetting(key) {
+  const ofisId = await getMyOfficeId()
+  // DIKKAT: RLS delete'i HATA VERMEDEN 0 satir silebilir — bu yuzden
+  // sayiyi istiyoruz; 0 ise API koprusune dusuyoruz.
+  const { error, count } = await supabase
+    .from('app_settings')
+    .delete({ count: 'exact' })
+    .eq('key', key)
+    .eq('office_id', ofisId)
+  if (!error && count > 0) return true
+  // Musteri rolleri delete politikasindan gecemez (0 satir) — API koprusune dus.
+  const { data: { session } } = await supabase.auth.getSession()
+  const r = await fetch(`/api/app-settings?key=${encodeURIComponent(key)}&office_id=${ofisId}`, {
+    method: 'DELETE',
+    headers: session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {}
+  })
+  if (r.ok) return true
+  const hata = await r.json().catch(() => ({}))
+  throw new Error(hata.error || `Silme API hatasi (${r.status})`)
+}
+
+// Kayit klasorleri (admin ayarlanabilir) — beyanname + fatura gelen/giden
+// klasorleri. Bos/okunamazsa varsayilan G: yollari kullanilir. Her ofis
+// (muhasebeci) kendi yollarini ayarlayabilir (app_settings ofis bazli).
+export async function kayitKlasorleriGetir() {
+  const varsayilan = {
+    beyannameKlasoru: "G:\\Drive'ım\\BEYANNAME",
+    faturaGelenKlasoru: "G:\\Drive'ım\\EDEFTER",
+    faturaGidenKlasoru: "G:\\Drive'ım\\EDEFTER"
+  }
+  try {
+    const st = await getSettings()
+    return {
+      beyannameKlasoru: String(st.beyanname_klasoru || '').trim() || varsayilan.beyannameKlasoru,
+      faturaGelenKlasoru: String(st.fatura_gelen_klasoru || '').trim() || varsayilan.faturaGelenKlasoru,
+      faturaGidenKlasoru: String(st.fatura_giden_klasoru || '').trim() || varsayilan.faturaGidenKlasoru
+    }
+  } catch {
+    return varsayilan
+  }
 }
 
 export function getWhatsAppConfig(settings) {

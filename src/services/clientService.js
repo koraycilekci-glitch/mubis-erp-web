@@ -2,6 +2,12 @@ import { supabase } from '../lib/supabase'
 import { getMyOffice, buildClientLoginEmail } from './officeService'
 import { parseMoneyInput } from '../utils/numberFormat'
 
+async function portalHesabiBasliklari() {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session?.access_token) throw new Error('Portal hesabı oluşturmak için oturum açın')
+  return { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` }
+}
+
 // ============ CLIENTS ============
 
 function safeParseJson(val) {
@@ -132,6 +138,9 @@ export async function addClient(clientData) {
     edevlet_pass: clientData.edevletPass || '',
     ticaret_sicil_no: clientData.tsgUsername || clientData.ticaretSicilNo || '',
     tax_no: clientData.taxNo || '',
+    short_name: clientData.shortName || clientData.kisaAd || '',
+    defter_tipi: clientData.defterTipi || '',
+    luca_bilgileri: clientData.lucaBilgileri || null,
     beyan_profile: clientData.beyanProfile || {},
     status: clientData.status || 'active',
     username: username,
@@ -151,7 +160,7 @@ export async function addClient(clientData) {
   try {
     await fetch('/api/create-client-user', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await portalHesabiBasliklari(),
       body: JSON.stringify({
         email: authEmail,
         password: authPassword,
@@ -179,10 +188,14 @@ export async function addClient(clientData) {
  * @returns {Promise<{email: string, sifre: string}>} giris bilgileri
  */
 export async function createPortalAccount(clientId, sifre = '123456') {
+  const cid = Number(clientId)
+  if (!Number.isInteger(cid) || cid <= 0) {
+    throw new Error('Musteri kimligi okunamadi (id eksik). Sayfayi yenileyip tekrar deneyin.')
+  }
   const { data: c, error } = await supabase
     .from('clients')
     .select('id, name, company, username, vkn, tc, office_id, auth_user_id')
-    .eq('id', clientId)
+    .eq('id', cid)
     .single()
 
   if (error) throw error
@@ -199,7 +212,7 @@ export async function createPortalAccount(clientId, sifre = '123456') {
 
   const resp = await fetch('/api/create-client-user', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await portalHesabiBasliklari(),
     body: JSON.stringify({
       email: authEmail,
       password: sifre,
@@ -304,7 +317,7 @@ export async function bulkAddClients(clientsList) {
       try {
         await fetch('/api/create-client-user', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await portalHesabiBasliklari(),
           body: JSON.stringify({
             email: authUsers[i].email,
             password: authUsers[i].password,
@@ -410,6 +423,7 @@ export async function updateClient(id, updateData) {
     earsivUser: 'earsiv_user', earsivPass: 'earsiv_pass',
     edevletUser: 'edevlet_user', edevletPass: 'edevlet_pass',
     ticaretSicilNo: 'ticaret_sicil_no', tsgUsername: 'ticaret_sicil_no',
+    defterTipi: 'defter_tipi', lucaBilgileri: 'luca_bilgileri',
     beyanProfile: 'beyan_profile',
     beyanDurumlari: 'beyan_durumlari',
     status: 'status', username: 'username', password: 'password',
@@ -419,6 +433,20 @@ export async function updateClient(id, updateData) {
     services: 'services',
     documents: 'documents',
     parentClientId: 'parent_client_id',
+    tecilli_tahsilat: 'tecilli_tahsilat', tecilliTahsilat: 'tecilli_tahsilat',
+    tecilli_plan: 'tecilli_plan', tecilliPlan: 'tecilli_plan',
+    cariHesapModulu: 'cari_hesap_modulu',
+    earsivEfaturaModulu: 'earsiv_efatura_modulu',
+    personelModulu: 'personel_modulu',
+    evraklarimModulu: 'evraklarim_modulu',
+    beyannamelerimModulu: 'beyannamelerim_modulu',
+    faturalarimModulu: 'faturalarim_modulu',
+    kdvDokumleriModulu: 'kdv_dokumleri_modulu',
+    etebligatlarimModulu: 'etebligatlarim_modulu',
+    muhasebeBorcumModulu: 'muhasebe_borcum_modulu',
+    mesajlarimModulu: 'mesajlarim_modulu',
+    kiraStopajModulu: 'kira_stopaj_modulu',
+    belgeYukleModulu: 'belge_yukle_modulu',
   }
 
   for (const [key, val] of Object.entries(updateData)) {
@@ -460,6 +488,27 @@ export async function deleteClient(id) {
   if (error) throw error
 }
 
+/**
+ * TC veya VKN ile musteri arar — ortak musterisi eslemede kullanilir.
+ * @returns {Promise<object|null>} eslesen musteri (yoksa null)
+ */
+export async function findClientByTcVkn(tc, vkn) {
+  const t = String(tc || '').trim()
+  const v = String(vkn || '').trim()
+  if (!t && !v) return null
+  let q = supabase.from('clients').select('*').limit(1)
+  if (t && v) {
+    q = q.or(`tc.eq.${t},vkn.eq.${v}`)
+  } else if (t) {
+    q = q.eq('tc', t)
+  } else {
+    q = q.eq('vkn', v)
+  }
+  const { data, error } = await q
+  if (error) return null
+  return (data && data[0]) || null
+}
+
 // ============ PARTNERS ============
 
 export async function getPartners(clientId) {
@@ -495,52 +544,11 @@ export async function addPartner(clientId, partnerData) {
     .single()
   if (error) throw error
 
-  // Ortak icin otomatik musteri karti olustur
-  try {
-    const username = partnerData.tc || partnerData.vkn || ''
-    const authEmail = username ? `${username}@mubis.app` : `partner_${Date.now()}@mubis.app`
-    const authPassword = '123456'
-
-    const { data: clientRow, error: clientError } = await supabase
-      .from('clients')
-      .insert({
-        parent_client_id: clientId,
-        type: 'individual',
-        name: partnerData.name || '',
-        tc: partnerData.tc || '',
-        vkn: partnerData.vkn || '',
-        tax_office: partnerData.vergi_dairesi || '',
-        phone: partnerData.phone || '',
-        email: partnerData.email || '',
-        address: partnerData.address || '',
-        tax_type: 'Gelir Vergisi',
-        status: 'active',
-        username: username,
-        password: authPassword,
-        temp_password: true,
-      })
-      .select()
-      .single()
-
-    if (!clientError && clientRow) {
-      // Partner kaydina bagli musteri id'sini yaz
-      await supabase.from('partners').update({ child_client_id: clientRow.id }).eq('id', data.id)
-      // Auth kullanici olustur
-      await fetch('/api/create-client-user', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: authEmail,
-          password: authPassword,
-          name: partnerData.name || '',
-          clientId: clientRow.id
-        })
-      })
-    }
-  } catch (err) {
-    console.error('Ortak musteri karti olusturma hatasi:', err)
-  }
-
+  // 2.7.233 KULLANICI KARARI: sirket ortagi icin AYRI musteri karti
+  // acilmaz. Ortak bilgileri (TC/VKN, e-Devlet, hisse orani) yalnizca
+  // partners tablosunda tutulur; SGK/e-Devlet otomasyonlari bu kayittan
+  // calisir. Eskiden burada otomatik child musteri karti + auth kullanici
+  // olusturuluyordu — kaldirildi.
   return data
 }
 
@@ -566,21 +574,10 @@ export async function updatePartner(id, partnerData) {
     .single()
   if (error) throw error
 
-  // Bagli musteri karti varsa guncelle
+  // 2.7.233: ortaklarin bagli musteri karti artik olusturulmuyor; eski
+  // child_client_id baglantisi olan kayitlar icin bag kaldirilir.
   if (data?.child_client_id) {
-    try {
-      await supabase.from('clients').update({
-        name: partnerData.name || '',
-        tc: partnerData.tc || '',
-        vkn: partnerData.vkn || '',
-        tax_office: partnerData.vergi_dairesi || '',
-        phone: partnerData.phone || '',
-        email: partnerData.email || '',
-        address: partnerData.address || '',
-      }).eq('id', data.child_client_id)
-    } catch (err) {
-      console.error('Bagli musteri karti guncelleme hatasi:', err)
-    }
+    try { await supabase.from('partners').update({ child_client_id: null }).eq('id', id) } catch { /* yoksay */ }
   }
 
   return data
@@ -715,14 +712,29 @@ export async function upsertBeyanStatus(clientId, year, month, beyanType, status
 // ============ ACCOUNT PLANS (Hesap Plani) ============
 
 export async function getAccountPlans(clientId) {
-  const { data, error } = await supabase
-    .from('account_plans')
-    .select('*')
-    .eq('client_id', clientId)
-    .order('code')
-    .limit(10000)
-  if (error) throw error
-  return data || []
+  // Supabase/PostgREST istek basina EN FAZLA 999 satir dondurur (proje ayari
+  // max_rows = 999); tek istekte okundugu icin "sadece 999 hesap kodu
+  // listeleniyor" sorunu olusuyordu. 50.000'e kadar sayfalanir.
+  const SAYFA = 1000
+  const TAVAN = 50000
+  let tumu = []
+  for (let bas = 0; bas < TAVAN; ) {
+    const { data, error } = await supabase
+      .from('account_plans')
+      .select('*')
+      .eq('client_id', clientId)
+      .order('code')
+      .range(bas, bas + SAYFA - 1)
+    if (error) throw error
+    const satirlar = data || []
+    tumu = tumu.concat(satirlar)
+    // Yalnizca BOS sayfada dur; offset DONEN SATIR SAYISI kadar ilerler
+    // (sabit 1000 adim, sunucu 999 donerken her sayfada kayit atlatir).
+    if (satirlar.length === 0) break
+    bas += satirlar.length
+  }
+  const gorulen = new Set()
+  return tumu.filter(r => (gorulen.has(r.id) ? false : (gorulen.add(r.id), true)))
 }
 
 export async function saveAccountPlans(clientId, plans) {
@@ -735,12 +747,18 @@ export async function saveAccountPlans(clientId, plans) {
     name: p.name,
     is_auto_added: p.is_auto_added || false
   }))
-  const { data, error } = await supabase
-    .from('account_plans')
-    .insert(rows)
-    .select()
-  if (error) throw error
-  return data || []
+  // 30000+ satir tek istekte time out edebiliyor; 1000'lik parcalarla eklenir
+  const PARCA = 1000
+  const inserted = []
+  for (let i = 0; i < rows.length; i += PARCA) {
+    const { data, error } = await supabase
+      .from('account_plans')
+      .insert(rows.slice(i, i + PARCA))
+      .select()
+    if (error) throw error
+    if (data) inserted.push(...data)
+  }
+  return inserted
 }
 
 export async function addAccountPlan(clientId, code, name, isAutoAdded = false) {
@@ -808,6 +826,8 @@ const normalizeEmployeeRecord = (employee) => {
     ise_giris: employee.ise_giris || employee.ise_giris_tarihi || employee.iseGiris || null,
     isten_cikis: employee.isten_cikis || employee.cikis_tarihi || employee.istenCikis || null,
     dogum_tarihi: employee.dogum_tarihi || employee.dogumTarihi || null,
+    calisma_izni_baslangic: employee.calisma_izni_baslangic || null,
+    calisma_izni_bitis: employee.calisma_izni_bitis || null,
     ise_giris_tarihi: employee.ise_giris || employee.ise_giris_tarihi || employee.iseGiris || null,
     cikis_tarihi: employee.isten_cikis || employee.cikis_tarihi || employee.istenCikis || null,
     sgk_durumu: employee.sgk_durumu || 'calisan',
@@ -852,6 +872,10 @@ export async function addEmployee(clientId, employeeData = {}) {
       gecmis_yil_izinleri_kullanildi: coerceBoolean(employeeData.gecmis_yil_izinleri_kullanildi),
       gecmis_yil_bakiyeleri: coerceBalanceArray(employeeData.gecmis_yil_bakiyeleri),
       dogum_tarihi: employeeData.dogum_tarihi || employeeData.dogumTarihi || null,
+      calisma_izni_baslangic: employeeData.calisma_izni_baslangic || null,
+      calisma_izni_bitis: employeeData.calisma_izni_bitis || null,
+      gorev: employeeData.gorev || '',
+      departman: employeeData.departman || '',
       sgk_durumu: employeeData.sgk_durumu || 'calisan',
       ise_giris_bildirge_url: employeeData.ise_giris_bildirge_url || null,
       isten_cikis_bildirge_url: employeeData.isten_cikis_bildirge_url || null,
@@ -875,6 +899,10 @@ export async function updateEmployee(id, employeeData) {
   if (employeeData.gecmis_yil_izinleri_kullanildi !== undefined) mapped.gecmis_yil_izinleri_kullanildi = coerceBoolean(employeeData.gecmis_yil_izinleri_kullanildi)
   if (employeeData.gecmis_yil_bakiyeleri !== undefined) mapped.gecmis_yil_bakiyeleri = coerceBalanceArray(employeeData.gecmis_yil_bakiyeleri)
   if (employeeData.dogum_tarihi !== undefined || employeeData.dogumTarihi !== undefined) mapped.dogum_tarihi = employeeData.dogum_tarihi || employeeData.dogumTarihi || null
+  if (employeeData.calisma_izni_baslangic !== undefined) mapped.calisma_izni_baslangic = employeeData.calisma_izni_baslangic || null
+  if (employeeData.calisma_izni_bitis !== undefined) mapped.calisma_izni_bitis = employeeData.calisma_izni_bitis || null
+  if (employeeData.gorev !== undefined) mapped.gorev = employeeData.gorev || ''
+  if (employeeData.departman !== undefined) mapped.departman = employeeData.departman || ''
   if (employeeData.sgk_durumu !== undefined) mapped.sgk_durumu = employeeData.sgk_durumu || 'calisan'
   if (employeeData.ise_giris_bildirge_url !== undefined) mapped.ise_giris_bildirge_url = employeeData.ise_giris_bildirge_url || null
   if (employeeData.isten_cikis_bildirge_url !== undefined) mapped.isten_cikis_bildirge_url = employeeData.isten_cikis_bildirge_url || null
@@ -995,7 +1023,6 @@ export function dbToFrontend(dbClient) {
     companyType: dbClient.company_type,
     taxType: dbClient.tax_type,
     capital: dbClient.capital,
-    taxNo: dbClient.tax_no || '',
     openDate: dbClient.open_date,
     closeDate: dbClient.close_date,
     musteriSinifi: dbClient.musteri_sinifi,
@@ -1035,6 +1062,8 @@ export function dbToFrontend(dbClient) {
     edevletPass: dbClient.edevlet_pass,
     ticaretSicilNo: dbClient.ticaret_sicil_no,
     tsgUsername: dbClient.ticaret_sicil_no,
+    defterTipi: dbClient.defter_tipi || '',
+    lucaBilgileri: dbClient.luca_bilgileri || {},
     beyanProfile: dbClient.beyan_profile || {},
     beyanDurumlari: dbClient.beyan_durumlari || {},
     status: dbClient.status,
@@ -1045,6 +1074,8 @@ export function dbToFrontend(dbClient) {
     emails: dbClient.emails || [],
     createdAt: dbClient.created_at,
     parentClientId: dbClient.parent_client_id || null,
+    tecilliTahsilat: !!dbClient.tecilli_tahsilat,
+    tecilliPlan: Array.isArray(dbClient.tecilli_plan) ? dbClient.tecilli_plan : safeParseJson(dbClient.tecilli_plan) || [],
   }
 }
 

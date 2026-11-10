@@ -1,15 +1,20 @@
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom'
+import { useEffect, useRef } from 'react'
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
 import ClientKiraStopaj from './pages/ClientKiraStopaj'
 const StorageLinkHandler = () => null
 import { useAuth } from './context/AuthContext'
 import Navbar from './components/Navbar'
+import YardimciSurumUyari from './components/YardimciSurumUyari'
 import AdminSidebar from './components/AdminSidebar'
 import NotificationCenter from './components/NotificationCenter'
+import SayfaKilavuzu from './components/SayfaKilavuzu'
 import Footer from './components/Footer'
 import MobileNav from './components/MobileNav'
 import MubisAssistant from './components/MubisAssistant'
 import Home from './pages/Home'
 import Features from './pages/Features'
+import HizmetSayfasi from './pages/HizmetSayfasi'
+import Hakkimizda from './pages/Hakkimizda'
 import Contact from './pages/Contact'
 import Login from './pages/Login'
 import AdminDashboard from './pages/AdminDashboard'
@@ -44,19 +49,40 @@ import MesajMerkezi from './pages/MesajMerkezi'
 import OfisYonetimi from './pages/OfisYonetimi'
 import OtomasyonMerkezi from './pages/OtomasyonMerkezi'
 import OtomasyonBelgeler from './pages/OtomasyonBelgeler'
+import Tebligatlar from './pages/Tebligatlar'
 import KiraStopajListesi from './pages/KiraStopajListesi'
 import MusteriGirisTakip from './pages/MusteriGirisTakip'
 import KurumSifreleri from './pages/KurumSifreleri'
+import FaturaSorgulama from './pages/FaturaSorgulama'
+import BeyannameKontrol from './pages/BeyannameKontrol'
+import MuhasebeKayit from './pages/MuhasebeKayit'
+import KontrolMerkezi from './pages/KontrolMerkezi'
+import Taramalar from './pages/Taramalar'
+import Fisler from './pages/Fisler'
+import KdvDokumler from './pages/KdvDokumler'
+import KrediKartiHasilat from './pages/KrediKartiHasilat'
+import MusteriBorcDokumu from './pages/MusteriBorcDokumu'
+import { KVCCAydinlatma, GizlilikPolitikasi, CerezPolitikasi, KullanimKosullari } from './pages/Yasal'
+import CerezBanneri from './components/CerezBanneri'
+import BeyannameGonderim from './pages/BeyannameGonderim'
+import BeyanHazirlama from './pages/BeyanHazirlama'
+import EFaturaKesim from './pages/EFaturaKesim'
+import AdminOcrYukle from './pages/AdminOcrYukle'
 
 // Admin/super admin kendi sirketinin beyannamelerini musteri portalı
 // arayuzu uzerinden goruntuler (muhasebe odemesi haric)
+// 2.7.623: ownerId verildiyse baska mukellefin dosyasi acilir —
+// ClientPortal o client kaydinin verisiyle calisir (ownerClientId).
+// Baskasinin dosyasinda Profilim sekmesi acilmaz (documents'a yonlendirilir).
 function AdminBeyannamelerim() {
-  const { tab } = useParams()
+  const { tab, ownerId } = useParams()
+  const etkinTab = ownerId && tab === 'profile' ? 'documents' : (tab || 'beyannamelerim')
   return (
     <ClientPortal
       embedded
-      key={tab || 'default'}
-      initialTab={tab || 'beyannamelerim'}
+      key={(ownerId || 'own') + '-' + (etkinTab || 'default')}
+      initialTab={etkinTab}
+      ownerClientId={ownerId || null}
     />
   )
 }
@@ -70,9 +96,42 @@ function RootRedirect() {
       </div>
     )
   }
-  if (user?.role === 'admin' || user?.role === 'super_admin') return <Navigate to="/admin" replace />
+  if (user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'personel') return <Navigate to="/admin" replace />
   if (user?.role === 'musteri' || user?.clientId) return <Navigate to="/portal" replace />
   return <Home />
+}
+
+// 2.7.542: Sekme geri yükleme (Chrome bellek tasarrufu / sekme çökmesi) sonrası
+// Chrome bazen sekmenin SON BELGE URL'sinden yükler — SPA aslında başka sayfada
+// olsa bile (pushState ile gezinilen sayfa unutulur). Kullanıcı ana ekrandayken
+// yenileme yapınca beklenmedik bir alt sayfaya düşüyordu (örn. Aylık Beyan Takip).
+// SPA konumunu sessionStorage'da tutar; yalnızca yenileme/geri dönme ile açılışta
+// kayıtlı konum ile belge URL'si farklıysa gerçek konuma döndürür.
+// Yeni sekmede link açma / adres elle yazma ('navigate') hiç etkilenmez.
+function OturumRotaGeriYukle() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const durum = useRef({ ilk: true })
+  useEffect(() => {
+    const mevcut = location.pathname + location.search
+    if (durum.current.ilk) {
+      durum.current.ilk = false
+      try {
+        const nav = performance.getEntriesByType('navigation')[0]
+        const tur = nav ? nav.type : ''
+        // document.wasDiscarded: Chrome bellek tasarrufuyla uyutulup geri
+        // yuklenen sekmelerde true doner (tur 'navigate' bile olabilir).
+        const geriYukleme = tur === 'reload' || tur === 'back_forward' || document.wasDiscarded === true
+        const kayitli = sessionStorage.getItem('mubis_son_rota')
+        if (geriYukleme && kayitli && kayitli !== mevcut) {
+          navigate(kayitli, { replace: true })
+          return // kayitli rota yazildi zaten
+        }
+      } catch { /* yoksay */ }
+    }
+    try { sessionStorage.setItem('mubis_son_rota', mevcut) } catch { /* yoksay */ }
+  }, [location, navigate])
+  return null
 }
 
 function AppContent() {
@@ -86,12 +145,20 @@ function AppContent() {
     return <Navigate to="/sifre-degistir" replace />
   }
 
+  // 2.7.575: Müşteri admin sayfalarına düşemesin (ör. asistan tebligat bildirimi
+  // eski linklerle /admin/etebligatlar'a götürüyordu) — portalın e-Tebligatlarım
+  // sekmesine yönlendir.
+  const personelRol = user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'personel'
+  if (user && !personelRol && location.pathname.startsWith('/admin')) {
+    return <Navigate to="/portal?tab=tebligatlarim" replace />
+  }
+
   // Giris / kurulum sayfalarinda ust menu gizlenir (tek logo gorunsun)
   const menusuzSayfalar = ['/giris', '/setup', '/sifre-degistir', '/portal']
   const menuGizli = menusuzSayfalar.includes(location.pathname)
 
   // Admin sayfalarinda ust menu yok; tum navigasyon sol yan menude
-  const adminLayout = (user?.role === 'admin' || user?.role === 'super_admin')
+  const adminLayout = (user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'personel')
     && location.pathname.startsWith('/admin')
 
   return (
@@ -100,16 +167,26 @@ function AppContent() {
       <div className="flex flex-1 min-h-0">
         {adminLayout && <AdminSidebar />}
         {adminLayout && <NotificationCenter />}
+        {adminLayout && <SayfaKilavuzu />}
         <main className="flex-1 min-w-0 pb-16 md:pb-0">
+        {/* Guncelleme uyarisi: giris yapmis admin VE musteri sayfalarinda gorunur;
+            giris yapilmamis herkese acik ana sayfada cikmaz */}
+        {user && <YardimciSurumUyari />}
         <Routes>
           <Route path="/musteri/kira-stopaj" element={<ClientKiraStopaj />} />
           <Route path="/" element={<RootRedirect />} />
           <Route path="/ozellikler" element={<Features />} />
+          <Route path="/hizmet/:slug" element={<HizmetSayfasi />} />
+          <Route path="/hakkimizda" element={<Hakkimizda />} />
           <Route path="/iletisim" element={<Contact />} />
           <Route path="/hesaplamalar" element={<PratikHesaplamalar />} />
           <Route path="/giris" element={<Login />} />
           <Route path="/setup" element={<SetupPage />} />
           <Route path="/sifre-degistir" element={<ChangePassword />} />
+          <Route path="/kvkk-aydinlatma" element={<KVCCAydinlatma />} />
+          <Route path="/gizlilik-politikasi" element={<GizlilikPolitikasi />} />
+          <Route path="/cerez-politikasi" element={<CerezPolitikasi />} />
+          <Route path="/kullanim-kosullari" element={<KullanimKosullari />} />
           
           {/* Admin Routes */}
           <Route path="/admin" element={<AdminDashboard />} />
@@ -142,9 +219,26 @@ function AppContent() {
           <Route path="/admin/ofisler" element={<OfisYonetimi />} />
           <Route path="/admin/kurum-sifreleri" element={<KurumSifreleri />} />
           <Route path="/admin/otomasyon" element={<OtomasyonMerkezi />} />
+          <Route path="/admin/etebligatlar" element={<Tebligatlar />} />
           <Route path="/admin/otomasyon-belgeler" element={<OtomasyonBelgeler />} />
           <Route path="/admin/kira-stopaj" element={<KiraStopajListesi />} />
+          <Route path="/admin/fatura-sorgulama" element={<FaturaSorgulama />} />
+          <Route path="/admin/beyanname-kontrol" element={<BeyannameKontrol />} />
+          <Route path="/admin/beyanname-gonderim" element={<BeyannameGonderim />} />
+          <Route path="/admin/beyan-hazirlama" element={<BeyanHazirlama />} />
+          <Route path="/admin/muhasebe-kayit" element={<MuhasebeKayit />} />
+          <Route path="/admin/kontrol-merkezi" element={<KontrolMerkezi />} />
+          <Route path="/admin/taramalar" element={<Taramalar />} />
+          <Route path="/admin/fisler" element={<Fisler />} />
+          <Route path="/admin/kdv-dokumleri" element={<KdvDokumler />} />
+          <Route path="/admin/kredi-karti-hasilat" element={<KrediKartiHasilat />} />
+          <Route path="/admin/musteri-borc-dokumu" element={<MusteriBorcDokumu />} />
+          <Route path="/admin/efatura-islemleri" element={<EFaturaKesim />} />
+          <Route path="/admin/z-raporu-yukle" element={<AdminOcrYukle tip="zrapor" />} />
+          <Route path="/admin/gider-fisi-yukle" element={<AdminOcrYukle tip="gider" />} />
           <Route path="/admin/beyannamelerim" element={<AdminBeyannamelerim />} />
+          <Route path="/admin/beyannamelerim/o/:ownerId" element={<AdminBeyannamelerim />} />
+          <Route path="/admin/beyannamelerim/o/:ownerId/:tab" element={<AdminBeyannamelerim />} />
           <Route path="/admin/beyannamelerim/:tab" element={<AdminBeyannamelerim />} />
           <Route path="/odeme-basarili" element={<OdemeBasarili />} />
           <Route path="/odeme-basarisiz" element={<OdemeBasarisiz />} />
@@ -158,6 +252,7 @@ function AppContent() {
       <MobileNav />
       <MubisAssistant />
       <Footer />
+      <CerezBanneri />
     </div>
   )
 }
@@ -165,6 +260,7 @@ function AppContent() {
 function App() {
   return (
     <Router>
+      <OturumRotaGeriYukle />
       <AppContent />
     </Router>
   )

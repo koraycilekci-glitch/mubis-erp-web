@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase'
 import { getWhatsAppConfig, getSMTPConfig, getSettings } from './settingsService'
+import { gibYardimciIs, yardimciIsSunucu } from '../utils/gibOdemeHelper'
 
 const WHATSAPP_API_VERSION = 'v18.0'
 
@@ -16,7 +17,9 @@ function normalizePhone(phone) {
 }
 
 export function getWhatsAppChannel(settings) {
-  return settings?.whatsapp_channel === 'web' ? 'web' : 'api'
+  if (settings?.whatsapp_channel === 'web') return 'web'
+  if (settings?.whatsapp_channel === 'masaustu') return 'masaustu'
+  return 'api'
 }
 
 /**
@@ -38,13 +41,37 @@ export async function sendDocumentViaWhatsAppChannel({
 }) {
   const channel = getWhatsAppChannel(settings)
 
+  // 2.7.172: WINDOWS WHATSAPP UYGULAMASI — whatsapp:// derin baglantisiyla
+  // masastu programdan otomatik gonderim (yardimci program >= 2.7.172).
+  // Yardimci yok / uygulama acilmadiysa tarayici WhatsApp Web'e duser.
+  if (channel === 'masaustu') {
+    try {
+      const res = await gibYardimciIs('whatsapp-desktop-gonder', {
+        telefon: normalizePhone(phone),
+        mesaj: [caption || 'Merhaba, dosyaniz asagidaki linktedir:', documentUrl].filter(Boolean).join('\n')
+      })
+      if (res?.ok) {
+        await logSend({
+          clientId, beyanType, year, month, documentType,
+          channel: 'whatsapp_desktop',
+          target: normalizePhone(phone),
+          status: 'sent',
+          messageId: ''
+        })
+        return { ...res, channel: 'whatsapp_desktop' }
+      }
+      console.warn('[whatsapp-desktop] yardimci gonderemedi, WhatsApp Web yedegine geciliyor:', res?.reason)
+    } catch (e) { /* yardimci hic yok - asagida eski yontem */ }
+    return openWhatsAppWeb({ phone, message: [caption || 'Merhaba, dosyaniz asagidaki linktedir:', documentUrl].filter(Boolean).join('\n') })
+  }
+
   if (channel === 'web') {
     const message = [
       caption || 'Merhaba, dosyaniz asagidaki linktedir:',
       documentUrl
     ].join('\n')
 
-    const result = openWhatsAppWeb({ phone, message })
+    const result = await openWhatsAppWeb({ phone, message })
 
     await logSend({
       clientId,
@@ -54,7 +81,7 @@ export async function sendDocumentViaWhatsAppChannel({
       documentType,
       channel: 'whatsapp_web',
       target: normalizePhone(phone),
-      status: 'pending',
+      status: result?.otomatik ? 'sent' : 'pending',
       messageId: ''
     })
 
@@ -199,6 +226,43 @@ export async function sendEmail({
     throw new Error('SMTP ayarlari eksik. Lutfen Ayarlar > Iletisim kismindan girin.')
   }
 
+  // 2.7.171: ONCE LOKAL YARDIMCI — Cloudflare Workers raw SMTP acamadigi
+  // icin e-posta nodemailer'la lokal yardimci programdan gider (PDF ekleri
+  // URL'den indirilip eklenir). Yardimci yoksa eski /api/send-email yolu
+  // denenir; o da yoksa hatanin kendisi yukariya firlatilir (sessiz
+  // basarisizlik olmasin).
+  try {
+    const res = await gibYardimciIs('mail-gonder', {
+      host: config.host,
+      port: config.port,
+      secure: config.secure !== false,
+      user: config.user,
+      pass: config.pass,
+      from: config.from || config.user,
+      to: toEmail,
+      toName,
+      subject,
+      mesaj: message,
+      documents: documents || (documentUrl ? [{ url: documentUrl, name: 'belge.pdf' }] : [])
+    }, 120000)
+    if (res?.ok) {
+      await logSend({
+        clientId,
+        beyanType,
+        year,
+        month,
+        documentType,
+        channel: 'email',
+        target: toEmail,
+        status: 'sent'
+      })
+      return { ok: true, channel: 'yardimci', ekAdet: res.ekAdet }
+    }
+    throw new Error(res?.error || res?.reason || 'Yardimci program mail gonderemedi')
+  } catch (yardimciHatasi) {
+    console.warn('[send-email] yardimci yolu basarisiz, /api/send-email denenir:', yardimciHatasi.message)
+  }
+
   const body = {
     toEmail,
     toName,
@@ -287,16 +351,109 @@ async function logSend({
 
 /**
  * Kullanicinin kendi WhatsApp Web / masaustu uygulamasi uzerinden gonderim yapmasini saglar.
- * Tarayici yeni sekmede hazir mesaj acar, kullanici kendi telefonundan gonderir.
+ * Yardimci program (gib-yardimci >= 2.6.6) calisiyorsa tam otomatik gonderim yapar:
+ * web.whatsapp.com'da sohbeti acar, mesaji yazar ve GONDER tusuna otomatik basar.
+ * Yardimci yoksa eski davranis: tarayicida hazir mesaj acilir, gonderi kullanici basar.
  * Otomatik PDF eklenemez; sadece metin ve link gonderilir.
  */
-export function openWhatsAppWeb({ phone, message }) {
+export async function openWhatsAppWeb({ phone, message, kaynak = null }) {
   const to = normalizePhone(phone)
   if (!to) throw new Error('Gecerli telefon numarasi bulunamadi')
-  const encoded = encodeURIComponent(message || '')
+  const mesaj = message || ''
+
+  // 2.8.35: Gonderim makinesi secimi (Ayarlar > Iletisim > WhatsApp Web):
+  // 'vps'    -> Istanbul sunucusundaki yardimci (ofis kapali olsa da calisir)
+  // 'yerel'  -> bu bilgisayardaki yardimci program
+  // kaynak verilmezse app_settings.whatsapp_web_kaynak okunur (varsayilan vps).
+  let hedefKaynak = kaynak
+  if (hedefKaynak !== 'vps' && hedefKaynak !== 'yerel') {
+    try {
+      const s = await getSettings()
+      hedefKaynak = s?.whatsapp_web_kaynak === 'yerel' ? 'yerel' : 'vps'
+    } catch { hedefKaynak = 'vps' }
+  }
+
+  // 1) Yardimci program varsa tam otomatik gonderim (GONDER tusuna otomatik basar)
+  let yardimciHata = ''
+  try {
+    const gonder = hedefKaynak === 'vps'
+      ? (p) => yardimciIsSunucu('whatsapp-web-gonder', p, 3 * 60 * 1000)
+      : (p) => gibYardimciIs('whatsapp-web-gonder', p, 3 * 60 * 1000)
+    const res = await gonder({ telefon: to, mesaj })
+    if (res?.ok) {
+      return { ok: true, channel: 'whatsapp_web', otomatik: true, kaynak: hedefKaynak }
+    }
+    // QR girisi gerekli: yardimci Chrome penceresi acik; fallback YAPILMAZ
+    // (wa.me sekmesi acmak kullaniciyi iki pencereyle basbasa birakir)
+    if (res?.reason === 'giris-gerekli') {
+      return {
+        ok: false,
+        channel: 'whatsapp_web',
+        otomatik: false,
+        kaynak: hedefKaynak,
+        reason: 'giris-gerekli',
+        not: res.not || (hedefKaynak === 'vps'
+          ? "Sunucudaki WhatsApp oturumu yok. Ayarlar > Iletisim bolumundeki 'QR Kodu Göster' ile QR kodu okutun."
+          : "Yardimci programin Chrome penceresinde WhatsApp'a bir kez QR ile giris yapin; sonraki gonderimler otomatik olacak.")
+      }
+    }
+    yardimciHata = res?.reason || res?.error || ''
+  } catch (e) { yardimciHata = e?.message || '' }
+
+  // 2.8.37: VPS seciliyken yerel tarayicida WhatsApp ACMA. Kullanici acikca
+  // "Sunucu (VPS)" sectiyse gonderim orada yapilmalidir; hata varsa net mesaj
+  // ver. (Eskiden sessizce wa.me sekmesi aciliyor, "yerel WhatsApp acildi"
+  // goruntusune yol aciyordu.)
+  if (hedefKaynak === 'vps') {
+    return {
+      ok: false,
+      channel: 'whatsapp_web',
+      otomatik: false,
+      kaynak: 'vps',
+      reason: 'vps-gonderemedi',
+      not: 'Sunucudaki WhatsApp gönderimi başarısız: ' + (yardimciHata || 'yanıt alınamadı') +
+        '. Ayarlar > İletişim bölümünden QR ile bağlantıyı kontrol edin.'
+    }
+  }
+
+  // 2) Yedek: wa.me linkini yeni sekmede ac (gonder tusuna kullanici basar)
+  const encoded = encodeURIComponent(mesaj)
   const url = `https://wa.me/${to}?text=${encoded}`
-  window.open(url, '_blank', 'noopener,noreferrer')
-  return { ok: true, channel: 'whatsapp_web' }
+  let sekmeAcildi = false
+  try {
+    sekmeAcildi = !!window.open(url, '_blank', 'noopener,noreferrer')
+  } catch (e) { /* popup engellendi */ }
+  return {
+    ok: true,
+    channel: 'whatsapp_web',
+    otomatik: false,
+    link: url,
+    sekmeAcildi,
+    not: sekmeAcildi
+      ? 'Hazir mesaj yeni sekmede acildi; GONDER tusuna siz basmalisiniz (tam otomatik gonderim icin yardimci programi guncelleyin).'
+      : 'Tarayici yeni sekmeyi engelledi. Bu linki acarak gonderebilirsiniz: ' + url
+  }
+}
+
+/**
+ * WhatsApp Web oturum durumu / QR goruntusu getirir.
+ * kaynak: 'vps' | 'yerel'
+ * Donus: { ok, girisVar, goruntu?, not }
+ */
+export async function whatsappWebDurum({ kaynak = 'vps', qr = false } = {}) {
+  const isAdi = qr ? 'whatsapp-web-qr' : 'whatsapp-web-durum'
+  const gonder = kaynak === 'vps'
+    ? (p) => yardimciIsSunucu(isAdi, p, 2 * 60 * 1000)
+    : (p) => gibYardimciIs(isAdi, p, 2 * 60 * 1000)
+  try {
+    const res = await gonder({})
+    if (!res?.ok) {
+      return { ok: false, hata: res?.reason || res?.error || 'Yardimci yanit vermedi' }
+    }
+    return { ok: true, girisVar: !!res.girisVar, goruntu: res.goruntu || '', not: res.not || '' }
+  } catch (e) {
+    return { ok: false, hata: e?.message || 'Baglanti kurulamadi' }
+  }
 }
 
 /**

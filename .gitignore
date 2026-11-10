@@ -12,3 +12,30 @@ mubis-automation/downloads
 mubis-automation/__pycache__
 
 .env*
+.cf-token
+
+# --- 2026-11 temizlik: gecici dosyalar, derleme ciktilari, gizli anahtarlar ---
+*.key
+*.pem
+*-key-tmp
+.helper-upload-key-tmp
+/*.zip
+/*.log
+/*.txt
+/*.pptx
+/*.docx
+/.vercelignore
+tmp-*/
+gib-yardimci/dist/
+gib-yardimci/indirilenler/
+gib-yardimci/*.log
+.vercel/
+.wrangler/
+gib-yardimci/_teshis-profil*/
+.tmp-*/
+__testzip/
+_tmp*/
+_zipKontrol/
+_chunks/
+.functions-test/
+.playwright-mcp/

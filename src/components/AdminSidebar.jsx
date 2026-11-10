@@ -2,27 +2,68 @@ import { useState, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useClients } from '../hooks/useClients'
+import { supabase } from '../lib/supabase'
 import {
   LayoutDashboard, Users, FileText, Upload, Receipt, DollarSign,
   UserCheck, BarChart3, CalendarDays, Megaphone, MessageSquareText,
   Send, Calculator, Settings, Landmark, FolderOpen, Brain, FileArchive,
   FileCheck, ChevronDown, ChevronRight, Menu as MenuIcon, X, Building2,
-  Bot, Rocket, KeyRound, Download
+  KeyRound, Download, Inbox, Camera, LogOut, ClipboardCheck, TableProperties, ScanLine, FileSpreadsheet, CreditCard
 } from 'lucide-react'
 import { kiraArtisBildirimleriniOlustur } from '../services/kiraService'
+import { YARDIMCI_EXE_URL } from '../config/indirmeLinkleri'
 
 // Sol menu yapisi. children varsa acilir alt menu olur.
-const MENU = [
-  { to: '/admin', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/admin/musteriler', icon: Users, label: 'Müşteriler' },
-  { to: '/admin/giris-takip', icon: UserCheck, label: 'Giriş Takibi' },
+// PERSONEL YETKILERI: her oge bir anahtarla izlenir — üst seviye ogerlerde
+// rota yolu, gruplarda grup id; alt ogelerde kendi rota yolu. Anahtarlar
+// offices.personel_yetkileri jsonb'sinde saklanir (Ofis Yönetimi > Detay).
+export const MENU = [
+  { to: '/admin', icon: LayoutDashboard, label: 'AnaSayfa' },
   {
-    id: 'beyan', icon: FileText, label: 'Beyanlar',
+    id: 'beyan-takip', icon: CalendarDays, label: 'Beyan Takip',
     children: [
       { to: '/admin/aylik-beyan-takip', icon: CalendarDays, label: 'Aylık Beyan Takip' },
-      { to: '/admin/all-beyan', icon: BarChart3, label: 'Tüm Beyan Raporu' }
+      { to: '/admin/beyanname-kontrol', icon: ClipboardCheck, label: 'Beyanname Kontrol Listesi' },
+      { to: '/admin/kontrol-merkezi', icon: TableProperties, label: 'Kontrol Merkezi' }
     ]
   },
+  {
+    id: 'beyanname-gonderim', icon: Send, label: 'Beyanname Gönderim',
+    children: [
+      { to: '/admin/beyanname-gonderim', icon: Send, label: 'e-Beyanname' },
+      { to: '/admin/beyan-hazirlama', icon: FileSpreadsheet, label: 'Beyan Hazırlama' }
+    ]
+  },
+  { to: '/admin/musteriler', icon: Users, label: 'Müşteriler' },
+  {
+    id: 'fatura-islemleri', icon: Receipt, label: 'Fatura İşlemleri',
+    children: [
+      { to: '/admin/fatura-sorgulama', icon: Receipt, label: 'Fatura Sorgulama' },
+      { to: '/admin/fisler', icon: Receipt, label: 'Fişler' },
+      { to: '/admin/taramalar', icon: ScanLine, label: 'Taramalar' },
+      { to: '/admin/muhasebe-kayit', icon: Calculator, label: 'Fatura Muhasebeleştime' }
+    ]
+  },
+  { to: '/admin/kdv-dokumleri', icon: BarChart3, label: 'KDV Dökümleri' },
+  { to: '/admin/kredi-karti-hasilat', icon: CreditCard, label: 'Kredi Kartı Hasılatı (POS)' },
+  { to: '/admin/musteri-borc-dokumu', icon: Landmark, label: 'Müşteri Borç Dökümü' },
+  { to: '/admin/efatura-islemleri', icon: FileText, label: 'E-Fatura İşlemleri' },
+  { to: '/admin/etebligatlar', icon: Inbox, label: 'e-Tebligat' },
+  {
+    id: 'beyannamelerim', icon: FileCheck, label: 'Beyannamelerim',
+    children: [
+      { to: '/admin/beyannamelerim/documents', icon: FolderOpen, label: 'Evraklarım' },
+      { to: '/admin/beyannamelerim/beyannamelerim', icon: FileCheck, label: 'Beyanname Takibi' },
+      { to: '/admin/beyannamelerim/invoices', icon: FileText, label: 'Faturalarım' },
+      { to: '/admin/beyannamelerim/tebligatlarim', icon: Inbox, label: 'e-Tebligatlarım' },
+      { to: '/admin/beyannamelerim/messages', icon: MessageSquareText, label: 'Mesajlarım' },
+      { to: '/admin/beyannamelerim/notifications', icon: CalendarDays, label: 'Vergi Takvimi' },
+      { to: '/admin/beyannamelerim/fatura-kesim', icon: FileText, label: 'E-SMM Düzenlemesi' },
+      { to: '/admin/beyannamelerim/profile', icon: Settings, label: 'Profilim' }
+    ]
+  },
+  { to: '/admin/odeme-takip', icon: DollarSign, label: 'Ödeme Takip' },
+  { to: '/admin/izin-takip', icon: UserCheck, label: 'Personel / İzin' },
   {
     id: 'yukle', icon: Upload, label: 'Yükleme',
     children: [
@@ -30,7 +71,9 @@ const MENU = [
       { to: '/admin/toplu-ice-aktar', icon: Upload, label: 'Klasörden Aktar' },
       { to: '/admin/smart-import', icon: Brain, label: 'AI Smart Import' },
       { to: '/admin/e-invoice', icon: FileArchive, label: 'e-Fatura XML' },
-      { to: '/admin/documents', icon: FolderOpen, label: 'Belge Merkezi' }
+      { to: '/admin/documents', icon: FolderOpen, label: 'Belge Merkezi' },
+      { to: '/admin/z-raporu-yukle', icon: Camera, label: 'Z Raporu Yükle' },
+      { to: '/admin/gider-fisi-yukle', icon: Receipt, label: 'Gider Fişi Yükle' }
     ]
   },
   {
@@ -42,41 +85,42 @@ const MENU = [
     ]
   },
   {
-    id: 'otomasyon', icon: Bot, label: 'Otomasyon',
-    children: [
-      { to: '/admin/otomasyon', icon: Rocket, label: 'Otomasyon Merkezi' },
-      { to: '/admin/otomasyon-belgeler', icon: FileArchive, label: 'Gelen Belgeler' }
-    ]
-  },
-  {
     id: 'raporlar', icon: FileText, label: 'Raporlar',
     children: [
       { to: '/admin/kira-stopaj', icon: Building2, label: 'Kira Stopaj Listesi' }
     ]
   },
-  {
-    id: 'beyannamelerim', icon: FileCheck, label: 'Beyannamelerim',
-    children: [
-      { to: '/admin/beyannamelerim/documents', icon: FolderOpen, label: 'Evraklarım' },
-      { to: '/admin/beyannamelerim/beyannamelerim', icon: FileCheck, label: 'Beyanname Takibi' },
-      { to: '/admin/beyannamelerim/invoices', icon: FileText, label: 'Faturalarım' },
-      { to: '/admin/beyannamelerim/messages', icon: MessageSquareText, label: 'Mesajlarım' },
-      { to: '/admin/beyannamelerim/upload', icon: Upload, label: 'Belge Yükle' },
-      { to: '/admin/beyannamelerim/notifications', icon: CalendarDays, label: 'Vergi Takvimi' },
-      { to: '/admin/beyannamelerim/profile', icon: Settings, label: 'Profilim' }
-    ]
-  },
-  { to: '/admin/odeme-takip', icon: DollarSign, label: 'Ödeme Takip' },
-  { to: '/admin/izin-takip', icon: UserCheck, label: 'Personel / İzin' },
   { to: '/admin/tax-calendar', icon: CalendarDays, label: 'Vergi Takvimi' },
   { to: '/admin/hesaplamalar', icon: Calculator, label: 'Hesaplamalar' },
-  { to: '/admin/ayarlar', icon: Settings, label: 'Ayarlar' },
-  { to: '/admin/ofisler', icon: Building2, label: 'Ofis Yönetimi', superAdminOnly: true },
-  { to: '/admin/kurum-sifreleri', icon: KeyRound, label: 'Kurum Şifreleri', superAdminOnly: true }
+  {
+    id: 'yonetim', icon: Settings, label: 'Yönetim',
+    children: [
+      { to: '/admin/ayarlar', icon: Settings, label: 'Ayarlar' },
+      { to: '/admin/ofisler', icon: Building2, label: 'Ofis Yönetimi', superAdminOnly: true },
+      { to: '/admin/kurum-sifreleri', icon: KeyRound, label: 'Kurum Şifreleri', superAdminOnly: true },
+      { to: '/admin/giris-takip', icon: UserCheck, label: 'Giriş Takibi' }
+    ]
+  },
+  { href: YARDIMCI_EXE_URL, download: true, icon: Download, label: 'Yardımcı Programı İndir' }
+]
+
+// Personel acikken (yetki kaydi yokken) gorunen varsayilan anahtarlar:
+// AnaSayfa + mali müşavir bölümü + Beyan Takip + Beyanname Gönderim +
+// Fatura İşlemleri + Mesaj Merkezi (müşteri fatura güncelleme talepleri
+// personelde de düşsün — adminle aynı)
+export const PERSONEL_VARSAYILAN = [
+  '/admin', 'beyannamelerim',
+  ...(MENU.find(m => m.id === 'beyannamelerim')?.children || []).map(c => c.to),
+  'beyan-takip', ...(MENU.find(m => m.id === 'beyan-takip')?.children || []).map(c => c.to),
+  'beyanname-gonderim', ...(MENU.find(m => m.id === 'beyanname-gonderim')?.children || []).map(c => c.to),
+  'fatura-islemleri', ...(MENU.find(m => m.id === 'fatura-islemleri')?.children || []).map(c => c.to),
+  'gonderim', '/admin/mesaj-merkezi',
+  // KDV dökümleri + Kredi Kartı Hasılatı (POS) personelde de aktif
+  '/admin/kdv-dokumleri', '/admin/kredi-karti-hasilat', '/admin/musteri-borc-dokumu'
 ]
 
 export default function AdminSidebar() {
-  const { user, office } = useAuth()
+  const { user, profile, office, logout } = useAuth()
   const { clients } = useClients()
   const location = useLocation()
   const [acik, setAcik] = useState(false)
@@ -86,8 +130,154 @@ export default function AdminSidebar() {
   const path = location.pathname
   const superAdmin = user?.role === 'super_admin'
 
-  // Rol filtresi uygulanmis menu
-  const menu = MENU.filter(m => !m.superAdminOnly || superAdmin)
+  // Personel menü yetkileri: offices.personel_yetkileri map'i. Kayıt yoksa
+  // (boş) varsayilan: AnaSayfa + mali müşavir bölümü. Kayıt varsa harita
+  // yetkilidir; AnaSayfa her zaman açıktir.
+  const personel = user?.role === 'personel'
+  const yetkiler = office?.personel_yetkileri || null
+  const yetkiKayitli = !!(yetkiler && Object.keys(yetkiler).length)
+  // 2.7.622: Mukellef klasoru — profilinde mukellef=true olan personelin
+  // kendi beyannamelerim bolumu; izin haritasindan bagimsiz acik olmali
+  // (admin Kullanici Yonetimi'nden Mükellef=Hayir yaparsa zaten gizlenir).
+  const mukellefGorunur = (user?.mukellef ?? profile?.mukellef) === true
+
+  // 2.7.623: Tum mukellef dosyalari — mukellef=true olan admin/super_admin/
+  // personel profilleri + client kayitlari. Varsayilan HERKES hepsini gorur;
+  // offices.mukellef_yetkileri haritasiyla admin kisiye gore kapatabilir:
+  // { <kullaniciId>: { <mukellefProfileId>: false } } — yoksa acik demektir.
+  const [mukellefDosyalari, setMukellefDosyalari] = useState([])
+  useEffect(() => {
+    let canli = true
+    const yukle = async () => {
+      try {
+        const { data: profs } = await supabase
+          .from('profiles')
+          .select('id, name, email, role, office_id, mukellef, created_at')
+          .in('role', ['admin', 'super_admin', 'personel'])
+        const etkinOfisId = user?.officeId || profile?.office_id || office?.id
+        const ofisProfilleri = (profs || []).filter(p => p.office_id === etkinOfisId || p.id === office?.owner_id)
+        const siraliAdminler = ofisProfilleri
+          .filter(p => p.role === 'admin' || p.role === 'super_admin')
+          .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
+        const maliMusavirId = office?.owner_id || siraliAdminler[0]?.id
+        const liste = ofisProfilleri.filter(p => p.mukellef === true || p.id === maliMusavirId)
+        const ids = liste.map(p => p.id)
+        const harita = new Map()
+        if (ids.length) {
+          // 1. dogrudan baglanti: clients.auth_user_id = profile.id
+          const { data: cl } = await supabase
+            .from('clients')
+            .select('id, auth_user_id, company, name')
+            .in('auth_user_id', ids)
+          for (const c of cl || []) harita.set(c.auth_user_id, c)
+        }
+        // 2. yedek: auth_user_id baglantisi olmayanlar icin e-posta / kullanici
+        // adi eslesmesi (ClientPortal'un cozumleyicisiyle ayni kurallar)
+        const kalan = liste.filter(p => !harita.get(p.id))
+        if (kalan.length) {
+          const kosullar = []
+          for (const p of kalan) {
+            if (p.email) kosullar.push(`email.eq.${p.email}`)
+            const onEk = String(p.email || '').split('@')[0]
+            if (onEk) kosullar.push(`username.eq.${onEk}`)
+          }
+          if (kosullar.length) {
+            const { data: cl3 } = await supabase
+              .from('clients')
+              .select('id, email, username, company, name')
+              .or(kosullar.join(','))
+            const pMap = new Map()
+            for (const p of kalan) {
+              if (p.email) pMap.set('e:' + p.email, p.id)
+              const onEk = String(p.email || '').split('@')[0]
+              if (onEk) pMap.set('u:' + onEk, p.id)
+            }
+            for (const c of cl3 || []) {
+              const pid = pMap.get('e:' + c.email) || pMap.get('u:' + c.username)
+              if (pid && !harita.get(pid)) harita.set(pid, c)
+            }
+          }
+        }
+        if (!canli) return
+        setMukellefDosyalari(liste.map(p => {
+          const c = harita.get(p.id)
+          return {
+            profileId: p.id,
+            ad: p.id === maliMusavirId ? p.name || c?.company || c?.name || 'Mali Müşavir' : c?.company || c?.name || p.name || 'Mükellef',
+            clientId: c?.id || null,
+            maliMusavir: p.id === maliMusavirId
+          }
+        }))
+      } catch { /* sessiz */ }
+    }
+    yukle()
+    return () => { canli = false }
+  }, [user?.id, user?.officeId, profile?.office_id, office?.id, office?.owner_id])
+  const mukellefYetkiMap = office?.mukellef_yetkileri?.[user?.id] || null
+
+  const izinVar = (anahtar) => {
+    if (!personel) return true
+    if (anahtar === '/admin') return true
+    // 2.7.575: Gönderim grubu personelde her zaman açık — Mesaj Merkezi
+    // (müşteri fatura güncelleme talepleri) + Gönderim ve Duyuru Merkezi.
+    if (anahtar === 'gonderim' || anahtar === '/admin/mesaj-merkezi' || anahtar === '/admin/gonderim-merkezi' || anahtar === '/admin/duyuru-merkezi') return true
+    // 2.8.10: Ayarlar + Kurum Şifreleri personelde her zaman açık —
+    // yetki haritasına takılmaz (Ayarlar sayfası personeli zaten kapsıyor).
+    if (anahtar === '/admin/ayarlar' || anahtar === '/admin/kurum-sifreleri') return true
+    // 2.8.12: Yönetim grup başlığı personelde de görünsün — çocuklar kendi
+    // izinlerinden geçer; tüm alt öğeler kapalıysa grup zaten gizlenir.
+    if (anahtar === 'yonetim') return true
+    // 2.7.622: mükellef klasörü ve alt sayfaları yetki haritasina takilmaz
+    if (anahtar === 'beyannamelerim') return true
+    if (mukellefGorunur && String(anahtar).startsWith('/admin/beyannamelerim')) return true
+    if (!yetkiKayitli) return PERSONEL_VARSAYILAN.includes(anahtar)
+    return !!yetkiler[anahtar]
+  }
+
+  // Rol + yetki filtresi uygulanmis menu; admin icin mali musavir bolumu
+  // OFIS adiyla gosterilir. Personel mukellef ise klasor KENDI adiyla acilir.
+  // 2.7.623: beyannamelerim girdisi artik DIZI dondurur — kendi klasoru +
+  // tum diger mukellef dosyalari (varsayilan herkese acik, admin haritadan
+  // kapatabilir). Diger dosyalar /admin/beyannamelerim/o/<clientId>/... rotasini
+  // kullanir; Profilim sekmesi yalnizca kendi klasorunde vardir.
+  const beyanSablon = MENU.find(m => m.id === 'beyannamelerim')
+  const beyanAltEtiket = (ad) => ad || 'Mükellef'
+  const digerKlasorler = beyanSablon ? mukellefDosyalari
+    .filter(d => d.profileId !== user?.id && (d.clientId || d.maliMusavir))
+    .filter(d => !mukellefYetkiMap || mukellefYetkiMap[d.profileId] !== false)
+    .sort((a, b) => String(a.ad).localeCompare(String(b.ad), 'tr'))
+    .map(d => ({
+      id: 'beyannamelerim-' + d.profileId,
+      icon: beyanSablon.icon,
+      label: beyanAltEtiket(d.ad),
+      children: beyanSablon.children
+        .filter(c => c.to !== '/admin/beyannamelerim/profile')
+        .map(c => ({
+          ...c,
+          to: d.clientId ? c.to.replace('/admin/beyannamelerim/', `/admin/beyannamelerim/o/${d.clientId}/`) : c.to
+        }))
+    })) : []
+  const menu = MENU
+    .filter(m => !m.superAdminOnly || superAdmin)
+    .filter(m => izinVar(m.id || m.to))
+    .flatMap(m => {
+      if (m.id === 'beyannamelerim') {
+        const kendi = { ...m, label: (personel ? (user?.name || office?.name) : (office?.name || user?.officeName || user?.name)) || 'Beyannamelerim' }
+        return [...(mukellefGorunur ? [kendi] : []), ...digerKlasorler]
+      }
+      if (m.children) {
+        // superAdminOnly alt ogeler superAdmin degilse gizlenir (Yönetim grubu vb.);
+        // 2.8.13: Kurum Şifreleri istisnasi tum rollere acildi — personel VE
+        // admin (super_admin olmayan) hesaplar da gorsun; Ofis Yönetimi
+        // yalnizca super_admin'de kalir.
+        const cocuklar = m.children.filter(c => !c.superAdminOnly || c.to === '/admin/kurum-sifreleri' || superAdmin)
+        if (personel) return [{ ...m, children: cocuklar.filter(c => izinVar(c.to)) }]
+        return [{ ...m, children: cocuklar }]
+      }
+      return [m]
+    })
+    // Personelde tüm alt ogeleri kapali kalan gruplari gizle
+    .filter(m => !(personel && m.children && !m.children.length))
 
   // Aktif rota hangi gruptaysa o grubu otomatik ac
   useEffect(() => {
@@ -154,20 +344,20 @@ export default function AdminSidebar() {
                   <button
                     onClick={() => setAcikGrup(grupAcik ? null : item.id)}
                     title={item.label}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all border ${
                       grupAktif
-                        ? 'bg-blue-600/25 text-white'
-                        : 'text-blue-200/80 hover:bg-blue-800/40 hover:text-white'
+                        ? 'bg-blue-600/25 border-blue-400/40 text-white'
+                        : 'bg-indigo-500/15 border-indigo-400/25 text-indigo-100 hover:bg-indigo-500/25 hover:text-white'
                     } ${hoverAcik ? '' : 'lg:justify-center lg:px-2'}`}
                   >
                     <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
-                    <span className={`flex-1 text-left whitespace-nowrap ${hoverAcik ? '' : 'lg:hidden'}`}>{item.label}</span>
+                    <span className={`flex-1 text-left whitespace-nowrap ${hoverAcik ? '' : 'lg:hidden'} ${item.id?.startsWith('beyannamelerim') ? 'text-yellow-400' : ''}`}>{item.label}</span>
                     {grupAcik
                       ? <ChevronDown className={`w-4 h-4 text-gray-400 ${hoverAcik ? '' : 'lg:hidden'}`} />
                       : <ChevronRight className={`w-4 h-4 text-gray-500 ${hoverAcik ? '' : 'lg:hidden'}`} />}
                   </button>
                   {grupAcik && (
-                    <div className={`mt-1 ml-3 pl-3 border-l border-blue-800/50 space-y-0.5 ${hoverAcik ? '' : 'lg:hidden'}`}>
+                    <div className={`mt-1 ml-3 pl-3 border-l border-indigo-400/30 space-y-0.5 bg-indigo-500/5 rounded-lg rounded-tl-none ${hoverAcik ? '' : 'lg:hidden'}`}>
                       {item.children.map(c => (
                         <Link
                           key={c.to}
@@ -185,6 +375,24 @@ export default function AdminSidebar() {
                     </div>
                   )}
                 </div>
+              )
+            }
+
+            // href'i olan ogeler (Yardimci Programi Indir gibi) <a> olarak cizilir
+            if (item.href) {
+              return (
+                <a
+                  key={item.label}
+                  href={item.href}
+                  download={item.download}
+                  title={item.label}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all bg-green-600/20 text-green-300 hover:bg-green-600/30 hover:text-green-200 ${
+                    hoverAcik ? '' : 'lg:justify-center lg:px-2'
+                  }`}
+                >
+                  <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
+                  <span className={`flex-1 whitespace-nowrap ${hoverAcik ? '' : 'lg:hidden'}`}>{item.label}</span>
+                </a>
               )
             }
 
@@ -206,18 +414,18 @@ export default function AdminSidebar() {
           })}
         </nav>
 
-        {/* Yardimci program indir */}
-        <div className={`p-3 border-t border-blue-800/40 ${hoverAcik ? '' : 'lg:hidden'}`}>
-          <a
-            href="/downloads/mubis-gib-yardimci.exe"
-            download
-            className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium bg-green-600/20 text-green-300 hover:bg-green-600/30 hover:text-green-200 transition-all"
-            title="MUBiS GIB Yardimci Programi"
+        {/* Cikis — dar modda yalniz ikon görünür */}
+        <div className="p-3 border-t border-blue-800/40">
+          <button
+            onClick={async () => {
+              try { await logout() } finally { window.location.replace('/') }
+            }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium bg-red-600/20 text-red-300 hover:bg-red-600/30 hover:text-red-200 transition-all ${hoverAcik ? '' : 'lg:justify-center lg:px-2'}`}
+            title="Çıkış Yap"
           >
-            <Download className="w-[18px] h-[18px] flex-shrink-0" />
-            <span className="flex-1 whitespace-nowrap">Yardimci Programi Indir</span>
-          </a>
-          <p className="text-[10px] text-gray-500 mt-1.5 px-1">GIB/SGK otomasyonlari icin bilgisayara kurulur.</p>
+            <LogOut className="w-[18px] h-[18px] flex-shrink-0" />
+            <span className={`flex-1 text-left whitespace-nowrap ${hoverAcik ? '' : 'lg:hidden'}`}>Çıkış Yap</span>
+          </button>
         </div>
 
       </aside>

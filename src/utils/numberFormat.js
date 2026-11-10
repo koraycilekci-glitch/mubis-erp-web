@@ -64,3 +64,16 @@ export function formatTurkishInput(value) {
     maximumFractionDigits: 2
   }).format(parseTurkishNumber(value))
 }
+
+// Yazim sirasinda kullanilan HAM tutar degeri: rakamlar + tek ondalik
+// virgul. Binlik ayirici eklenmez; bicimleme ("1.234,50") alandan cikarken
+// formatTurkishInput ile yapilir. Yazarken bicimlemek imleci kurus
+// kismina attigi icin para alanlarinda onChange'de BU fonksiyon kullanilmali.
+export function hamTutarGirdisi(value) {
+  let s = String(value).replace(/[^\d.,]/g, '')
+  const ilkVirgul = s.indexOf(',')
+  if (ilkVirgul !== -1) {
+    s = s.slice(0, ilkVirgul + 1) + s.slice(ilkVirgul + 1).replace(/[.,]/g, '')
+  }
+  return s
+}

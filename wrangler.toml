@@ -1,0 +1,9 @@
+name = "mubis-erp-web"
+pages_build_output_dir = "dist"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# NOT: Cloudflare Pages projelerinde wrangler.toml [triggers] desteklenmez.
+# Cron tetikleyicisi (her gün 07:00 UTC = TR 10:00) Cloudflare Dashboard
+# Workers & Pages > mubis-erp-web > Triggers > Cron Triggers bölümünden
+# veya uygun Workers yapılandırması ile manuel eklenmelidir.

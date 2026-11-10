@@ -130,37 +130,41 @@ export const GMS_ISTISNA = {
   2026: 58000
 }
 
-// Deger Artis Kazanci Istisna Tutarlari
+// Deger Artis Kazanci Istisna Tutarlari (TL)
 export const DAK_ISTISNA = {
-  2020: 18000,
-  2021: 19000,
+  2020: 15000,
+  2021: 18000,
   2022: 25000,
   2023: 55000,
   2024: 87000,
-  2025: 140000,
-  2026: 180000
+  2025: 150000,
+  2026: 150000
 }
 
 // Yi-UFE Endeksleri (ay bazli, 2003=100 bazli)
-// Kaynak: TUIK - Yurt Ici Uretici Fiyat Endeksi
+// Kaynak: TUIK - Yurt Ici Uretici Fiyat Endeksi (resmi seri)
 export const YIUFE = {
-  '2020-01': 462.65, '2020-02': 461.72, '2020-03': 463.63, '2020-04': 468.13,
-  '2020-05': 467.85, '2020-06': 472.32, '2020-07': 479.38, '2020-08': 483.51,
-  '2020-09': 488.94, '2020-10': 494.39, '2020-11': 496.32, '2020-12': 504.45,
-  '2021-01': 513.78, '2021-02': 518.70, '2021-03': 528.93, '2021-04': 536.18,
-  '2021-05': 545.55, '2021-06': 551.95, '2021-07': 558.76, '2021-08': 573.12,
-  '2021-09': 583.41, '2021-10': 607.58, '2021-11': 643.83, '2021-12': 686.95,
-  '2022-01': 748.20, '2022-02': 792.71, '2022-03': 847.48, '2022-04': 898.68,
-  '2022-05': 934.38, '2022-06': 982.09, '2022-07': 1024.33, '2022-08': 1056.45,
-  '2022-09': 1064.42, '2022-10': 1118.98, '2022-11': 1148.44, '2022-12': 1183.32,
-  '2023-01': 1201.59, '2023-02': 1213.89, '2023-03': 1223.72, '2023-04': 1238.44,
-  '2023-05': 1248.93, '2023-06': 1310.90, '2023-07': 1358.17, '2023-08': 1418.86,
-  '2023-09': 1470.93, '2023-10': 1498.10, '2023-11': 1543.58, '2023-12': 1567.36,
-  '2024-01': 1601.74, '2024-02': 1639.97, '2024-03': 1670.22, '2024-04': 1706.80,
-  '2024-05': 1726.99, '2024-06': 1746.35, '2024-07': 1769.51, '2024-08': 1783.89,
-  '2024-09': 1789.20, '2024-10': 1801.45, '2024-11': 1818.90, '2024-12': 1838.67,
-  '2025-01': 1862.30, '2025-02': 1889.15, '2025-03': 1908.40, '2025-04': 1928.50,
-  '2025-05': 1945.70, '2025-06': 1960.20, '2025-07': 1978.00
+  '2020-01': 462.42, '2020-02': 464.64, '2020-03': 468.69, '2020-04': 474.69,
+  '2020-05': 482.02, '2020-06': 485.37, '2020-07': 490.33, '2020-08': 501.85,
+  '2020-09': 515.13, '2020-10': 533.44, '2020-11': 555.18, '2020-12': 568.27,
+  '2021-01': 583.38, '2021-02': 590.52, '2021-03': 614.93, '2021-04': 641.63,
+  '2021-05': 666.79, '2021-06': 693.54, '2021-07': 710.61, '2021-08': 730.28,
+  '2021-09': 741.58, '2021-10': 780.45, '2021-11': 858.43, '2021-12': 1022.25,
+  '2022-01': 1129.03, '2022-02': 1210.60, '2022-03': 1321.90, '2022-04': 1423.27,
+  '2022-05': 1548.01, '2022-06': 1652.75, '2022-07': 1738.21, '2022-08': 1780.05,
+  '2022-09': 1865.09, '2022-10': 2011.13, '2022-11': 2026.08, '2022-12': 2021.19,
+  '2023-01': 2105.17, '2023-02': 2138.04, '2023-03': 2147.44, '2023-04': 2164.94,
+  '2023-05': 2179.02, '2023-06': 2320.72, '2023-07': 2511.75, '2023-08': 2659.60,
+  '2023-09': 2749.98, '2023-10': 2803.29, '2023-11': 2882.04, '2023-12': 2915.02,
+  '2024-01': 3035.59, '2024-02': 3149.03, '2024-03': 3252.79, '2024-04': 3369.98,
+  '2024-05': 3435.96, '2024-06': 3483.25, '2024-07': 3550.88, '2024-08': 3610.51,
+  '2024-09': 3659.84, '2024-10': 3707.10, '2024-11': 3731.43, '2024-12': 3746.52,
+  '2025-01': 3861.33, '2025-02': 3943.01, '2025-03': 4017.30, '2025-04': 4128.19,
+  '2025-05': 4230.69, '2025-06': 4334.94, '2025-07': 4409.73, '2025-08': 4518.89,
+  '2025-09': 4632.89, '2025-10': 4708.20, '2025-11': 4747.63, '2025-12': 4783.04,
+  '2026-01': 4910.53, '2026-02': 5029.76, '2026-03': 5145.36, '2026-04': 5308.46,
+  '2026-05': 5454.58, '2026-06': 5552.52, '2026-07': 5637.14, '2026-08': 5781.74,
+  '2026-09': 5901.26
 }
 
 // Kira Artis Orani (12 aylik TUFE ortalamalari, ay bazli)
@@ -349,21 +353,32 @@ export function getIhbarSuresi(giris, cikis) {
   return IHBAR_SURELERI.find(s => ay < s.maxAy) || IHBAR_SURELERI[IHBAR_SURELERI.length - 1]
 }
 
-// Brut -> Net hesapla
+// Brut -> Net hesapla (2025+: asgari ucret GV ve damga vergisi istisnasi, 7555 s.K.)
 export function bruttenNete(brut, yil = 2025) {
   const tavan = SGK.tavan[yil] || SGK.tavan[2025]
   const sgkMatrah = Math.min(brut, tavan)
   const sgkIsci = sgkMatrah * SGK.isci
   const issizlikIsci = sgkMatrah * SGK.issizlik_isci
   const gvMatrah = brut - sgkIsci - issizlikIsci
-  const gv = hesaplaGV(gvMatrah, yil, 'ucret')
-  const aylikGv = gv / 12
-  const damga = brut * DAMGA_VERGISI
+  const damgaOran = getDamgaVergisiOrani(yil)
+  // Asgari ucret istisnasi (2025+): brut asgari ucrete isabet eden gelir
+  // vergisi ve damga vergisi tutarlari kadar istisna uygulanir.
+  // Kaynak oranlar: 2026 GV istisnasi 4.211,33 TL, damga istisnasi 250,70 TL.
+  let gvIstisna = 0, damgaIstisna = 0
+  if (yil >= 2025) {
+    const asgariBrut = (ASGARI_UCRET[yil] || ASGARI_UCRET[2026]).brut
+    const ilkOran = (GV_UCRET_DILIMLERI[yil] || GV_UCRET_DILIMLERI[2025])[0].rate
+    gvIstisna = asgariBrut * (1 - SGK.isci - SGK.issizlik_isci) * ilkOran
+    damgaIstisna = asgariBrut * damgaOran
+  }
+  const hamGv = hesaplaGV(gvMatrah, yil, 'ucret')
+  const aylikGv = Math.max(0, hamGv - gvIstisna)
+  const damga = Math.max(0, brut * damgaOran - damgaIstisna)
   const net = brut - sgkIsci - issizlikIsci - aylikGv - damga
   const sgkIsveren = sgkMatrah * getSgkIsverenOrani(yil)
   const issizlikIsveren = sgkMatrah * SGK.issizlik_isveren
   const toplamMaliyet = brut + sgkIsveren + issizlikIsveren
-  return { sgkIsci, issizlikIsci, gvMatrah, aylikGv, damga, net, sgkIsveren, issizlikIsveren, toplamMaliyet }
+  return { sgkIsci, issizlikIsci, gvMatrah, hamGv, gvIstisna, aylikGv, damgaIstisna, damga, net, sgkIsveren, issizlikIsveren, toplamMaliyet }
 }
 
 // Net -> Brut yaklasik hesap (iteratif)

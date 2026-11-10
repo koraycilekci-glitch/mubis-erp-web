@@ -6,6 +6,8 @@ if not exist node_modules (
   pause
   exit /b 1
 )
-echo MUBiS GIB Yardimci baslatiliyor...
-node index.js --servis
-pause
+echo MUBiS GIB Yardimci gizli servis olarak baslatiliyor...
+rem Pencere kendiliginden kapanir; servis arka planda gizli calismaya devam eder.
+powershell -NoProfile -Command "Start-Process node -ArgumentList 'index.js','--servis' -WorkingDirectory '%~dp0' -WindowStyle Hidden"
+timeout /t 2 /nobreak >nul
+exit

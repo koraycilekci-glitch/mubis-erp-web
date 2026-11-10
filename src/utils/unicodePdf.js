@@ -122,6 +122,15 @@ export function createUnicodePdf() {
         pdf.addImage(image, 'PNG', 0, 0, 210, 297, undefined, 'FAST')
       })
       pdf.save(filename)
+    },
+    blob() {
+      pages.push(canvasToPng(page.canvas))
+      const pdf = new jsPDF({ unit: 'mm', format: 'a4' })
+      pages.forEach((image, index) => {
+        if (index > 0) pdf.addPage()
+        pdf.addImage(image, 'PNG', 0, 0, 210, 297, undefined, 'FAST')
+      })
+      return pdf.output('blob')
     }
   }
 }

@@ -8,8 +8,12 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   try {
-    const { email, password, name, clientId, officeId } = req.body
+    const { email, password, name, clientId: rawClientId, officeId } = req.body
     if (!email || !password) return res.status(400).json({ error: 'Email ve sifre gerekli' })
+
+    // profiles.client_id integer kolon; gecersiz deger ("undefined" vb.) asla DB'ye gitmesin
+    const parsedClientId = Number(rawClientId)
+    const clientId = Number.isInteger(parsedClientId) && parsedClientId > 0 ? parsedClientId : null
 
     const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://gxuqrxmpgoeyykoolmwv.supabase.co'
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY

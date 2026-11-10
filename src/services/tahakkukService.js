@@ -22,30 +22,118 @@ export async function extractAmountFromTahakkukPDF(pdfUrl) {
     // Sunucu tarafinda AI ile analiz dene
     console.log('Tahakkuk AI analiz basladi...')
     const aiResult = await analyzeDocument(pdfUrl)
-    
+
     if (aiResult && aiResult.success && aiResult.amount > 0) {
       console.log('AI tahakkuk tutari bulundu:', aiResult.amount)
       return aiResult.amount
     }
-    
+
     // AI basarisiz olursa, PDF'ten text cikarmayi dene
     const response = await fetch(pdfUrl)
     const blob = await response.blob()
     const text = await extractTextFromPDF(blob)
     const amount = parseAmountFromText(text)
-    
+
     if (amount > 0) {
       return amount
     }
-    
+
     // Text cikaramadiysa, OCR dene
     console.log('PDF text okunamadi, OCR deneniyor...')
     const ocrAmount = await extractAmountWithOCR(blob)
     return ocrAmount
-    
+
   } catch (error) {
     console.error('Tahakkuk PDF okuma hatasi:', error)
     return 0
+  }
+}
+
+/**
+ * Tahakkuk PDF'inden tutar + son odeme tarihini TEK analizde okur.
+ * (2.7.237: WhatsApp/mail mesajindaki "Son ödeme tarihi X'tir" satiri
+ * otomatik indirme akisinda bos gidiyordu — tutar yaziliyordu ama
+ * due_date/son_odeme alanina hicbir sey yazilmiyordu.)
+ * @param {string} pdfUrl - PDF dosya URL'i
+ * @returns {Promise<{amount: number, dueDate: string}>} dueDate 'dd/mm/yyyy'
+ */
+export async function extractTahakkukBilgileri(pdfUrl) {
+  let amount = 0
+  let dueDate = ''
+  try {
+    console.log('Tahakkuk AI analiz basladi (tutar + son odeme)...')
+    const aiResult = await analyzeDocument(pdfUrl)
+    if (aiResult && aiResult.success) {
+      amount = Number(aiResult.amount) || 0
+      dueDate = normalizeTarih(aiResult.due_date)
+    }
+  } catch (error) {
+    console.error('Tahakkuk AI analiz hatasi:', error)
+  }
+  if (!amount || !dueDate) {
+    try {
+      const response = await fetch(pdfUrl)
+      const blob = await response.blob()
+      const text = await extractTextFromPDF(blob)
+      if (!amount) amount = parseAmountFromText(text)
+      if (!dueDate) dueDate = parseDueDateFromText(text)
+      if ((!amount || !dueDate) && blob) {
+        console.log('PDF text okunamadi, OCR deneniyor...')
+        const ocrText = await extractTextWithOCR(blob)
+        if (!amount) amount = parseAmountFromText(ocrText)
+        if (!dueDate) dueDate = parseDueDateFromText(ocrText)
+      }
+    } catch (error) {
+      console.error('Tahakkuk PDF okuma hatasi:', error)
+    }
+  }
+  console.log('Tahakkuk bilgileri:', { amount, dueDate })
+  return { amount, dueDate }
+}
+
+/** Tarihi 'dd/mm/yyyy' bicimine getirir ('2026-09-30', '30.09.2026' vb.) */
+function normalizeTarih(deger) {
+  const s = String(deger || '').trim()
+  if (!s) return ''
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/)
+  if (m) return `${m[3].padStart(2, '0')}/${m[2].padStart(2, '0')}/${m[1]}`
+  m = s.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/)
+  if (m) return `${m[1].padStart(2, '0')}/${m[2].padStart(2, '0')}/${m[3]}`
+  return s
+}
+
+/** Metinden 'son ödeme' / 'vade' / 'son gün' ifadelerine yakin tarihi bulur */
+function parseDueDateFromText(text) {
+  if (!text) return ''
+  const norm = String(text).replace(/\s+/g, ' ')
+  const anahtarlar = [
+    /son\s*ödeme\s*tarihi/i, /son\s*odeme\s*tarihi/i, /ödeme\s*vadesi/i,
+    /odeme\s*vadesi/i, /vade\s*tarihi/i, /son\s*gün[üu]/i, /son\s*gun[uu]/i,
+    /yatırılacağı\s*son\s*gün/i, /yatirilacagi\s*son\s*gun/i
+  ]
+  for (const anahtar of anahtarlar) {
+    const idx = norm.search(anahtar)
+    if (idx === -1) continue
+    // anahtar ifadeden sonraki 60 karakterlik pencerede tarih ara
+    const pencere = norm.substring(idx, idx + anahtar.source.length + 60)
+    const m = pencere.match(/(\d{1,2})[./](\d{1,2})[./](\d{4})/) || pencere.match(/(\d{1,2})[./](\d{1,2})[./](\d{2})\b/)
+    if (m) {
+      const yil = m[3].length === 2 ? `20${m[3]}` : m[3]
+      return `${m[1].padStart(2, '0')}/${m[2].padStart(2, '0')}/${yil}`
+    }
+  }
+  return ''
+}
+
+/** OCR ile metin cikarir (tutar + tarih icin ortak) */
+async function extractTextWithOCR(blob) {
+  try {
+    const file = new File([blob], 'tahakkuk.pdf', { type: 'application/pdf' })
+    const result = await Tesseract.recognize(file, 'tur', { logger: m => console.log(m) })
+    return result.data.text || ''
+  } catch (error) {
+    console.error('OCR hatasi:', error)
+    return ''
   }
 }
 

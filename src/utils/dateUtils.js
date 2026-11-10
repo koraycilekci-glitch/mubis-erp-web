@@ -145,6 +145,26 @@ export function getLastBusinessDayOfMonth(year, month) {
   return `${y}-${m}-${d}`
 }
 
+// SGK prim odeme gunu: ayin son gunu; hafta sonu / resmi tatile denk gelirse
+// GERIYE degil TAKIP EDEN ilk is gunune ILERI ertelenir (2.7.266).
+// Ornek: Ekim 2026'nin son gunu 31 Cumartesi -> odeme 2 Kasim Pazartesi.
+// Sonraki aya tasma MUMKUN (Kasim takviminde Ekim kalemi gorunur).
+export function getSgkOdemeGunu(year, month) {
+  const date = new Date(year, month + 1, 0) // ayin son gunu
+  while (isVergiHaftaSonu(date) || isResmiTatil(date)) {
+    date.setDate(date.getDate() + 1)
+  }
+  return date
+}
+
+export function getFormattedSgkOdemeGunu(year, month) {
+  const date = getSgkOdemeGunu(year, month)
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
 // Beyan son tarihini hesapla (hafta sonu/tatil kontrolu ile)
 // Vergi odemelerinde Cumartesi de hafta sonu sayilir ve takip eden ilk is gunune ertelenir.
 export function getBeyanDeadline(year, month, day) {
@@ -272,7 +292,8 @@ export function getBeyanDeadlineByType(beyanType, year, month, mukellefTipi = 'c
 
   if (deadlines[beyanType]) {
     if (deadlines[beyanType].lastBusinessDay) {
-      return getLastBusinessDayOfMonth(year, month)
+      // SGK: son gunden TAKIP EDEN ilk is gunune (ileri) — 31 Cumartesi -> 2 Kasim
+      return getFormattedSgkOdemeGunu(year, month)
     }
     return getFormattedBeyanDeadline(year, month, deadlines[beyanType].day)
   }
@@ -381,7 +402,7 @@ export function getBeyanAciklama(beyanType) {
     'kdv': 'Her ayın 28\'i (bir önceki ay beyanı)',
     'kdv2': 'Her ayın 25\'i (bir önceki ay beyanı)',
     'muhtasar': 'Her ayın 26\'sı (bir önceki ay beyanı)',
-    'sgk': 'Her ayın son iş günü (hafta sonu/tatilde geriye ertelenir)',
+    'sgk': 'Ayın son günü (hafta sonu/tatilde takip eden ilk iş gününe ILERI ertelenir)',
     'edefter': 'Aylık: ilgili ayı takip eden 3. ayın sonu · 3 Aylık: dönemi takip eden 3. ayın 10/14\'ü',
     'edefter_3aylik': 'Ocak-Mart 10/14 Haziran, Nisan-Haziran 10/14 Eylül, Temmuz-Eylül 10/14 Aralık, Ekim-Aralık 10 Nisan / 14 Mayıs',
     'gecici_vergi': 'Şubat 17, Mayıs 17, Ağustos 17, Kasım 17',

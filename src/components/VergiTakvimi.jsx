@@ -1,13 +1,16 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Calendar, AlertTriangle, CheckCircle, Clock, Download, MessageCircle, Mail, X, FileText, RefreshCw, CreditCard } from 'lucide-react'
-import { getFormattedBeyanDeadline, getLastBusinessDayOfMonth, getMonthName, getBeyanStorageKey } from '../utils/dateUtils'
-import { getTahakkukList, sumTahakkukTutar } from '../utils/tahakkukUtils'
+import { getFormattedBeyanDeadline, getFormattedSgkOdemeGunu, getMonthName, getBeyanStorageKey } from '../utils/dateUtils'
+import { getTahakkukList, sumTahakkukTutar, oluTahakkukTemizle } from '../utils/tahakkukUtils'
+import { tahakkuklariKesfet, tahakkukDonemi } from '../services/documentService'
 import { supabase } from '../lib/supabase'
 import { sendEmail, sendDocumentViaWhatsAppChannel, getWhatsAppChannel } from '../services/whatsappService'
 import { getSettings } from '../services/settingsService'
 import { analyzeDocument } from '../services/documentIntelligenceEngine'
 import { useAuth } from '../context/AuthContext'
 import { gibYardimciIleDoldur, gibYardimciIs, musteriGirisBilgileriGetir } from '../utils/gibOdemeHelper'
+import { tecilliPlanGetir, tecilliPlanPdfIndir, tecilliTaksitOdendi } from '../services/tecilliService'
+import { YARDIMCI_EXE_URL } from '../config/indirmeLinkleri'
 
 const GIB_ODEME_URL = 'https://dijital.gib.gov.tr/hizliOdemeler/belgeNumarasiIleOdeme'
 
@@ -20,6 +23,9 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
   const [beyanDurumlari, setBeyanDurumlari] = useState(propBeyanDurumlari || {})
   const [loading, setLoading] = useState(true)
   const [selectedTahakkuk, setSelectedTahakkuk] = useState(null)
+  const [odemeKaydediliyor, setOdemeKaydediliyor] = useState(false)
+  const [odemeHatasi, setOdemeHatasi] = useState('')
+  const odemeKayitRef = useRef(false)
   const [showModal, setShowModal] = useState(false)
   const [modalLoading, setModalLoading] = useState(false)
   const [settings, setSettings] = useState(null)
@@ -28,8 +34,25 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
   const [gibBilgi, setGibBilgi] = useState({ vkn: '', tahakkukNo: '', il: '', vergiDairesi: '' })
   const [gibHelperDurum, setGibHelperDurum] = useState('')
   const [gibRapor, setGibRapor] = useState(null)
+  // Tecilli Tahsilat odeme plani (admin yukler; musteri burada taksitleri oder)
+  const [tecilli, setTecilli] = useState(null)
+  const [tecilliDurum, setTecilliDurum] = useState(null) // { tip, metin }
+  const [tecilliYukleniyorBelge, setTecilliYukleniyorBelge] = useState('')
+  const [tecilliTumGoster, setTecilliTumGoster] = useState({})
   const analyzingRef = useRef(new Set())
   const attemptedAnalysisRef = useRef(new Set())
+  const persistQueueRef = useRef(Promise.resolve())
+  const [kayitHatasi, setKayitHatasi] = useState(false)
+  // Storage keşfi: kayıt listesi boş ama belge klasörde yüklü olabilir
+  // (admin/otomasyon toplu yüklemeleri). Bir kez taranır, bulunan belgeler
+  // _tahakkuklar listesine persist edilir — birden fazla SGK tahakkuku
+  // (farklı siciller) hepsi listeye girer, her biri ayrı analiz edilir.
+  // Ayrıca dönem-dışı kayıtlar temizlenir (eski deplo yanlış aylara yazmış
+  // olabilir): dosya adından dönem çıkarılıp uyuşmayanlar listeden çıkarılır.
+  const kesifRef = useRef(new Set())
+  const temizlikRef = useRef(new Set())
+  const oluTemizlikRef = useRef(new Set())
+  const [musteriNesne, setMusteriNesne] = useState(null)
 
   useEffect(() => {
     setBeyanDurumlari(propBeyanDurumlari || {})
@@ -56,6 +79,10 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
   useEffect(() => {
     if (clientId) {
       loadSettings()
+      // Tecilli tahsilat planini yukle (admin "Var" secip PDF yuklemisse)
+      let iptal = false
+      tecilliPlanGetir(clientId).then(p => { if (!iptal) setTecilli(p) }).catch(() => {})
+      return () => { iptal = true }
     }
   }, [clientId])
 
@@ -137,7 +164,9 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
 
     const allItems = [...calendarItems, ...specialItems].map(i => {
       const dl = i.lastBusinessDay
-        ? getLastBusinessDayOfMonth(year, month)
+        // 2.7.266: SGK odemesi hafta sonu/resmi tatile denk gelirse takip eden
+        // ilk is gunune ILERI ertelenir (Ekim 2026: 31 Cumartesi -> 2 Kasim)
+        ? getFormattedSgkOdemeGunu(year, month)
         : getFormattedBeyanDeadline(year, month, i.day)
       const tahakkukInfo = getTahakkukStatus({ ...i, filingMonth: month, filingYear: year })
 
@@ -152,7 +181,11 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
         ...tahakkukInfo,
         // Son odeme tarihi her zaman takvimden hesaplanan resmi tarih olsun
         // (DB'deki eski kayitlarda PDF'ten okunmus yanlis tarih kalabiliyor)
-        sonOdeme: dl
+        sonOdeme: dl,
+        // 2.7.163: SGK bildirgesi MUHTASAR ile birlikte verilir — beyan zamanı
+        // her ayin en gec 26'si (tatil/hafta sonunda ilk is gunu); odeme zamanı
+        // ayin son is gunu (buyuk tarih olarak gosterilir)
+        beyanTarihi: i.type === 'sgk' ? getFormattedBeyanDeadline(year, month, 26) : ''
       }
     })
 
@@ -167,34 +200,151 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
   // DB'den en guncel kaydi okuyup uzerine uygulariz; aksi halde admin
   // panelinden yapilan eszamanli degisiklikler (yeni tahakkuk) ezilir.
   const persistBeyanDurumlari = useCallback(async (patch) => {
-    if (!clientId || !patch || Object.keys(patch).length === 0) return
+    if (!clientId || !patch) return false
 
-    try {
-      const { data: latest, error: readError } = await supabase
-        .from('clients')
-        .select('beyan_durumlari')
-        .eq('id', clientId)
-        .single()
+    const kaydet = async () => {
+      try {
+        const { data: latest, error: readError } = await supabase
+          .from('clients')
+          .select('beyan_durumlari')
+          .eq('id', clientId)
+          .single()
 
-      if (readError) throw readError
+        if (readError) throw readError
 
-      const merged = { ...(latest?.beyan_durumlari || {}), ...patch }
+        const mevcut = latest?.beyan_durumlari || {}
+        const degisiklik = typeof patch === 'function' ? patch(mevcut) : patch
+        if (!degisiklik || Object.keys(degisiklik).length === 0) return false
+        const merged = { ...mevcut, ...degisiklik }
+        const { data, error } = await supabase
+          .from('clients')
+          .update({ beyan_durumlari: merged })
+          .eq('id', clientId)
+          .select('beyan_durumlari')
+          .single()
 
-      setBeyanDurumlari(merged)
-      onBeyanDurumlariUpdate?.(merged)
-
-      const { error } = await supabase
-        .from('clients')
-        .update({ beyan_durumlari: merged })
-        .eq('id', clientId)
-
-      if (error) {
-        console.error('Tahakkuk tutari kaydedilemedi:', error)
+        if (error) throw error
+        setBeyanDurumlari(data.beyan_durumlari)
+        onBeyanDurumlariUpdate?.(data.beyan_durumlari)
+        return true
+      } catch (err) {
+        console.error('Beyan durumlari kayit hatasi:', err)
+        setKayitHatasi(true)
+        return false
       }
-    } catch (err) {
-      console.error('Beyan durumlari kayit hatasi:', err)
     }
+
+    const sonuc = persistQueueRef.current.then(kaydet, kaydet)
+    persistQueueRef.current = sonuc
+    return sonuc
   }, [clientId, onBeyanDurumlariUpdate])
+
+  // OLU KAYIT TEMIZLIGI (self-heal): silinen tahakkuk dosyalarinin kalintisi
+  // olan `_tutar` / `_tahakkuk_url` kayitlari musteriya hatali tutar gosterir
+  // ve keşfi bloklar. Veri yuklendiginde bir kez: Storage'da olmayan dosyalarin
+  // kayitlari cikarilir, tutar yeniden hesaplanir, tamamen bosalan donemler
+  // sifirlanir (keşif dogru dosyayi yeniden bulabilir).
+  useEffect(() => {
+    if (!clientId) return
+    const eski = propBeyanDurumlari || {}
+    if (!Object.keys(eski).length) return
+    if (oluTemizlikRef.current.has(clientId)) return
+    oluTemizlikRef.current.add(clientId)
+    ;(async () => {
+      try {
+        const { yeniMap, degisti } = await oluTahakkukTemizle(eski)
+        if (!degisti) return
+        const patch = {}
+        Object.keys(yeniMap).forEach(k => {
+          if (yeniMap[k] !== eski[k]) patch[k] = yeniMap[k]
+        })
+        if (Object.keys(patch).length) await persistBeyanDurumlari(patch)
+        console.log('Olu tahakkuk kayitlari temizlendi:', Object.keys(patch))
+      } catch (e) {
+        console.warn('Olu kayit temizligi atlandi:', e?.message || e)
+      }
+    })()
+  }, [clientId, propBeyanDurumlari, persistBeyanDurumlari])
+
+  // Müşteri kaydını bir kez çek (Storage klasör adı için vkn/tc + name)
+  useEffect(() => {
+    let iptal = false
+    if (!clientId) return
+    supabase.from('clients').select('*').eq('id', clientId).single()
+      .then(({ data }) => { if (!iptal && data) setMusteriNesne(data) })
+    return () => { iptal = true }
+  }, [clientId])
+
+  // Storage keşfi: hasTahakkuk=false dönemlerde müşteri klasörünü tara;
+  // tahakkuk PDF'leri varsa (birden fazla sicil dahil) _tahakkuklar
+  // listesine bir kez ekle. Analiz useEffect yeni eklenenleri otomatik okur.
+  // ÖNCE dönem-dışı kayıtlar temizlenir (dosya adı ↔ dönem uyuşmazlığı).
+  useEffect(() => {
+    console.log('VergiTakvimi discovery effect', { musteriId: musteriNesne?.id, sorted: sortedTum.map(i => i.id + ':' + i.type) })
+    if (!musteriNesne || !persistBeyanDurumlari) return
+    const dosyaAdi = (url) => {
+      try {
+        const s = String(url || '').split('?')[0]
+        return decodeURIComponent(s.substring(s.lastIndexOf('/') + 1))
+      } catch { return '' }
+    }
+    ;(async () => {
+      for (const item of sortedTum) {
+        const key = item.statusKey
+        // --- Temizlik (her item icin bir kez) ---
+        if (!temizlikRef.current.has(key)) {
+          temizlikRef.current.add(key)
+          const listeKey = `${key}_tahakkuklar`
+          const liste = beyanDurumlari?.[listeKey]
+          if (Array.isArray(liste) && liste.length) {
+            let temiz = liste.filter(t => {
+              const ad = dosyaAdi(t?.url)
+              if (/beyan|mizan/i.test(ad)) return false
+              const donem = tahakkukDonemi(ad)
+              if (!donem) return true
+              if (donem.ay && donem.ay !== item.filingMonth) return false
+              if (donem.yil && donem.yil !== item.filingYear) return false
+              return true
+            })
+            // Gecici vergide birden fazla kayit varsa yalnizca son (gercek tahakkuk) tutulur
+            if (item.type === 'gecici_vergi' && temiz.length > 1) {
+              temiz = [temiz[temiz.length - 1]]
+            }
+            if (temiz.length !== liste.length) {
+              await persistBeyanDurumlari({ [listeKey]: temiz, [`${key}_tutar`]: sumTahakkukTutar(temiz) })
+              continue
+            }
+          }
+        }
+        if (item.hasTahakkuk) continue
+        if (kesifRef.current.has(key)) continue
+        try {
+          const kesifSonuc = await tahakkuklariKesfet(musteriNesne, item.filingYear, item.type, item.filingMonth)
+          const bulunan = kesifSonuc.files || []
+          console.log('VergiTakvimi kesif:', item.type, item.filingYear, item.filingMonth, bulunan.length, bulunan.map(b => b.name), 'hadError:', kesifSonuc.hadError)
+          if (!kesifSonuc.hadError) kesifRef.current.add(key)
+          if (!bulunan.length) { await new Promise(r => setTimeout(r, 250)); continue }
+          if (bulunan.some(b => b.url)) {
+            await persistBeyanDurumlari(mevcut => {
+              const listeKey = `${key}_tahakkuklar`
+              const liste = Array.isArray(mevcut[listeKey]) ? mevcut[listeKey] : []
+              const yeni = bulunan
+                .filter(b => b.url && !liste.some(t => t?.url === b.url))
+                .map(b => ({
+                  url: b.url,
+                  name: b.name,
+                  uploadedAt: b.uploadedAt || new Date().toISOString(),
+                  tutar: 0,
+                  analiz_durumu: ''
+                }))
+              return yeni.length ? { [listeKey]: [...liste, ...yeni] } : null
+            })
+          }
+        } catch (e) { /* keşif hatası sessiz */ }
+        await new Promise(r => setTimeout(r, 250))
+      }
+    })()
+  }, [musteriNesne, sortedTum, persistBeyanDurumlari, beyanDurumlari])
 
   const runTahakkukAnalysis = useCallback(async (item, tahakkukUrl) => {
     if (!tahakkukUrl || analyzingRef.current.has(tahakkukUrl)) return
@@ -208,52 +358,36 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
 
     try {
       const result = await analyzeDocument(tahakkukUrl)
-      let patch = null
-
-      setBeyanDurumlari(prev => {
-        const next = { ...prev }
+      const kaydedildi = await persistBeyanDurumlari(mevcut => {
         const listKey = `${item.statusKey}_tahakkuklar`
-        const list = getTahakkukList(next, item.statusKey)
+        const list = getTahakkukList(mevcut, item.statusKey)
+        if (!list.some(t => t.url === tahakkukUrl)) return null
 
-        if (result.success && Number(result.amount) > 0) {
-          // Bu dosyanin tutarini listeye yaz, toplami hesapla
-          const newList = list.map(t =>
-            t.url === tahakkukUrl
-              ? { ...t, tutar: Number(result.amount), analiz_durumu: 'tamamlandi', son_odeme: item.deadline || result.due_date || '', vergi_turu: result.tax_type || '', tahakkuk_no: result.accrual_no || t.tahakkuk_no || '' }
-              : t
-          )
-          next[listKey] = newList
-          next[`${item.statusKey}_tutar`] = sumTahakkukTutar(newList)
-          next[`${item.statusKey}_analiz_durumu`] = 'tamamlandi'
-          // Son odeme tarihi olarak takvimde hesaplanan resmi tarihi kullan
-          next[`${item.statusKey}_son_odeme`] = item.deadline || result.due_date || ''
-          next[`${item.statusKey}_vergi_turu`] = result.tax_type || ''
-          next[`${item.statusKey}_analiz_url`] = tahakkukUrl
-          // GIB odeme ekraninda kullanilmak uzere tahakkuk fis (belge) numarasi
-          if (result.accrual_no) next[`${item.statusKey}_tahakkuk_no`] = result.accrual_no
-          console.log('Tahakkuk tutari okundu:', item.name, result.amount, '- toplam:', next[`${item.statusKey}_tutar`])
-        } else {
-          const newList = list.map(t =>
-            t.url === tahakkukUrl ? { ...t, analiz_durumu: 'basarisiz' } : t
-          )
-          next[listKey] = newList
-          next[`${item.statusKey}_tutar`] = sumTahakkukTutar(newList)
-          next[`${item.statusKey}_analiz_durumu`] = 'basarisiz'
-          next[`${item.statusKey}_analiz_hata`] = result.error || 'Belge analiz edilemedi'
-        }
-
-        // Sadece bu analizin degistirdigi alanlari patch olarak topla;
-        // persist sirasinda en guncel DB kaydiyla birlestirilecek
-        patch = {}
-        Object.keys(next).forEach(k => {
-          if (next[k] !== prev[k]) patch[k] = next[k]
+        const basarili = result.success && Number(result.amount) > 0
+        const newList = list.map(t => {
+          if (t.url !== tahakkukUrl) return t
+          return basarili
+            ? { ...t, tutar: Number(result.amount), analiz_durumu: 'tamamlandi', son_odeme: item.deadline || result.due_date || '', vergi_turu: result.tax_type || '', tahakkuk_no: result.accrual_no || t.tahakkuk_no || '' }
+            : { ...t, analiz_durumu: 'basarisiz' }
         })
-
-        return next
+        const patch = {
+          [listKey]: newList,
+          [`${item.statusKey}_tutar`]: sumTahakkukTutar(newList),
+          [`${item.statusKey}_analiz_durumu`]: basarili ? 'tamamlandi' : 'basarisiz'
+        }
+        if (basarili) {
+          patch[`${item.statusKey}_son_odeme`] = item.deadline || result.due_date || ''
+          patch[`${item.statusKey}_vergi_turu`] = result.tax_type || ''
+          patch[`${item.statusKey}_analiz_url`] = tahakkukUrl
+          if (result.accrual_no) patch[`${item.statusKey}_tahakkuk_no`] = result.accrual_no
+        } else {
+          patch[`${item.statusKey}_analiz_hata`] = result.error || 'Belge analiz edilemedi'
+        }
+        return patch
       })
-
-      if (patch && Object.keys(patch).length > 0) {
-        await persistBeyanDurumlari(patch)
+      if (!kaydedildi) {
+        setKayitHatasi(true)
+        setBeyanDurumlari(prev => ({ ...prev, [`${item.statusKey}_analiz_durumu`]: '' }))
       }
     } catch (err) {
       console.error('Tahakkuk analiz hatasi:', err)
@@ -275,8 +409,13 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
       const list = item.tahakkuklar || []
       list.forEach(t => {
         if (!t.url) return
-        // Bu dosya zaten basariyla analiz edildiyse atla
-        if (Number(t.tutar) > 0 && t.analiz_durumu === 'tamamlandi') return
+        // Bu dosya zaten basariyla analiz edildiyse atla.
+        // Istisna: tutar okunmus ama tahakkuk (belge) numarasi yoksa ve tur
+        // SGK degilse bir kez daha analiz et — eski kayitlardaki eksik
+        // tahakkuk numarasi boylece backfill edilir (odeme ekraninda gerekli).
+        const tamamVeNoVar = Number(t.tutar) > 0 && t.analiz_durumu === 'tamamlandi'
+          && (t.tahakkuk_no || item.type === 'sgk')
+        if (tamamVeNoVar) return
         if (t.analiz_durumu === 'analiz_ediliyor') return
         if (attemptedAnalysisRef.current.has(t.url)) return
 
@@ -290,6 +429,7 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
     if (!item.hasTahakkuk) return
 
     setSelectedTahakkuk(item)
+    setOdemeHatasi('')
     setShowModal(true)
     setShowGibPanel(false)
     setModalLoading(false)
@@ -435,18 +575,78 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
     setGibHelperDurum(['kurulu-degil', 'erisim-engelli', 'servis-yanit-vermedi'].includes(sonuc.reason) ? sonuc.reason : 'kurulu-degil')
   }
 
-  // Odeme yapildi: tahakkugu odendi olarak isaretle (yeni donemde otomatik sifirlanir)
   const handleOdendiIsaretle = async () => {
-    if (!selectedTahakkuk?.statusKey) return
+    if (!selectedTahakkuk?.statusKey || odemeKayitRef.current) return
+    odemeKayitRef.current = true
+    setOdemeKaydediliyor(true)
+    setOdemeHatasi('')
+    const statusKey = selectedTahakkuk.statusKey
+    const odendi = !selectedTahakkuk.odendi
     const bugun = new Date()
-    const tarih = `${bugun.getFullYear()}-${String(bugun.getMonth() + 1).padStart(2, '0')}-${String(bugun.getDate()).padStart(2, '0')}`
-    const patch = {
-      [`${selectedTahakkuk.statusKey}_odendi`]: true,
-      [`${selectedTahakkuk.statusKey}_odeme_tarihi`]: tarih
+    const tarih = odendi ? `${bugun.getFullYear()}-${String(bugun.getMonth() + 1).padStart(2, '0')}-${String(bugun.getDate()).padStart(2, '0')}` : ''
+    try {
+      const kaydedildi = await persistBeyanDurumlari({
+        [`${statusKey}_odendi`]: odendi,
+        [`${statusKey}_odeme_tarihi`]: tarih
+      })
+      if (!kaydedildi) {
+        setOdemeHatasi('Ödeme işareti kaydedilemedi. Lütfen tekrar deneyin.')
+        return
+      }
+      setSelectedTahakkuk(prev => prev?.statusKey === statusKey ? { ...prev, odendi, odemeTarihi: tarih } : prev)
+    } catch {
+      setOdemeHatasi('Ödeme işareti kaydedilemedi. Lütfen tekrar deneyin.')
+    } finally {
+      odemeKayitRef.current = false
+      setOdemeKaydediliyor(false)
     }
-    setBeyanDurumlari(prev => ({ ...prev, ...patch }))
-    await persistBeyanDurumlari(patch)
-    setShowModal(false)
+  }
+
+  // Tecilli tahsilat taksit odemesi: yardimci program GIB "Belge Numarasi
+  // Ile Odeme" sayfasini acar, belge no + il + vergi dairesi + guvenlik
+  // kodunu doldurur, TAKSITLI ODEME'yi secer ve ilk taksit kutusunu isaretler.
+  const handleTecilliOde = async (belge) => {
+    if (!belge) return
+    setTecilliYukleniyorBelge(belge.belgeNo)
+    setTecilliDurum({ tip: 'deniyor', metin: 'GIB ödeme sayfası hazırlanıyor...' })
+    try {
+      const sonuc = await gibYardimciIs('tecilli-odeme', {
+        vkn: tecilli?.vkn || user?.vkn || user?.tc || '',
+        belgeNo: belge.belgeNo,
+        il: tecilli?.il || user?.city || '',
+        vergiDairesi: belge.vergiDairesi || tecilli?.vergiDairesi || ''
+      })
+      if (sonuc.ok) {
+        setTecilliDurum({ tip: 'ok', metin: sonuc.not || 'Ödeme sayfası hazır; ekrandan ödemeyi tamamlayın.' })
+        return
+      }
+      if (['kurulu-degil', 'erisim-engelli', 'servis-yanit-vermedi', 'servis-hatasi'].includes(sonuc.reason) || /bilinmeyen/i.test(sonuc.reason || '')) {
+        // Yardimci kurulu degil ya da eski surumde (is tanimsiz): GIB sayfasini
+        // yeni sekmede ac; belge numarasi el ile girilebilir.
+        setTecilliDurum({
+          tip: 'yardimci-yok',
+          metin: 'Yardımcı program çalışmıyor veya eski sürümde. GIB ödeme sayfası yeni sekmede açıldı; belge numarası: ' + belge.belgeNo
+        })
+        window.open(GIB_ODEME_URL, '_blank', 'noopener')
+      } else {
+        setTecilliDurum({ tip: 'hata', metin: 'Ödeme sayfası hazırlanamadı: ' + (sonuc.reason || 'bilinmeyen hata') })
+      }
+    } catch (e) {
+      setTecilliDurum({ tip: 'hata', metin: 'Hata: ' + (e?.message || e) })
+    } finally {
+      setTecilliYukleniyorBelge('')
+    }
+  }
+
+  // Taksiti odenmis olarak isaretle: DB'de odenen=true yazilir, listeden silinir.
+  const handleTecilliOdendi = async (belge, t) => {
+    if (!window.confirm(`${t.no}/${belge.taksitSayisi} taksit (${t.toplam.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL) ödendi olarak işaretlenecek ve listeden kaldırılacak. Onaylıyor musunuz?`)) return
+    try {
+      const yeniBelgeler = await tecilliTaksitOdendi(clientId, belge.belgeNo, t.no)
+      setTecilli(p => p ? { ...p, belgeler: yeniBelgeler } : p)
+    } catch (e) {
+      setTecilliDurum({ tip: 'hata', metin: 'Taksit işaretlenemedi: ' + (e?.message || e) })
+    }
   }
 
   if (loading) {
@@ -463,6 +663,17 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
     )
   }
 
+  // Bulunan ayin odenmemis tecilli taksitleri: kart + odeme ozeti icin
+  const ayBasi = `${year}-${String(month + 1).padStart(2, '0')}-01`
+  const aySonu = `${year}-${String(month + 1).padStart(2, '0')}-${String(new Date(year, month + 1, 0).getDate()).padStart(2, '0')}`
+  const tecilliAylik = []
+  ;(tecilli?.belgeler || []).forEach(b => {
+    ;(b.taksitler || []).forEach(t => {
+      if (!t.odenen && t.vade >= ayBasi && t.vade <= aySonu) tecilliAylik.push({ belge: b, taksit: t })
+    })
+  })
+  const tecilliAyToplam = tecilliAylik.reduce((a, x) => a + (Number(x.taksit.toplam) || 0), 0)
+
   return (
     <>
       <div className="bg-gradient-to-br from-blue-900/50 to-blue-800/30 rounded-2xl p-6 border border-blue-700/30">
@@ -473,6 +684,11 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
           </h3>
         </div>
         
+        {kayitHatasi && (
+          <div role="alert" className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+            Tahakkuk bilgileri kaydedilemedi. Sayfayı yenileyip tekrar deneyin; sorun sürerse mali müşavirinize bildirin.
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {sortedTum.map(item => (
             <div 
@@ -504,7 +720,7 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
               <div className={`text-lg font-bold ${item.gecmi ? 'text-gray-500' : 'text-white'}`}>
                 {item.deadline.split('-').reverse().join('.')}
               </div>
-              
+
               {!item.gecmi && (
                 <div className="text-xs text-gray-400 mt-1">
                   {item.daysUntil === 0 ? 'Bugun son gun!' : 
@@ -584,20 +800,160 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
               </div>
             </div>
           ))}
+          {/* Tecilli Odeme kartlari: bulunan ayin odenmemis taksitleri (KDV/Muhtasar kartlari gibi) */}
+          {tecilliAylik.map(({ belge, taksit }) => {
+            const vadeTarih = new Date(taksit.vade + 'T00:00:00')
+            const gunFarki = Math.round((vadeTarih - new Date(new Date().toDateString())) / 86400000)
+            return (
+              <div
+                key={belge.belgeNo + '-' + taksit.no}
+                onClick={() => handleTecilliOde(belge)}
+                className="rounded-xl p-4 border bg-blue-800/20 border-blue-700/30 cursor-pointer hover:bg-blue-700/30 hover:border-blue-400/50 transition-all"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-medium text-white">Tecilli Ödeme</div>
+                  <CreditCard className="w-4 h-4 text-amber-400" />
+                </div>
+                <div className="text-lg font-bold text-white">
+                  {taksit.vade.split('-').reverse().join('.')}
+                </div>
+                <div className="text-xs text-gray-400 mt-1">
+                  {gunFarki === 0 ? 'Bugun son gun!' :
+                    gunFarki < 0 ? `${Math.abs(gunFarki)} gun gecti` :
+                      `${gunFarki} gun kaldi`}
+                </div>
+                <div className="mt-2 space-y-1">
+                  <div className="text-xs text-white font-medium">
+                    {taksit.no}/{belge.taksitSayisi} taksit
+                  </div>
+                  <div className="text-xs text-green-400 font-medium">
+                    💰 {Number(taksit.toplam).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL
+                  </div>
+                  <div className="text-xs text-yellow-400">Ödeme icin tiklayin</div>
+                </div>
+              </div>
+            )
+          })}
         </div>
         
-        {sortedTum.some(item => item.hasTahakkuk) && (
+        {(sortedTum.some(item => item.hasTahakkuk) || tecilliAyToplam > 0) && (
           <div className="mt-4 p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
             <div className="text-sm text-yellow-400 font-medium mb-1">Odeme Ozeti</div>
             <div className="text-xs text-gray-400">
               Toplam Odeme: {' '}
               <span className="text-white font-medium">
-                {sortedTum
+                {(sortedTum
                   .filter(item => item.hasTahakkuk)
-                  .reduce((toplam, item) => toplam + item.tutar, 0)
+                  .reduce((toplam, item) => toplam + item.tutar, 0) + tecilliAyToplam)
                   .toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL
               </span>
             </div>
+            {tecilliAyToplam > 0 && (
+              <div className="text-xs text-amber-300 mt-1">
+                Tecilli taksit: {tecilliAylik.map(x => `${x.taksit.no}/${x.belge.taksitSayisi}`).join(', ')} —{' '}
+                {tecilliAyToplam.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tecilli Tahsilat: admin yuklemisse aylik taksitler ayri odeme kutulari.
+            Odendigi isaretlenen taksitler listeden silinir (veri PDF icin korunur). */}
+        {tecilli?.acik && (tecilli.belgeler || []).length > 0 && (
+          <div className="mt-4 rounded-xl p-4 border border-amber-500/30 bg-gradient-to-br from-amber-900/30 to-yellow-800/20">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div className="text-sm font-semibold text-amber-200 flex items-center gap-2">
+                <CreditCard className="w-4 h-4" />
+                Tecilli Tahsilat
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => tecilliPlanPdfIndir(tecilli).catch(e => setTecilliDurum({ tip: 'hata', metin: 'PDF indirilemedi: ' + (e?.message || e) }))}
+                  className="flex items-center gap-1.5 bg-amber-500/10 hover:bg-amber-500/25 border border-amber-500/30 text-amber-200 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Ödeme Planını İndir (PDF)
+                </button>
+                <span className="text-xs text-amber-300/70">{tecilli.belgeler.length} belge</span>
+              </div>
+            </div>
+            {tecilli.belgeler.map(belge => {
+              const bugunISO = new Date().toISOString().slice(0, 10)
+              const odenen = (belge.taksitler || []).filter(t => t.odenen)
+              const aktif = (belge.taksitler || []).filter(t => !t.odenen)
+              const guncel = aktif.filter(t => t.vade >= bugunISO)
+              const gecmis = aktif.filter(t => t.vade < bugunISO)
+              const tumu = !!tecilliTumGoster[belge.belgeNo]
+              const gorunen = tumu ? aktif : guncel.slice(0, 3)
+              return (
+                <div key={belge.belgeNo} className="bg-blue-950/40 rounded-lg p-3 mb-2 last:mb-0 border border-amber-500/20">
+                  <div className="text-xs text-gray-300 mb-2 flex items-center justify-between flex-wrap gap-1">
+                    <span className="font-mono">{belge.belgeNo}</span>
+                    <span>{belge.vergiDairesi || tecilli.vergiDairesi || ''} Vergi Dairesi</span>
+                  </div>
+                  {odenen.length > 0 && (
+                    <div className="text-xs text-green-400/80 mb-1">{odenen.length} taksit ödendi</div>
+                  )}
+                  {!tumu && gecmis.length > 0 && (
+                    <div className="text-xs text-gray-500 mb-1">{gecmis.length} taksit vadesi gecti</div>
+                  )}
+                  {aktif.length === 0 ? (
+                    <div className="text-sm text-green-300 bg-green-500/10 rounded-lg px-3 py-2 border border-green-500/20">
+                      Tüm taksitler ödendi
+                    </div>
+                  ) : (
+                    <>
+                      <div className="space-y-1">
+                        {gorunen.map(t => (
+                          <div key={t.no} className={`flex items-center justify-between gap-2 rounded-lg px-3 py-2 ${t.vade < bugunISO ? 'bg-blue-900/10 opacity-60' : 'bg-blue-900/20'}`}>
+                            <div className="text-sm">
+                              <span className="text-white font-medium">{t.no}/{belge.taksitSayisi}</span>
+                              <span className="text-gray-400 text-xs ml-2">{t.vade.split('-').reverse().join('.')}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-green-400 font-medium text-sm">
+                                {t.toplam.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL
+                              </span>
+                              <button
+                                onClick={() => handleTecilliOdendi(belge, t)}
+                                title="Ödendi olarak işaretle ve listeden kaldır"
+                                className="bg-green-500/10 hover:bg-green-500/30 border border-green-500/30 text-green-300 text-xs px-2 py-1.5 rounded-lg transition-colors"
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleTecilliOde(belge)}
+                                disabled={tecilliYukleniyorBelge === belge.belgeNo}
+                                className="bg-amber-500/20 hover:bg-amber-500/40 border border-amber-500/40 text-amber-200 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors disabled:opacity-50"
+                              >
+                                {tecilliYukleniyorBelge === belge.belgeNo ? 'Aciliyor...' : 'Öde'}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {(guncel.length > 3 || gecmis.length > 0) && (
+                        <button
+                          onClick={() => setTecilliTumGoster(p => ({ ...p, [belge.belgeNo]: !p[belge.belgeNo] }))}
+                          className="text-xs text-blue-400 hover:text-blue-300 mt-2"
+                        >
+                          {tumu ? 'Yalnızca yakın taksitleri göster' : `Tüm taksitleri göster (${aktif.length})`}
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              )
+            })}
+            {tecilliDurum && (
+              <div className={`mt-2 rounded-lg p-3 text-xs border ${
+                tecilliDurum.tip === 'ok' ? 'bg-green-500/10 border-green-500/20 text-green-300'
+                  : tecilliDurum.tip === 'hata' ? 'bg-red-500/10 border-red-500/20 text-red-300'
+                    : 'bg-blue-500/10 border-blue-500/20 text-blue-300'
+              }`}>
+                {tecilliDurum.metin}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -734,7 +1090,7 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
                                     Odeme formunun otomatik doldurulmasi icin yardimci programi kurun. Kurulumdan sonra bu uyari bir daha cikmaz; &quot;Ode&quot; butonu odeme sayfasini dogrudan acar.
                                   </p>
                                   <a
-                                    href="/downloads/mubis-gib-yardimci.exe"
+                                    href={YARDIMCI_EXE_URL}
                                     download
                                     className="w-full flex items-center justify-center gap-2 bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 py-2 rounded-lg font-medium text-sm transition-colors"
                                   >
@@ -757,21 +1113,18 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
                     </div>
                   )}
 
-                  {/* Odeme sonrasi odendi isaretleme */}
-                  {selectedTahakkuk.odendi ? (
-                    <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 text-xs text-green-300 text-center">
-                      <CheckCircle className="w-4 h-4 inline mr-1 -mt-0.5" />
-                      Odendi olarak isaretlendi{selectedTahakkuk.odemeTarihi ? ` — ${selectedTahakkuk.odemeTarihi.split('-').reverse().join('.')}` : ''}
-                    </div>
-                  ) : (
-                    <button
-                      onClick={handleOdendiIsaretle}
-                      className="w-full flex items-center justify-center gap-2 border border-green-500/40 text-green-300 hover:bg-green-500/10 py-2.5 rounded-xl font-medium text-sm transition-colors"
-                    >
-                      <CheckCircle className="w-4 h-4" />
-                      Odemeyi Yaptim — Odendi Isaretle
-                    </button>
+                  {odemeHatasi && (
+                    <div role="alert" className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-xs text-red-300">{odemeHatasi}</div>
                   )}
+                  <button
+                    type="button"
+                    onClick={handleOdendiIsaretle}
+                    disabled={odemeKaydediliyor}
+                    className="w-full flex flex-col items-center justify-center gap-1 border border-green-500/40 text-green-300 hover:bg-green-500/10 py-2.5 rounded-xl font-medium text-sm transition-colors disabled:opacity-50"
+                  >
+                    <span><CheckCircle className="w-4 h-4 inline mr-1 -mt-0.5" />{odemeKaydediliyor ? 'Kaydediliyor...' : selectedTahakkuk.odendi ? `Ödendi olarak işaretlendi${selectedTahakkuk.odemeTarihi ? ` — ${selectedTahakkuk.odemeTarihi.split('-').reverse().join('.')}` : ''}` : 'Ödemeyi Yaptım — Ödendi İşaretle'}</span>
+                    {selectedTahakkuk.odendi && !odemeKaydediliyor && <span className="text-xs font-normal">İşareti kaldırmak için dokunun</span>}
+                  </button>
                 </div>
               ) : (
                 <div className="text-center py-4 text-gray-400">

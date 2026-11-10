@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useClients } from '../hooks/useClients'
 import { supabase } from '../lib/supabase'
 import * as clientService from '../services/clientService'
@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import { 
   getFormattedBeyanDeadline,
-  getLastBusinessDayOfMonth,
+  getFormattedSgkOdemeGunu,
   formatDateTimeTR,
   getMonthName,
   isResmiTatil
@@ -22,9 +22,41 @@ import { useAuth } from '../context/AuthContext'
 import { saveTahakkukAmount } from '../services/tahakkukService'
 import { analyzeDocument, saveDocumentAnalysis } from '../services/documentIntelligenceEngine'
 import { createNotification } from '../services/notificationService'
-import { uploadClientDocument, uploadClientBulkDocument } from '../services/documentService'
-import { getTahakkukList, getBeyanList, sumTahakkukTutar } from '../utils/tahakkukUtils'
-import { gibBelgeIndirVeYukle } from '../services/gibIndirmeService'
+import { addBeyanDocument, removeBeyanDocument, getBeyanDocuments } from '../services/beyanDocumentService'
+import { uploadClientDocument, uploadClientBulkDocument, tahakkukDonemi } from '../services/documentService'
+import { getTahakkukList, getBeyanList, sumTahakkukTutar, oluTahakkukTemizle } from '../utils/tahakkukUtils'
+import { gibBelgeIndirVeYukle, beyanOnayOtomatikIndir, tahakkuklariGonder } from '../services/gibIndirmeService'
+import { beyannameKayitlariGetir, donemKapsiyor } from '../services/beyannameService'
+
+// 2.7.497: Beyanname Kontrol Listesi'nde GİB'de "onaylı" görünen (Gönderildi)
+// beyannameler aylık takipte de "Onaylandı" işaretlenir. GİB kaydındaki `tur`
+// HAM metindir (örn. "KDV 1 BEYANNAMESİ", "MUHTASAR BEYANNAMESİ") — birebir
+// kod eşleşmesi çalışmaz; Beyanname Kontrol'ün regex testleri aynen uygulanır
+// (2.7.498: eksik işaretleme kök nedeni buydu). DAMGA'nın aylık takip
+// karşılığı yok; SGK bildirgesi beyanname kontrol kapsamı dışıdır.
+const normTr = (s) => String(s || '').toLocaleLowerCase('tr')
+const GIB_TUR_TESTLERI = {
+  kdv: t => /kdv\s*1/.test(t),
+  kdv2: t => /kdv\s*2/.test(t),
+  muhtasar: t => /muhtasar|muhsgk/.test(t),
+  muhtasar_3aylik: t => /muhtasar|muhsgk/.test(t),
+  gecici_vergi: t => /ge[çc]ici/.test(t),
+  kurumlar_vergi: t => /kurumlar/.test(t),
+  gelir_vergi: t => /gelir/.test(t),
+  poset: t => /po[şs]et/.test(t)
+}
+
+// Bir beyan hücresi için GİB onaylı kayıt var mı? belongMonths 0-tabanlıdır;
+// donemKapsiyor 1-tabanlı ay bekler. Yükleme-ayi filtresi kayitlariGetir icinde.
+const gibOnayliVar = (beyan, kayitlar, kimlikler) => {
+  const test = GIB_TUR_TESTLERI[beyan.type]
+  if (!test || !kimlikler.length || !kayitlar?.length) return false
+  const aylar1 = (beyan.belongMonths || []).map(m => m + 1)
+  return kayitlar.some(k =>
+    kimlikler.includes(String(k.vkn || '')) &&
+    test(normTr(k.tur)) &&
+    aylar1.some(a => donemKapsiyor(k.donem, beyan.belongYear, a)))
+}
 
 export default function AylikBeyanTakip() {
   const { clients: allClients } = useClients()
@@ -50,7 +82,7 @@ export default function AylikBeyanTakip() {
   const [selectedYear, setSelectedYear] = useState(varsayilanYil)
   const [selectedMonth, setSelectedMonth] = useState(varsayilanAy)
   
-  const [selectedBeyan, setSelectedBeyan] = useState('all')
+  const [selectedBeyan, setSelectedBeyan] = useState('kdv')
   const [selectedStatus, setSelectedStatus] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [viewMode, setViewMode] = useState('matris')
@@ -61,6 +93,22 @@ export default function AylikBeyanTakip() {
   const [sortField, setSortField] = useState('name')
   const [sortDirection, setSortDirection] = useState('asc')
   const [documentPanelClient, setDocumentPanelClient] = useState(null)
+  // Olu tahakkuk kaydi temizligi oturum basina bir kez yapilir
+  const oluTemizlikYapilanRef = useRef(new Set())
+  // Sag altta gecenici bildirim (otomatik indirme/gonderim sonuclari)
+  const [bildiri, setBildiri] = useState(null)
+  const bildiriZamanRef = useRef(0)
+  // Arka plan GIB yuklemeleri: key -> 'yukleniyor' (hucrede donen yildiz)
+  const [yuklemeDurumlari, setYuklemeDurumlari] = useState({})
+  const bildiriGoster = (mesaj, tur = 'success', sureMs = 7000) => {
+    bildiriZamanRef.current = Date.now()
+    setBildiri({ mesaj, tur, ts: bildiriZamanRef.current })
+    setTimeout(() => {
+      if (bildiriZamanRef.current && Date.now() - bildiriZamanRef.current >= sureMs - 500) {
+        setBildiri(null)
+      }
+    }, sureMs)
+  }
 
   const months = [
     'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
@@ -74,12 +122,14 @@ export default function AylikBeyanTakip() {
   }
 
   const beyanTipleri = [
-    { id: 'all', label: 'Tüm Beyanlar', icon: '📋' },
+    // 2.7.239: "Tüm Beyanlar" secenegi kaldirildi (kullanici talimati) —
+    // listeler artik belirli beyan turu secilince gosterilir.
     { id: 'kdv', label: 'KDV', icon: '📄' },
     { id: 'kdv2', label: 'KDV2', icon: '📄' },
     { id: 'muhtasar', label: 'Muhtasar', icon: '📄' },
     { id: 'sgk', label: 'SGK', icon: '🏥' },
     { id: 'gecici_vergi', label: 'Geçici Vergi', icon: '📊' },
+    { id: 'poset', label: 'Poşet', icon: '🛍️' },
     { id: 'kurumlar_vergi', label: 'Kurumlar Vergisi', icon: '🏢' },
     { id: 'gelir_vergi', label: 'Gelir Vergisi', icon: '👤' },
     { id: 'edefter', label: 'e-Defter', icon: '📓' },
@@ -88,12 +138,11 @@ export default function AylikBeyanTakip() {
 
   const statusOptions = [
     { id: 'all', label: 'Tüm Durumlar', color: 'gray' },
-    { id: 'yapildi', label: 'Yapıldı', color: 'green' },
     { id: 'yapilamadi', label: 'Yapılmadı', color: 'red' },
-    { id: 'onaylandi', label: 'Onaylandı', color: 'blue' },
-    { id: 'onaylanmadi', label: 'Onaylanmadı', color: 'yellow' },
-    { id: 'tahakkuk_gonderildi', label: 'Tahakkuk Gönderildi', color: 'purple' },
-    { id: 'tahakkuk_gonderilmedi', label: 'Tahakkuk Gönderilmedi', color: 'orange' },
+    { id: 'evrak_alindi', label: 'Evrak Alındı', color: 'sky' },
+    { id: 'hazir', label: 'Hazır', color: 'yellow' },
+    { id: 'onaylandi', label: 'Onaylandı', color: 'green' },
+    { id: 'gonderildi', label: 'Gönderildi', color: 'purple' },
   ]
 
   const loadData = useCallback(async () => {
@@ -108,8 +157,49 @@ export default function AylikBeyanTakip() {
       console.error('Musteri listesi cekilemedi:', err)
     }
 
+    // 2.7.497: GİB'de onaylı beyannameler (Beyanname Kontrol'de "Gönderildi"
+    // görünenler) aylık takipte de "Onaylandı" yapilir. Secili donem (0-tabanli
+    // M) GİB vergilendirme dönemine karsilik gelir; kayitlar yükleme ayina
+    // gore suzlenir (donem X -> X+1 yuklemeleri).
+    let gibKayitlar = []
+    try {
+      // 2.7.5xx KRITIK: beyannameKayitlariGetir(yil, donem) DÖNEM alir,
+      // yükleme filtresini ICERIDE yapar (kayitlar dönem+1 ayinda yüklenenler;
+      // yuklemeAyinda). Önceki kod dönem+1'i parametre olarak veriyordu —
+      // servis bir +1 daha ekleyip dönem+2 yüklemelerini getiriyordu,
+      // sonuç hep bos kaliyordu ve "Onaylandı" isaretlenmiyordu.
+      gibKayitlar = await beyannameKayitlariGetir(selectedYear, selectedMonth + 1)
+      // Yıllık beyanlar (gelir Mart Y+1 / kurumlar Nisan Y+1'de yüklenir):
+      // yükleme parametresi DÖNEM oldugu icin 2 (Subat→Mart yüklemesi) ve
+      // 3 (Mart→Nisan yüklemesi) verilir.
+      if (selectedMonth === 11) {
+        const ekMart = await beyannameKayitlariGetir(selectedYear + 1, 2).catch(() => [])
+        const ekNisan = await beyannameKayitlariGetir(selectedYear + 1, 3).catch(() => [])
+        gibKayitlar = [...gibKayitlar, ...(ekMart || []), ...(ekNisan || [])]
+      }
+    } catch { /* GIB kayitlari okunamazsa takip oldugu gibi kalir */ }
+
     const data = freshClients.map(client => {
+      const kimlikler = [client.vkn, client.tc].filter(v => /^\d{10,11}$/.test(String(v || ''))).map(String)
       const beyanlar = generateMonthlyBeyanlar(client)
+      // Yalnizca asagi durumdan yukari: yapilamadi/hazir/yapildi -> onaylandi
+      // ('tahakkuk_gonderildi' ve mevcut 'onaylandi' dokunulmaz).
+      const yukseltilecek = beyanlar.filter(b =>
+        !['yapildi', 'onaylandi', 'tahakkuk_gonderildi'].includes(b.status) &&
+        gibOnayliVar(b, gibKayitlar, kimlikler))
+      if (yukseltilecek.length) {
+        const map = { ...(client.beyan_durumlari || client.beyanDurumlari || {}) }
+        for (const b of yukseltilecek) {
+          b.status = 'onaylandi'
+          map[`${b.belongYear}_${b.belongMonths[0]}_${b.type}`] = 'onaylandi'
+        }
+        client.beyanDurumlari = map
+        client.beyan_durumlari = map
+        // Kalici yaz — bir sonraki yuklemede zaten 'onaylandi' oldugu icin
+        // tekrar yazilmaz (idempotent).
+        supabase.from('clients').update({ beyan_durumlari: map }).eq('id', client.id)
+          .then(() => { }).catch(() => { })
+      }
       return {
         ...client,
         beyanlar: beyanlar,
@@ -120,7 +210,64 @@ export default function AylikBeyanTakip() {
     setClients(data)
     applyFilters(data)
     setLoading(false)
+    donemDisiKayitlariTemizle(data)
   }, [selectedYear, selectedMonth, selectedBeyan, selectedStatus, searchTerm])
+
+  // Donem-disi tahakkuk kayitlarini temizle: eski bir deplo (Storage kesifi
+  // donem kontrolu yapmadan) ayni tahakkuk PDF'ini birden fazla ayin
+  // kayit listesine yazmisti — silinince de kesif geri ekliyordu. Sayfa
+  // acilirken dosya adindan donem dogrulanir; uymayanlar DB'den cikarilir
+  // (dosyanin kendisi Storage'da kalir; dogru donemde yeniden kesfedilir).
+  const donemDisiKayitlariTemizle = async (musteriler) => {
+    const dosyaAdi = (url) => {
+      try {
+        const s = String(url || '').split('?')[0]
+        return decodeURIComponent(s.substring(s.lastIndexOf('/') + 1))
+      } catch { return '' }
+    }
+    for (const c of musteriler || []) {
+      const map = c.beyanDurumlari || {}
+      const dbMap = c.beyan_durumlari || map
+      let degisti = false
+      const yeniMap = { ...dbMap }
+      for (const [key, deger] of Object.entries(dbMap)) {
+        if (!key.endsWith('_tahakkuklar') || !Array.isArray(deger)) continue
+        // baseKey: <yil>_<ay>_<tur>
+        const parca = key.replace(/_tahakkuklar$/, '').split('_')
+        const yil = parseInt(parca[0], 10)
+        const ay = parseInt(parca[1], 10)
+        if (!yil || !ay) continue
+        const temiz = deger.filter(t => {
+          const donem = tahakkukDonemi(dosyaAdi(t?.url))
+          if (!donem) return true // donemi tespit edilemeyenlere dokunma
+          if (donem.ay && donem.ay !== ay) return false
+          if (donem.yil && donem.yil !== yil) return false
+          return true
+        })
+        if (temiz.length !== deger.length) {
+          yeniMap[key] = temiz
+          yeniMap[`${key.replace(/_tahakkuklar$/, '')}_tutar`] = sumTahakkukTutar(temiz)
+          degisti = true
+        }
+      }
+      // Olu kayit temizligi: silinmis dosyalarin kalintisi tutar/url kayitlari
+      // (musteriya hatali tutar gosterir, keşfi bloklar). Oturum basina bir kez.
+      if (!oluTemizlikYapilanRef.current.has(c.id)) {
+        oluTemizlikYapilanRef.current.add(c.id)
+        try {
+          const olu = await oluTahakkukTemizle(yeniMap)
+          if (olu.degisti) { degisti = true; Object.assign(yeniMap, olu.yeniMap) }
+        } catch { /* best-effort */ }
+      }
+      if (degisti) {
+        try {
+          await supabase.from('clients').update({ beyan_durumlari: yeniMap }).eq('id', c.id)
+          c.beyanDurumlari = yeniMap
+          c.beyan_durumlari = yeniMap
+        } catch { /* temizlik best-effort */ }
+      }
+    }
+  }
 
   const generateMonthlyBeyanlar = (client) => {
     const results = []
@@ -143,7 +290,7 @@ export default function AylikBeyanTakip() {
       }
     }
 
-    const addResult = (id, label, icon, belongMonths, belongYear, deadline, verilmeAyLabel) => {
+    const addResult = (id, label, icon, belongMonths, belongYear, deadline, verilmeAyLabel, paymentDeadline) => {
       const aitLabel = belongMonths.length === 1
         ? getMonthName(belongMonths[0])
         : belongMonths.length <= 3
@@ -157,6 +304,7 @@ export default function AylikBeyanTakip() {
         belongYear,
         status: client.beyanDurumlari?.[key] || 'yapilamadi',
         deadline,
+        paymentDeadline: paymentDeadline || '',
         aitAy: `${aitLabel} ${belongYear}`,
         verildigiAy: verilmeAyLabel,
         amount: client.beyanDurumlari?.[`${key}_tutar`] || 0,
@@ -186,11 +334,24 @@ export default function AylikBeyanTakip() {
         `${getMonthName(filingM)} ${filingY}`)
     }
 
-    // SGK - ait oldugu ayin son is gunu (hafta sonu ve resmi tatillerde geriye ertelenir)
+    // Poset beyani — yalniz profilde O AY icin acilmis musterilerde gorunur
+    // (opt-in tur; profil anahtari hic yoksa beyan olusturulmaz)
+    const posetMd = profile.poset?.[M]
+    if (posetMd && posetMd.active !== false && posetMd.period !== 'yok') {
+      addResult('poset', 'Poşet', '🛍️', [M], Y,
+        getFormattedBeyanDeadline(filingY, filingM, 25),
+        `${getMonthName(filingM)} ${filingY}`)
+    }
+
+    // SGK - bildirge muhtasar ile birlikte verilir: son beyan zamanı her ayin
+    // en gec 26'si (tatil/hafta sonunda ilk is gunu); ODEME zamanı ayin son
+    // gunudur — hafta sonu/tatile denk gelirse TAKIP EDEN ilk is gunune
+    // ILERI ertelenir (Ekim 2026: 31 Cumartesi -> 2 Kasim Pazartesi)
     if (checkProfile('sgk', M).active) {
       addResult('sgk', 'SGK', '🏥', [M], Y,
-        getLastBusinessDayOfMonth(filingY, filingM),
-        `${getMonthName(filingM)} ${filingY}`)
+        getFormattedBeyanDeadline(filingY, filingM, 26),
+        `${getMonthName(filingM)} ${filingY}`,
+        getFormattedSgkOdemeGunu(filingY, filingM))
     }
 
     // Muhtasar (Aylik) - sonraki ayin 26'si; hafta sonu/tatilde ertelenir
@@ -198,7 +359,10 @@ export default function AylikBeyanTakip() {
     if (muhtCheck.active && muhtCheck.period === 'aylik') {
       addResult('muhtasar', 'Muhtasar', '📄', [M], Y,
         getFormattedBeyanDeadline(filingY, filingM, 26),
-        `${getMonthName(filingM)} ${filingY}`)
+        `${getMonthName(filingM)} ${filingY}`,
+        // Muhtasar odeme gunu de beyan gunuyle ayni (26); tatil/hafta sonuna
+        // denk gelirse ILERI ertelenir (26 Cumartesi -> 28 Pazartesi)
+        getFormattedBeyanDeadline(filingY, filingM, 26))
     }
 
     // ========== 3 AYLIK MUHTASAR (ceyrek son aylarinda gosterilir) ==========
@@ -215,7 +379,9 @@ export default function AylikBeyanTakip() {
       if (has3Aylik) {
         addResult('muhtasar_3aylik', 'Muhtasar (3 Aylık)', '📄', qMonths, Y,
           getFormattedBeyanDeadline(filingY, filingM, 26),
-          `${getMonthName(filingM)} ${filingY}`)
+          `${getMonthName(filingM)} ${filingY}`,
+          // 3 aylik muhtasar odeme gunu da 26; ILERI ertelenmis is gunu
+          getFormattedBeyanDeadline(filingY, filingM, 26))
       }
     }
 
@@ -317,12 +483,14 @@ export default function AylikBeyanTakip() {
     const total = beyanlar.length
     const yapildi = beyanlar.filter(b => b.status === 'yapildi' || b.status === 'onaylandi' || b.status === 'tahakkuk_gonderildi').length
     const onaylandi = beyanlar.filter(b => b.status === 'onaylandi').length
+    const hazir = beyanlar.filter(b => b.status === 'hazir').length
     const tahakkukGonderildi = beyanlar.filter(b => b.status === 'tahakkuk_gonderildi').length
-    
+
     return {
       total,
       yapildi,
       onaylandi,
+      hazir,
       tahakkukGonderildi,
       yapilamadi: total - yapildi,
       completionRate: total > 0 ? Math.round((yapildi / total) * 100) : 0
@@ -355,9 +523,14 @@ export default function AylikBeyanTakip() {
     }
     
     if (selectedStatus !== 'all') {
+      // 'gonderildi' secenegi verideki 'tahakkuk_gonderildi' (ve eski
+      // 'gonderildi') kayitlariyla eslesir
+      const uyum = (st) => selectedStatus === 'gonderildi'
+        ? (st === 'tahakkuk_gonderildi' || st === 'gonderildi')
+        : st === selectedStatus
       filtered = filtered.map(c => ({
         ...c,
-        beyanlar: c.beyanlar?.filter(b => b.status === selectedStatus) || []
+        beyanlar: c.beyanlar?.filter(b => uyum(b.status)) || []
       })).filter(c => c.beyanlar.length > 0)
       filtered = filtered.map(c => ({
         ...c,
@@ -406,6 +579,14 @@ export default function AylikBeyanTakip() {
     loadData()
   }, [selectedYear, selectedMonth, selectedBeyan, selectedStatus, searchTerm, loadData])
 
+  // Beyan profili disaridan degistiyse (orn. tevkifat faturasi yuklenince
+  // KDV2'nin otomatik aktiflesmesi) listeyi tazele — KDV2 satiri aninda gorunur.
+  useEffect(() => {
+    const handler = () => { try { loadData() } catch { /* yoksay */ } }
+    window.addEventListener('beyan-profile-guncellendi', handler)
+    return () => window.removeEventListener('beyan-profile-guncellendi', handler)
+  }, [loadData])
+
   const openDetailModal = (client) => {
     setSelectedClient(client)
     setShowDetailModal(true)
@@ -424,14 +605,72 @@ export default function AylikBeyanTakip() {
 
 
 
+  // Yukleme tamamlaninca durumu sessizce gunceller (bildirim tetiklemeden).
+  // beyan_durumlari DB'den taze okunur — async callback'te bayat state olmaz.
+  const persistStatus = async (clientId, beyan, newStatus) => {
+    const key = `${beyan.belongYear}_${beyan.belongMonths[0]}_${beyan.type}`
+    const personelAdi = profile?.name || user?.email || 'Admin'
+    let yeniMap = null
+    try {
+      const { data: row } = await supabase
+        .from('clients')
+        .select('beyan_durumlari')
+        .eq('id', clientId)
+        .single()
+      const currentMap = row?.beyan_durumlari || {}
+      yeniMap = {
+        ...currentMap,
+        [key]: newStatus,
+        [`${key}_personel`]: personelAdi,
+        [`${key}_tarih`]: new Date().toISOString()
+      }
+      const { error } = await supabase
+        .from('clients')
+        .update({ beyan_durumlari: yeniMap })
+        .eq('id', clientId)
+      if (error) throw error
+    } catch (err) {
+      console.error('Beyan durumu guncelleme hatasi:', err)
+      return false
+    }
+    const updatedClients = clients.map(c => {
+      if (c.id !== clientId) return c
+      const updatedBeyanlar = c.beyanlar.map(b =>
+        b.id === beyan.id ? { ...b, status: newStatus, updatedAt: formatDateTimeTR(new Date()) } : b
+      )
+      return { ...c, beyanDurumlari: yeniMap, beyanlar: updatedBeyanlar, summary: getBeyanSummary(updatedBeyanlar) }
+    })
+    setClients(updatedClients)
+    if (selectedClient && selectedClient.id === clientId) {
+      const updatedBeyanlar = selectedClient.beyanlar.map(b =>
+        b.id === beyan.id ? { ...b, status: newStatus, updatedAt: formatDateTimeTR(new Date()) } : b
+      )
+      setSelectedClient({ ...selectedClient, beyanDurumlari: yeniMap, beyanlar: updatedBeyanlar, summary: getBeyanSummary(updatedBeyanlar) })
+    }
+    applyFilters(updatedClients)
+    return true
+  }
+
   const updateBeyanStatus = async (clientId, beyan, newStatus) => {
     // Dogru key: generateMonthlyBeyanlar ile ayni format
     const key = `${beyan.belongYear}_${beyan.belongMonths[0]}_${beyan.type}`
 
     // Mevcut durumlari koru
     const client = clients.find(c => c.id === clientId)
-    const currentMap = client?.beyanDurumlari || {}
     const personelAdi = profile?.name || user?.email || 'Admin'
+    // 2.7.171: TAZE DB OKUMASI — bellekteki eski map'i komple geri yazmak,
+    // arka plandaki otomatik indirme/yukleme akisinin yeni yazdigi belge
+    // anahtarlarini (beyanlar/tahakkuklar/url) SILIYORDU. Once DB'den guncel
+    // beyan_durumlari okunur, uzerine durum yazilir.
+    let currentMap = client?.beyanDurumlari || {}
+    try {
+      const { data: row } = await supabase
+        .from('clients')
+        .select('beyan_durumlari')
+        .eq('id', clientId)
+        .single()
+      if (row?.beyan_durumlari) currentMap = row.beyan_durumlari
+    } catch { /* DB okunamazsa bellek kopyasiyla devam */ }
     const updatedMap = {
       ...currentMap,
       [key]: newStatus,
@@ -502,6 +741,93 @@ export default function AylikBeyanTakip() {
     } catch (notifErr) {
       console.error('Bildirim kaydetme hatasi:', notifErr)
     }
+
+    // 2.7.139: "onaylandi" veya "verildi" isaretlenen beyanin belgelerini
+    // e-Beyanname/SGK sisteminden otomatik indir ve BEYANNAME arsivine kaydet.
+    // Arka planda calisir; onay akisini bekletmez, hatasi onayi etkilemez.
+    if (newStatus === 'onaylandi' || newStatus === 'yapildi') {
+      const onaylananMusteri = updatedClients.find(c => c.id === clientId)
+      if (onaylananMusteri) {
+        const yukKey = `${clientId}_${key}`
+        setYuklemeDurumlari(prev => ({ ...prev, [yukKey]: 'yukleniyor' }))
+        bildiriGoster(`${onaylananMusteri.name}: Belgeler kontrol ediliyor (önce müşteri klasörü, boşsa GİB)...`, 'info', 5000)
+        beyanOnayOtomatikIndir({ client: onaylananMusteri, beyan })
+          .then(async r => {
+            if (r?.sayi > 0) {
+              console.log('[beyan-onay] otomatik indirme tamam:', r.sayi, r.hedef || '')
+              const nereden = r.kaynak === 'arsiv' ? 'müşteri klasöründen (G: arşivi) MUBiS\'e yüklendi' : r.kaynak === 'luca' ? 'Luca’dan indirildi ve MUBiS’e yüklendi' : 'GİB\'den indirildi ve MUBiS\'e yüklendi'
+              bildiriGoster(`${onaylananMusteri.name}: ${r.sayi} belge ${nereden}.`, 'success')
+            } else if (r?.zatenYuklu) {
+              // 2.7.178: Belgeler daha once yuklenmis — tekrar yuklenmedi
+              bildiriGoster(`${onaylananMusteri.name}: Belgeler zaten MUBiS'te yüklü — tekrar yüklenmedi.`, 'info')
+            } else {
+              bildiriGoster(`${onaylananMusteri.name}: GİB'de bu dönem için indirilecek belge bulunamadı.`, 'info')
+            }
+            // 2.7.159c: Durum "Gönderildi" SADECE gerçek gönderim teyidinden
+            // sonra yazılır. Belge inmediyse/yüklenmeden asla gönderildi
+            // işaretlenmez; durum "Onaylandı"da kalır.
+            if (newStatus === 'onaylandi' && r?.sayi > 0) {
+              if (beyan.type === 'sgk') {
+                const muhtasarBeyan = { ...beyan, type: 'muhtasar', label: beyan.label && /muhtasar/i.test(beyan.label) ? beyan.label : 'Muhtasar' }
+                const okM = await persistStatus(clientId, muhtasarBeyan, 'onaylandi')
+                if (okM) bildiriGoster(`${onaylananMusteri.name}: SGK belgeleri yüklendi — Aylık Muhtasar beyanı "Onaylandı" olarak işaretlendi.`, 'success')
+              } else {
+                bildiriGoster(`${onaylananMusteri.name}: Belgeler MUBiS'e yüklendi — tahakkuk gönderimi yapılıyor...`, 'info')
+              }
+            }
+            // Tahakkuk gonderimi (onaylandi akisinda) arka planda surer;
+            // GONDERIM TEYIDINDEN SONRA durum "Gonderildi" olur
+            if (newStatus === 'onaylandi' && Array.isArray(r?.tahakkukBelgeleri) && r.tahakkukBelgeleri.length) {
+              tahakkuklariGonder({ client: onaylananMusteri, beyan, tahakkukBelgeleri: r.tahakkukBelgeleri })
+                .then(async g => {
+                  if (g?.ok && !g?.atlandi) {
+                    console.log('[tahakkuk-gonderim] gonderildi (teyit):', onaylananMusteri.name)
+                    // 2.7.157: SGK gonderiminde SGK + Aylık Muhtasar birlikte "Gönderildi"
+                    if (beyan.type === 'sgk') {
+                      const muhtasarBeyan = { ...beyan, type: 'muhtasar', label: beyan.label && /muhtasar/i.test(beyan.label) ? beyan.label : 'Muhtasar' }
+                      await persistStatus(clientId, beyan, 'tahakkuk_gonderildi')
+                      await persistStatus(clientId, muhtasarBeyan, 'tahakkuk_gonderildi')
+                    } else {
+                      await persistStatus(clientId, beyan, 'tahakkuk_gonderildi')
+                    }
+                    bildiriGoster(`${onaylananMusteri.name}: Tahakkuk müşteriye gönderildi (${g.tercih === 'ikisi' ? 'WhatsApp + E-Posta' : g.tercih === 'mail' ? 'E-Posta' : 'WhatsApp'}) — durum "Gönderildi".`, 'success')
+                  } else if (g?.atlandi) {
+                    // Müşteri gönderim tercihi yok — gönderim yapılmadı, durum değişmez
+                    bildiriGoster(`${onaylananMusteri.name}: Müşteri gönderim tercihi olmadığı için tahakkuk gönderilmedi — durum "Onaylandı" olarak kaldı.`, 'info')
+                  }
+                  else {
+                    // 2.7.171: Sessiz basarisizlik olmasin — hata ekranda gorunsun
+                    console.warn('[tahakkuk-gonderim] tamamlanamadi:', g?.hatalar?.join('; ') || g?.reason || '')
+                    bildiriGoster(`${onaylananMusteri.name}: Tahakkuk gönderilemedi — ${g?.hatalar?.join(' | ') || g?.reason || 'bilinmeyen hata'}`, 'error', 12000)
+                  }
+                })
+                .catch(err => {
+                  console.warn('[tahakkuk-gonderim] hata:', err.message)
+                  bildiriGoster(`${onaylananMusteri.name}: Tahakkuk gönderim hatası — ${err.message}`, 'error', 12000)
+                })
+            }
+            setYuklemeDurumlari(prev => { const n = { ...prev }; delete n[yukKey]; return n })
+          })
+          .catch(err => {
+            // 2.7.194: Yükleme başarısız — yıldız kaybolmasın, KIRMIZI kalsın
+            // (yeniden Onaylandı seçilince tekrar sarı yanıp söner).
+            setYuklemeDurumlari(prev => ({ ...prev, [yukKey]: 'hata' }))
+            console.warn('[beyan-onay] otomatik indirme atlandi:', err.message)
+            const sebep = err?.message || ''
+            let mesaj
+            if (/kurulu-degil|servis-hatasi|erisim-engelli|yanlis-yanit|bilinmeyen-servis/.test(sebep)) {
+              mesaj = 'Yardımcı program (mubis-gib-yardimci) çalışmıyor veya ulaşılamıyor. Programı başlatıp tray simgesinden sürümü kontrol edin, sonra durumu tekrar Onaylandı seçin.'
+            } else if (sebep === 'admin-gib-bilgi-yok') {
+              mesaj = 'Admin GİB (vergi dairesi) kullanıcı adı/şifresi kayıtlı değil. Ayarlar → GİB Bağlantı bölümünden girin (beyanlar admin hesabıyla iner).'
+            } else if (sebep === 'musteri-sgk-bilgi-yok') {
+              mesaj = `${onaylananMusteri?.name || 'Müşteri'} için SGK kullanıcı bilgileri kayıtlı değil. Müşteri detay → Giriş Bilgileri bölümünden ekleyin.`
+            } else {
+              mesaj = `Otomatik indirme başarısız: ${sebep || 'bilinmeyen hata'}`
+            }
+            bildiriGoster(`${onaylananMusteri.name}: ${mesaj}`, 'error', 12000)
+          })
+      }
+    }
   }
 
   const handleDocumentUpload = async (clientId, beyan, documentType, file) => {
@@ -510,127 +836,40 @@ export default function AylikBeyanTakip() {
     if (!client) return
 
     try {
-      const { url } = await uploadClientDocument({
+      const { url, list } = await addBeyanDocument({
         client,
         year: beyan.belongYear,
         month: beyan.belongMonths[0],
-        beyanType: beyan.type,
-        documentType,
-        file
+        type: beyan.type,
+        docType: documentType,
+        file,
+        name: file.name,
       })
 
       const baseKeyUpload = `${beyan.belongYear}_${beyan.belongMonths[0]}_${beyan.type}`
-      const urlKey = documentType === 'tahakkuk'
-        ? `${baseKeyUpload}_tahakkuk_url`
-        : documentType === 'bordro'
-          ? `${baseKeyUpload}_bordro_url`
-          : `${baseKeyUpload}_beyan_url`
-
-      // Her yuklemede benzersiz versiyon etiketi ekle.
-      // Boylece cache'ler (client, sunucu, CDN) eski dosyayi/sonucu dondurmez
-      // ve tahakkuk degistiginde analiz otomatik tekrar tetiklenir.
-      const versionedUrl = `${url}?v=${Date.now()}`
-
-      // En guncel DB kaydini oku; stale state ile mevcut dosyalari ezme
-      const { data: latestRow, error: readErr } = await supabase
+      const { data: latestRow } = await supabase
         .from('clients')
         .select('beyan_durumlari')
         .eq('id', clientId)
         .single()
-      if (readErr) throw readErr
+      const updatedMap = latestRow?.beyan_durumlari || {}
 
-      const currentMap = latestRow?.beyan_durumlari || {}
-      const updatedMap = { ...currentMap, [urlKey]: versionedUrl }
+      const updatedClients = clients.map(c =>
+        c.id === clientId ? { ...c, beyanDurumlari: updatedMap } : c
+      )
+      setClients(updatedClients)
+      if (selectedClient && selectedClient.id === clientId) {
+        setSelectedClient({ ...selectedClient, beyanDurumlari: updatedMap })
+      }
+      applyFilters(updatedClients)
 
-      // Coklu tahakkuk: yeni dosyayi listeye ekle
+      // Eger tahakkuk ise, AI analizi arka planda baslat
       if (documentType === 'tahakkuk') {
-        const listKey = `${baseKeyUpload}_tahakkuklar`
-        const currentList = getTahakkukList(currentMap, baseKeyUpload)
-        updatedMap[listKey] = [
-          ...currentList,
-          {
-            url: versionedUrl,
-            name: file.name || 'tahakkuk.pdf',
-            uploadedAt: new Date().toISOString(),
-            tutar: 0,
-            analiz_durumu: 'analiz_ediliyor'
-          }
-        ]
-      }
-
-      // Coklu beyanname: yeni dosyayi listeye ekle
-      if (documentType === 'beyanname') {
-        const listKey = `${baseKeyUpload}_beyanlar`
-        const currentList = getBeyanList(currentMap, baseKeyUpload)
-        updatedMap[listKey] = [
-          ...currentList,
-          {
-            url: versionedUrl,
-            name: file.name || 'beyanname.pdf',
-            uploadedAt: new Date().toISOString()
-          }
-        ]
-      }
-
-      // Coklu bordro: yeni dosyayi listeye ekle
-      if (documentType === 'bordro') {
-        const listKey = `${baseKeyUpload}_bordrolar`
-        const currentList = currentMap[listKey] || []
-        updatedMap[listKey] = [
-          ...currentList,
-          {
-            url: versionedUrl,
-            name: file.name || 'bordro.pdf',
-            uploadedAt: new Date().toISOString()
-          }
-        ]
-      }
-
-      // Eger tahakkuk ise, AI analizi baslat
-      if (documentType === 'tahakkuk') {
-        const statusKey = `${beyan.belongYear}_${beyan.belongMonths[0]}_${beyan.type}`
-        updatedMap[`${statusKey}_analiz_durumu`] = 'analiz_ediliyor'
-        
-        // Hemen kaydet ve UI guncelle
-        await supabase
-          .from('clients')
-          .update({ beyan_durumlari: updatedMap })
-          .eq('id', clientId)
-
-        // UI'i hemen guncelle
-        const updatedClients = clients.map(c =>
-          c.id === clientId ? { ...c, beyanDurumlari: updatedMap } : c
-        )
-        setClients(updatedClients)
-        if (selectedClient && selectedClient.id === clientId) {
-          setSelectedClient({ ...selectedClient, beyanDurumlari: updatedMap })
-        }
-        applyFilters(updatedClients)
-
-        // AI analizini arka planda baslat (await etme)
-        // versionedUrl kullan ki cache eski sonucu dondurmesin
-        analyzeTahakkukAsync(clientId, beyan, versionedUrl, updatedMap).catch(err => {
+        analyzeTahakkukAsync(clientId, beyan, url, updatedMap).catch(err => {
           console.error('AI analiz asenkron hatasi:', err)
         })
       }
 
-      if (documentType !== 'tahakkuk') {
-        const { error } = await supabase
-          .from('clients')
-          .update({ beyan_durumlari: updatedMap })
-          .eq('id', clientId)
-        if (error) throw error
-
-        const updatedClients = clients.map(c =>
-          c.id === clientId ? { ...c, beyanDurumlari: updatedMap } : c
-        )
-        setClients(updatedClients)
-        if (selectedClient && selectedClient.id === clientId) {
-          setSelectedClient({ ...selectedClient, beyanDurumlari: updatedMap })
-        }
-        applyFilters(updatedClients)
-      }
-      
       alert(`${documentType === 'tahakkuk' ? 'Tahakkuk' : documentType === 'bordro' ? 'Bordro' : 'Beyanname'} dosyasi yuklendi.`)
     } catch (err) {
       console.error('Dosya yukleme hatasi:', err)
@@ -681,7 +920,8 @@ export default function AylikBeyanTakip() {
         patch[`${statusKey}_analiz_durumu`] = 'tamamlandi'
         patch[`${statusKey}_vergi_turu`] = result.tax_type || ''
         // Son odeme olarak hesaplanan resmi tarihi kullan (PDF'teki ilk tarih duzenleme tarihi olabiliyor)
-        patch[`${statusKey}_son_odeme`] = beyan.deadline || result.due_date || ''
+        // 2.7.163: SGK/SGK'de odeME tarihi beyan tarihi degil, ayin son is gunudur.
+        patch[`${statusKey}_son_odeme`] = beyan.paymentDeadline || beyan.deadline || result.due_date || ''
         // Hangi dosyanin analiz edildigini kaydet (dosya degisirse tekrar analiz tetiklenir)
         patch[`${statusKey}_analiz_url`] = url
         patch[`${statusKey}_vkn`] = result.vkn || ''
@@ -693,7 +933,7 @@ export default function AylikBeyanTakip() {
         // Coklu tahakkuk: bu dosyanin kendi tutarini listeye yaz, toplami hesapla
         const list = getTahakkukList(currentMap, statusKey).map(t =>
           t.url === url
-            ? { ...t, tutar: Number(result.amount), analiz_durumu: 'tamamlandi', son_odeme: beyan.deadline || result.due_date || '', vergi_turu: result.tax_type || '', tahakkuk_no: result.accrual_no || t.tahakkuk_no || '' }
+            ? { ...t, tutar: Number(result.amount), analiz_durumu: 'tamamlandi', son_odeme: beyan.paymentDeadline || beyan.deadline || result.due_date || '', vergi_turu: result.tax_type || '', tahakkuk_no: result.accrual_no || t.tahakkuk_no || '' }
             : t
         )
         patch[listKey] = list
@@ -758,30 +998,15 @@ export default function AylikBeyanTakip() {
   // Tek bir tahakkuku coklu listeden sil
   const handleDeleteTahakkuk = async (clientId, beyan, tahakkukUrl) => {
     if (!window.confirm('Bu tahakkuku silmek istediginize emin misiniz?')) return
-    const client = clients.find(c => c.id === clientId)
-    if (!client) return
-
-    const baseKey = `${beyan.belongYear}_${beyan.belongMonths[0]}_${beyan.type}`
-    const currentMap = { ...(client.beyanDurumlari || {}) }
-    const list = getTahakkukList(currentMap, baseKey).filter(t => t.url !== tahakkukUrl)
-    const updatedMap = { ...currentMap, [`${baseKey}_tahakkuklar`]: list }
-    updatedMap[`${baseKey}_tutar`] = sumTahakkukTutar(list)
-
-    if (list.length > 0) {
-      updatedMap[`${baseKey}_tahakkuk_url`] = list[list.length - 1].url
-    } else {
-      delete updatedMap[`${baseKey}_tahakkuk_url`]
-      delete updatedMap[`${baseKey}_tutar`]
-      delete updatedMap[`${baseKey}_analiz_durumu`]
-      delete updatedMap[`${baseKey}_analiz_hata`]
-      delete updatedMap[`${baseKey}_analiz_url`]
-      delete updatedMap[`${baseKey}_vergi_turu`]
-      delete updatedMap[`${baseKey}_son_odeme`]
-    }
-
     try {
-      const { error } = await supabase.from('clients').update({ beyan_durumlari: updatedMap }).eq('id', clientId)
-      if (error) throw error
+      const updatedMap = await removeBeyanDocument({
+        clientId,
+        year: beyan.belongYear,
+        month: beyan.belongMonths[0],
+        type: beyan.type,
+        docType: 'tahakkuk',
+        url: tahakkukUrl,
+      })
 
       const updatedClients = clients.map(c => c.id === clientId ? { ...c, beyanDurumlari: updatedMap } : c)
       setClients(updatedClients)
@@ -797,23 +1022,15 @@ export default function AylikBeyanTakip() {
   // Tek bir bordroyu coklu listeden sil
   const handleDeleteBordro = async (clientId, beyan, bordroUrl) => {
     if (!window.confirm('Bu bordroyu silmek istediginize emin misiniz?')) return
-    const client = clients.find(c => c.id === clientId)
-    if (!client) return
-
-    const baseKey = `${beyan.belongYear}_${beyan.belongMonths[0]}_${beyan.type}`
-    const currentMap = { ...(client.beyanDurumlari || {}) }
-    const list = (currentMap[`${baseKey}_bordrolar`] || []).filter(b => b.url !== bordroUrl)
-    const updatedMap = { ...currentMap, [`${baseKey}_bordrolar`]: list }
-
-    if (list.length > 0) {
-      updatedMap[`${baseKey}_bordro_url`] = list[list.length - 1].url
-    } else {
-      delete updatedMap[`${baseKey}_bordro_url`]
-    }
-
     try {
-      const { error } = await supabase.from('clients').update({ beyan_durumlari: updatedMap }).eq('id', clientId)
-      if (error) throw error
+      const updatedMap = await removeBeyanDocument({
+        clientId,
+        year: beyan.belongYear,
+        month: beyan.belongMonths[0],
+        type: beyan.type,
+        docType: 'bordro',
+        url: bordroUrl,
+      })
 
       const updatedClients = clients.map(c => c.id === clientId ? { ...c, beyanDurumlari: updatedMap } : c)
       setClients(updatedClients)
@@ -829,23 +1046,15 @@ export default function AylikBeyanTakip() {
   // Tek bir beyannameyi coklu listeden sil
   const handleDeleteBeyan = async (clientId, beyan, beyanUrl) => {
     if (!window.confirm('Bu beyannameyi silmek istediginize emin misiniz?')) return
-    const client = clients.find(c => c.id === clientId)
-    if (!client) return
-
-    const baseKey = `${beyan.belongYear}_${beyan.belongMonths[0]}_${beyan.type}`
-    const currentMap = { ...(client.beyanDurumlari || {}) }
-    const list = getBeyanList(currentMap, baseKey).filter(b => b.url !== beyanUrl)
-    const updatedMap = { ...currentMap, [`${baseKey}_beyanlar`]: list }
-
-    if (list.length > 0) {
-      updatedMap[`${baseKey}_beyan_url`] = list[list.length - 1].url
-    } else {
-      delete updatedMap[`${baseKey}_beyan_url`]
-    }
-
     try {
-      const { error } = await supabase.from('clients').update({ beyan_durumlari: updatedMap }).eq('id', clientId)
-      if (error) throw error
+      const updatedMap = await removeBeyanDocument({
+        clientId,
+        year: beyan.belongYear,
+        month: beyan.belongMonths[0],
+        type: beyan.type,
+        docType: 'beyanname',
+        url: beyanUrl,
+      })
 
       const updatedClients = clients.map(c => c.id === clientId ? { ...c, beyanDurumlari: updatedMap } : c)
       setClients(updatedClients)
@@ -896,30 +1105,27 @@ export default function AylikBeyanTakip() {
   const handleDeleteSgkDoc = async (doc, baseKey) => {
     if (!selectedClient) return
     if (!window.confirm('Bu tahakkuku silmek istediginize emin misiniz?')) return
-    const docKey = `${baseKey}_documents`
-    const currentMap = { ...(selectedClient.beyanDurumlari || {}) }
-    const updatedList = (Array.isArray(currentMap[docKey]) ? currentMap[docKey] : []).filter(d => d.url !== doc.url)
-    const updatedMap = { ...currentMap, [docKey]: updatedList }
 
-    const listKey = `${baseKey}_tahakkuklar`
-    const tahakkukList = getTahakkukList(currentMap, baseKey).filter(t => t.url !== doc.url)
-    updatedMap[listKey] = tahakkukList
-    updatedMap[`${baseKey}_tutar`] = sumTahakkukTutar(tahakkukList)
-    if (tahakkukList.length > 0) {
-      updatedMap[`${baseKey}_tahakkuk_url`] = tahakkukList[tahakkukList.length - 1].url
-    } else {
-      delete updatedMap[`${baseKey}_tahakkuk_url`]
-      delete updatedMap[`${baseKey}_tutar`]
-      delete updatedMap[`${baseKey}_analiz_durumu`]
-      delete updatedMap[`${baseKey}_analiz_hata`]
-      delete updatedMap[`${baseKey}_analiz_url`]
-      delete updatedMap[`${baseKey}_vergi_turu`]
-      delete updatedMap[`${baseKey}_son_odeme`]
-    }
+    const [year, month, ...typeParts] = baseKey.split('_')
+    const type = typeParts.join('_')
 
     try {
+      const updatedMap = await removeBeyanDocument({
+        clientId: selectedClient.id,
+        year: Number(year),
+        month: Number(month),
+        type,
+        docType: 'tahakkuk',
+        url: doc.url,
+      })
+
+      const docKey = `${baseKey}_documents`
+      const updatedList = (Array.isArray(updatedMap[docKey]) ? updatedMap[docKey] : []).filter(d => d.url !== doc.url)
+      updatedMap[docKey] = updatedList
+
       const { error } = await supabase.from('clients').update({ beyan_durumlari: updatedMap }).eq('id', selectedClient.id)
       if (error) throw error
+
       setSgkDocs(updatedList)
       const updatedClients = clients.map(c => c.id === selectedClient.id ? { ...c, beyanDurumlari: updatedMap } : c)
       setClients(updatedClients)
@@ -948,9 +1154,9 @@ export default function AylikBeyanTakip() {
     const baseKey = `${beyan.belongYear}_${beyan.belongMonths[0]}_${beyan.type}`
     const currentMap = { ...(client.beyanDurumlari || {}) }
 
-    // _tahakkuklar array'inde guncelle
+    // _tahakkuklar array'inde guncelle (ham liste — birlestirme yazma)
     const listKey = `${baseKey}_tahakkuklar`
-    const list = getTahakkukList(currentMap, baseKey).map(t =>
+    const list = (Array.isArray(currentMap[listKey]) ? currentMap[listKey] : []).map(t =>
       t.url === tahakkukUrl ? { ...t, tutar: yeniTutar, analiz_durumu: 'tamamlandi' } : t
     )
     const updatedMap = { ...currentMap, [listKey]: list }
@@ -990,9 +1196,10 @@ export default function AylikBeyanTakip() {
     const yeniUrl = `${baseUrl}?v=${Date.now()}`
 
     // URL'i hem listede hem tek url alaninda guncelle, sonra analizi tetikle
+    // (ham liste — getTahakkukList birlestirmesi geri yazilirsa kirlilik)
     const currentMap = { ...(client.beyanDurumlari || {}) }
     const listKey = `${baseKey}_tahakkuklar`
-    const list = getTahakkukList(currentMap, baseKey).map(t =>
+    const list = (Array.isArray(currentMap[listKey]) ? currentMap[listKey] : []).map(t =>
       t.url === tahakkukUrl ? { ...t, url: yeniUrl, tutar: 0, analiz_durumu: 'analiz_ediliyor' } : t
     )
     const updatedMap = { ...currentMap, [listKey]: list }
@@ -1208,9 +1415,9 @@ export default function AylikBeyanTakip() {
     const updatedMap = { ...currentMap, [docKey]: updatedList }
 
     if (deleted?.category === 'sigorta_tahakkuk') {
-      // Coklu tahakkuk listesinden de kaldir
+      // Coklu tahakkuk listesinden de kaldir (ham liste — birlestirme yazma)
       const listKey = `${baseKey}_tahakkuklar`
-      const tahakkukList = getTahakkukList(currentMap, baseKey).filter(t => t.url !== deleted.url)
+      const tahakkukList = (Array.isArray(currentMap[listKey]) ? currentMap[listKey] : []).filter(t => t.url !== deleted.url)
       updatedMap[listKey] = tahakkukList
       // Son kalan tahakkuku tek url olarak isaretle (geriye uyumluluk)
       if (tahakkukList.length > 0) {
@@ -1273,8 +1480,10 @@ export default function AylikBeyanTakip() {
   const getStatusColor = (status) => {
     const colors = {
       'yapildi': 'bg-green-500/20 text-green-400 border-green-500/30',
+      'evrak_alindi': 'bg-sky-500/20 text-sky-400 border-sky-500/30',
+      'hazir': 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
       'yapilamadi': 'bg-red-500/20 text-red-400 border-red-500/30',
-      'onaylandi': 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+      'onaylandi': 'bg-green-500/20 text-green-400 border-green-500/30',
       'onaylanmadi': 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
       'tahakkuk_gonderildi': 'bg-purple-500/20 text-purple-400 border-purple-500/30',
       'tahakkuk_gonderilmedi': 'bg-orange-500/20 text-orange-400 border-orange-500/30',
@@ -1285,6 +1494,8 @@ export default function AylikBeyanTakip() {
   const getStatusIcon = (status) => {
     const icons = {
       'yapildi': <CheckCircle className="w-4 h-4" />,
+      'evrak_alindi': <FileCheck className="w-4 h-4" />,
+      'hazir': <Clock className="w-4 h-4" />,
       'yapilamadi': <AlertTriangle className="w-4 h-4" />,
       'onaylandi': <CheckCircle className="w-4 h-4" />,
       'onaylanmadi': <Clock className="w-4 h-4" />,
@@ -1297,6 +1508,8 @@ export default function AylikBeyanTakip() {
   const getStatusLabel = (status) => {
     const labels = {
       'yapildi': 'Yapıldı',
+      'evrak_alindi': 'Evrak Alındı',
+      'hazir': 'Hazır',
       'yapilamadi': 'Yapılmadı',
       'onaylandi': 'Onaylandı',
       'onaylanmadi': 'Onaylanmadı',
@@ -1380,9 +1593,12 @@ export default function AylikBeyanTakip() {
     total: filteredData.length,
     totalBeyan: filteredData.reduce((sum, c) => sum + (c.summary?.total || 0), 0),
     yapildi: filteredData.reduce((sum, c) => sum + (c.summary?.yapildi || 0), 0),
+    hazir: filteredData.reduce((sum, c) => sum + (c.summary?.hazir || 0), 0),
     onaylandi: filteredData.reduce((sum, c) => sum + (c.summary?.onaylandi || 0), 0),
     tahakkuk: filteredData.reduce((sum, c) => sum + (c.summary?.tahakkukGonderildi || 0), 0),
   }
+  // 2.7.502: kalan = toplam - tamamlanan (yapildi, onaylandi, gonderildi)
+  totalStats.kalan = totalStats.totalBeyan - totalStats.yapildi
 
   return (
     <div className="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -1397,7 +1613,35 @@ export default function AylikBeyanTakip() {
             Tüm müşterilerin beyan durumlarını aylık olarak görüntüleyin
           </p>
         </div>
-        <div className="flex space-x-2 mt-4 md:mt-0">
+        {/* 2.7.521: donem sayaclari ve Excel/PDF/Yenile asagidaki tam satira tasindi */}
+      </div>
+
+      {/* 2.7.521: Donem sayaçları — kompakt kartlar tek tam satirda (eski buyuk
+          kartlar kaldirildi); saginda Excel/PDF/Yenile düğmeleri */}
+      <div className="flex flex-wrap items-center gap-3 mb-6 bg-blue-800/20 rounded-xl p-3 border border-blue-700/30">
+        <div className="flex flex-wrap items-stretch gap-3 flex-1 min-w-[320px]">
+          <div className="bg-blue-900/40 rounded-lg px-4 py-2 border border-blue-700/40 text-center flex-1 min-w-[90px]">
+            <div className="text-lg font-bold text-blue-400">{totalStats.totalBeyan}</div>
+            <div className="text-gray-400 text-xs whitespace-nowrap">Toplam Beyan</div>
+          </div>
+          <div className="bg-blue-900/40 rounded-lg px-4 py-2 border border-blue-700/40 text-center flex-1 min-w-[90px]">
+            <div className={`text-lg font-bold ${totalStats.kalan > 0 ? 'text-yellow-400' : 'text-green-400'}`}>{totalStats.kalan}</div>
+            <div className="text-gray-400 text-xs whitespace-nowrap">Kalan</div>
+          </div>
+          <div className="bg-blue-900/40 rounded-lg px-4 py-2 border border-blue-700/40 text-center flex-1 min-w-[90px]">
+            <div className="text-lg font-bold text-cyan-400">{totalStats.hazir}</div>
+            <div className="text-gray-400 text-xs whitespace-nowrap">Hazır</div>
+          </div>
+          <div className="bg-blue-900/40 rounded-lg px-4 py-2 border border-blue-700/40 text-center flex-1 min-w-[90px]">
+            <div className="text-lg font-bold text-green-400">{totalStats.onaylandi}</div>
+            <div className="text-gray-400 text-xs whitespace-nowrap">Onaylandı</div>
+          </div>
+          <div className="bg-blue-900/40 rounded-lg px-4 py-2 border border-blue-700/40 text-center flex-1 min-w-[90px]">
+            <div className="text-lg font-bold text-purple-400">{totalStats.tahakkuk}</div>
+            <div className="text-gray-400 text-xs whitespace-nowrap">Gönderildi</div>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <button onClick={exportToExcel} className="bg-gradient-to-r from-green-500 to-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:shadow-lg hover:shadow-green-500/30 transition-all duration-300 flex items-center space-x-2">
             <FileSpreadsheet className="w-4 h-4" />
             <span>Excel</span>
@@ -1410,30 +1654,6 @@ export default function AylikBeyanTakip() {
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             <span>Yenile</span>
           </button>
-        </div>
-      </div>
-
-      {/* İstatistik Kartları */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 text-center">
-          <div className="text-2xl font-bold text-white">{totalStats.total}</div>
-          <div className="text-gray-400 text-xs">Müşteri</div>
-        </div>
-        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 text-center">
-          <div className="text-2xl font-bold text-blue-400">{totalStats.totalBeyan}</div>
-          <div className="text-gray-400 text-xs">Toplam Beyan</div>
-        </div>
-        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 text-center">
-          <div className="text-2xl font-bold text-green-400">{totalStats.yapildi}</div>
-          <div className="text-gray-400 text-xs">Yapıldı</div>
-        </div>
-        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 text-center">
-          <div className="text-2xl font-bold text-blue-400">{totalStats.onaylandi}</div>
-          <div className="text-gray-400 text-xs">Onaylandı</div>
-        </div>
-        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 text-center">
-          <div className="text-2xl font-bold text-purple-400">{totalStats.tahakkuk}</div>
-          <div className="text-gray-400 text-xs">Tahakkuk Gönderildi</div>
         </div>
       </div>
 
@@ -1515,7 +1735,7 @@ export default function AylikBeyanTakip() {
               <button onClick={() => setViewMode('matris')} title="Matris görünümü" className={`p-2 rounded-lg transition-all ${viewMode === 'matris' ? 'bg-yellow-500/20 text-yellow-400' : 'text-gray-400 hover:text-white'}`}>
                 <LayoutGrid className="w-5 h-5" />
               </button>
-              <button onClick={() => { setViewMode('edefter'); setSelectedBeyan('all') }} title="e-Defter listesi" className={`p-2 rounded-lg transition-all ${viewMode === 'edefter' ? 'bg-yellow-500/20 text-yellow-400' : 'text-gray-400 hover:text-white'}`}>
+              <button onClick={() => { setViewMode('edefter'); setSelectedBeyan('kdv') }} title="e-Defter listesi" className={`p-2 rounded-lg transition-all ${viewMode === 'edefter' ? 'bg-yellow-500/20 text-yellow-400' : 'text-gray-400 hover:text-white'}`}>
                 <BookOpen className="w-5 h-5" />
               </button>
               <button onClick={() => setViewMode('table')} title="Liste görünümü" className={`p-2 rounded-lg transition-all ${viewMode === 'table' ? 'bg-yellow-500/20 text-yellow-400' : 'text-gray-400 hover:text-white'}`}>
@@ -1530,10 +1750,49 @@ export default function AylikBeyanTakip() {
       {viewMode === 'matris' && (() => {
         // Muhtasar: "Muhtasar (3 Aylık)" filtresi seciliyse sadece 3aylik profil olanlar, ceyrek son ayinda
         const ucAylikSecili = selectedBeyan === 'muhtasar_3aylik'
+        const tumModu = selectedBeyan === 'all'
         const mType = selectedBeyan !== 'all' ? (ucAylikSecili ? 'muhtasar' : selectedBeyan) : 'kdv'
-        const mLabel = ucAylikSecili ? 'Muhtasar (3 Aylık)' : beyanTipleri.find(b => b.id === mType)?.label || mType
+        const mLabel = tumModu ? 'Tüm Beyanlar' : ucAylikSecili ? 'Muhtasar (3 Aylık)' : beyanTipleri.find(b => b.id === mType)?.label || mType
         // Liste gorunumuyle ayni anahtar: 3aylik -> ceyrek basi ay + muhtasar_3aylik; aylik -> ay + muhtasar
         const mKey = (m) => ucAylikSecili ? `${selectedYear}_${m - 2}_muhtasar_3aylik` : `${selectedYear}_${m}_${mType}`
+        // "Tüm Beyanlar" modu: her hücre o ayın aktif beyan turlarının toplu durumunu gösterir
+        const TUM_TURLER = ['kdv', 'kdv2', 'sgk', 'muhtasar', 'gecici_vergi', 'poset', 'muhtasar_3aylik']
+        const tumKey = (tur, m) => tur === 'muhtasar_3aylik' ? `${selectedYear}_${m - 2}_muhtasar_3aylik` : `${selectedYear}_${m}_${tur}`
+        const tumAktifTurlar = (c, m) => {
+          const liste = []
+          for (const tur of TUM_TURLER) {
+            if ((tur === 'gecici_vergi' || tur === 'muhtasar_3aylik') && ![2, 5, 8, 11].includes(m)) continue
+            if (tur === 'muhtasar_3aylik') {
+              // 2.7.579: ceyregin herhangi bir ayi '3aylik' ise o ceyrek 3aylikdir
+              const ceyrekAktif = [m - 2, m - 1, m].some(mm => {
+                const md3 = c.beyanProfile?.muhtasar?.[mm]
+                return md3 && md3.active !== false && md3.period === '3aylik'
+              })
+              if (!ceyrekAktif) continue
+              liste.push({ tur, key: tumKey(tur, m) })
+              continue
+            }
+            // Poset beyani yalniz profilde ACILMIS musterilerde gorunur
+            // (profil anahtari hic yoksa beyan yok sayilir — opt-in tur)
+            if (tur === 'poset') {
+              const mp = c.beyanProfile?.poset?.[m]
+              if (!mp || mp.active === false || mp.period === 'yok') continue
+              liste.push({ tur, key: tumKey(tur, m) })
+              continue
+            }
+            const md = c.beyanProfile?.[tur]?.[m]
+            if (md && (md.active === false || md.period === 'yok')) continue
+            if (tur === 'muhtasar' && md?.period === '3aylik') continue
+            liste.push({ tur, key: tumKey(tur, m) })
+          }
+          return liste
+        }
+        const tumHucre = (c, m) => {
+          const liste = tumAktifTurlar(c, m)
+          const yapilan = liste.filter(t => ['yapildi', 'onaylandi', 'tahakkuk_gonderildi'].includes(c.beyanDurumlari?.[t.key] || 'yapilamadi')).length
+          return { liste, toplam: liste.length, yapilan }
+        }
+        const turLabel = (tur) => tur === 'muhtasar_3aylik' ? 'Muhtasar (3 Aylık)' : beyanTipleri.find(b => b.id === tur)?.label || tur
         // e-Defter mukellefi mi? (bayrak true/1/"true" VE profilinde en az bir ay aktif)
         const edefterMukellef = (c) => {
           const raw = c.edefter
@@ -1548,8 +1807,85 @@ export default function AylikBeyanTakip() {
             return md.active !== false && md.period !== 'yok'
           })
         }
+        // Muhtasar: secilen filtre modalina gore aktiflik (3aylik filtresi -> sadece ceyrek son aylari)
+        // NOT: matrisRows filtresi hucreAktif'i kullandigi icin tanim FILTREDEN
+        // ONCE olmali (TDZ ReferenceError -> bos sayfa oluyordu).
+        const hucreAktif = (c, m) => {
+          // 2.7.579: Muhtasar donem gecisi — musteri bazi aylarda aylik, bazi
+          // ceyreklerde 3aylik olabilir. 3aylik hucre, ceyregin HERHANGI bir ayi
+          // profilde '3aylik' ise aktiftir (tablo görünümüyle ayni kural).
+          if (mType === 'muhtasar') {
+            if (ucAylikSecili) {
+              if (![2, 5, 8, 11].includes(m)) return false
+              return [m - 2, m - 1, m].some(mm => {
+                const md3 = c.beyanProfile?.muhtasar?.[mm]
+                return md3 && md3.active !== false && md3.period === '3aylik'
+              })
+            }
+            const mdAy = c.beyanProfile?.muhtasar?.[m]
+            return !mdAy || (mdAy.active !== false && (mdAy.period || 'aylik') === 'aylik')
+          }
+          const md = c.beyanProfile?.[mType]?.[m]
+          if (md && (md.active === false || md.period === 'yok')) return false
+          // Poset: profil anahtari hic yoksa da PASIF sayilir (opt-in tur)
+          if (mType === 'poset' && !md) return false
+          return true
+        }
         const matrisRows = clients.filter(c => {
           if (mType === 'edefter' && !edefterMukellef(c)) return false
+          // Poset: yalniz profilde en az bir ay acik olan musteriler listelenir
+          if (mType === 'poset') {
+            const posetVar = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].some(m => {
+              const mp = c.beyanProfile?.poset?.[m]
+              return mp && mp.active !== false && mp.period !== 'yok'
+            })
+            if (!posetVar) return false
+          }
+          // 2.7.578/579: Beyan profilinde secili beyan tipi hicbir ay icin acik
+          // degilse musteri bu listede gorunmez (orn. KDV mukellefi olmayan
+          // musteri KDV listesinde cikmaz). Profilde kayit hic yoksa (eski
+          // kayit) musteri listelenmeye devam eder. Muhtasar'da donem gecisi
+          // desteklenir: AYLIK liste en az bir 'aylik' ayi olan musterileri,
+          // 3 AYLIK liste ceyreginden en az biri '3aylik' olan musterileri
+          // gosterir — ayni musteri her iki listede de yer alabilir.
+          if (!tumModu && mType !== 'edefter' && mType !== 'poset') {
+            const tp = c.beyanProfile?.[mType]
+            if (tp && Object.keys(tp).length > 0) {
+              let aktifAyVar
+              if (mType === 'muhtasar' && ucAylikSecili) {
+                aktifAyVar = [2, 5, 8, 11].some(qe => [qe - 2, qe - 1, qe].some(m => {
+                  const md = tp[m]
+                  return md && md.active !== false && md.period === '3aylik'
+                }))
+              } else if (mType === 'muhtasar') {
+                aktifAyVar = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].some(m => {
+                  const md = tp[m]
+                  if (!md) return true
+                  return md.active !== false && (md.period || 'aylik') === 'aylik'
+                })
+              } else {
+                aktifAyVar = Object.values(tp).some(md => md && md.active !== false && md.period !== 'yok')
+              }
+              if (!aktifAyVar) return false
+            }
+          }
+          // Durum filtresi: secili ayda secilen beyan tipinin durumu secilen
+          // durumla ayni olmali ('gonderildi' -> 'tahakkuk_gonderildi')
+          if (selectedStatus !== 'all') {
+            const uyum = (st) => selectedStatus === 'gonderildi'
+              ? (st === 'tahakkuk_gonderildi' || st === 'gonderildi')
+              : st === selectedStatus
+            // 2.7.168 duzeltmesi: Durum filtresi SEÇİLİ AYA bakar (eskiden
+            // 1..12 tum aylara bakiyordu — herhangi bir ayda eslesen musteri
+            // listeleniyor, secili ay hic kontrol edilmiyordu). Anahtarlar
+            // 0-based ay indeksi kullanir (Ocak=0), bu yuzden matris sutun
+            // indeksi (m) dogrudan anahtar ayidir.
+            const mSecili = selectedMonth
+            const eslesti = tumModu
+              ? tumAktifTurlar(c, mSecili).some(t => uyum(c.beyanDurumlari?.[t.key] || 'yapilamadi'))
+              : hucreAktif(c, mSecili) && uyum(c.beyanDurumlari?.[mKey(mSecili)] || 'yapilamadi')
+            if (!eslesti) return false
+          }
           if (!searchTerm) return true
           const s = searchTerm.toLowerCase()
           return (c.name || '').toLowerCase().includes(s) ||
@@ -1557,35 +1893,56 @@ export default function AylikBeyanTakip() {
             (c.vkn || '').includes(searchTerm) ||
             (c.tc || '').includes(searchTerm)
         }).sort((a, b) => (a.name || a.company || '').localeCompare(b.name || b.company || '', 'tr'))
-        const durumKisa = { yapildi: 'Verildi', onaylandi: 'Yollandı', tahakkuk_gonderildi: 'Gönderildi', onaylanmadi: 'Onaylanmadı', yapilamadi: 'Yapılmadı' }
+        // Beyan bazinda yillik ozet: her tur icin Yapilan/Hazir/Gonderilen/Kalan (Tum Beyanlar modu)
+        const turOzetleri = tumModu ? TUM_TURLER.map(tur => {
+          let yapilan = 0, hazir = 0, gonderilen = 0, kalan = 0
+          matrisRows.forEach(c => {
+            for (let m = 0; m < 12; m++) {
+              tumAktifTurlar(c, m).filter(t => t.tur === tur).forEach(t => {
+                const stt = c.beyanDurumlari?.[t.key] || 'yapilamadi'
+                if (stt === 'yapildi' || stt === 'onaylandi') yapilan++
+                else if (stt === 'hazir') hazir++
+                else if (stt === 'tahakkuk_gonderildi') gonderilen++
+                else kalan++
+              })
+            }
+          })
+          return { tur, yapilan, hazir, gonderilen, kalan }
+        }).filter(t => (t.yapilan + t.hazir + t.gonderilen + t.kalan) > 0) : []
+        const durumKisa = { yapildi: 'Verildi', evrak_alindi: 'Evrak A.', hazir: 'Hazır', onaylandi: 'Onaylandı', tahakkuk_gonderildi: 'Gönderildi', onaylanmadi: 'Onaylanmadı', yapilamadi: 'Yapılmadı' }
+        // 3B hucre stilleri: degrade + kabartma kenar + golge
         const durumRenk = {
-          yapildi: 'bg-green-500/30 text-green-300 border-green-500/50',
-          onaylandi: 'bg-blue-500/30 text-blue-300 border-blue-500/50',
-          tahakkuk_gonderildi: 'bg-purple-500/30 text-purple-300 border-purple-500/50',
-          onaylanmadi: 'bg-yellow-500/30 text-yellow-300 border-yellow-500/50',
-          yapilamadi: 'bg-red-500/20 text-red-300 border-red-500/40'
-        }
-        // Muhtasar: secilen filtre modalina gore aktiflik (3aylik filtresi -> sadece ceyrek son aylari)
-        const hucreAktif = (c, m) => {
-          const md = c.beyanProfile?.[mType]?.[m]
-          if (md && (md.active === false || md.period === 'yok')) return false
-          if (mType === 'muhtasar') {
-            const per = md?.period || 'aylik'
-            return ucAylikSecili ? (per === '3aylik' && [2, 5, 8, 11].includes(m)) : per === 'aylik'
-          }
-          return true
+          yapildi: 'bg-gradient-to-b from-green-400 to-green-600 text-white border-green-700 shadow-[0_2px_0_#166534,0_4px_8px_rgba(34,197,94,0.35)]',
+          evrak_alindi: 'bg-gradient-to-b from-sky-400 to-sky-600 text-white border-sky-700 shadow-[0_2px_0_#075985,0_4px_8px_rgba(14,165,233,0.35)]',
+          hazir: 'bg-gradient-to-b from-amber-300 to-yellow-500 text-white border-yellow-700 shadow-[0_2px_0_#92400e,0_4px_8px_rgba(250,204,21,0.35)]',
+          onaylandi: 'bg-gradient-to-b from-green-400 to-green-600 text-white border-green-700 shadow-[0_2px_0_#14532d,0_4px_8px_rgba(34,197,94,0.35)]',
+          tahakkuk_gonderildi: 'bg-gradient-to-b from-purple-400 to-purple-600 text-white border-purple-700 shadow-[0_2px_0_#581c87,0_4px_8px_rgba(168,85,247,0.35)]',
+          onaylanmadi: 'bg-gradient-to-b from-amber-300 to-yellow-500 text-white border-yellow-700 shadow-[0_2px_0_#92400e,0_4px_8px_rgba(250,204,21,0.35)]',
+          yapilamadi: 'bg-gradient-to-b from-red-400 to-red-600 text-white border-red-700 shadow-[0_2px_0_#7f1d1d,0_4px_8px_rgba(239,68,68,0.3)]'
         }
         // Her ay icin: Yapilan (Verildi/Yollandi), Gonderilen (Tahakkuk), Kalan
         const aySayilari = months.map((_, m) => {
-          let yapilan = 0, gonderilen = 0, kalan = 0
+          let yapilan = 0, hazir = 0, gonderilen = 0, kalan = 0
           matrisRows.forEach(c => {
+            if (tumModu) {
+              // Tum Beyanlar: ay icindeki her tur-kaydi ayri sayilir
+              tumHucre(c, m).liste.forEach(t => {
+                const stt = c.beyanDurumlari?.[t.key] || 'yapilamadi'
+                if (stt === 'yapildi' || stt === 'onaylandi') yapilan++
+                else if (stt === 'hazir') hazir++
+                else if (stt === 'tahakkuk_gonderildi') gonderilen++
+                else kalan++
+              })
+              return
+            }
             if (!hucreAktif(c, m)) return
             const st = c.beyanDurumlari?.[mKey(m)] || 'yapilamadi'
             if (st === 'yapildi' || st === 'onaylandi') yapilan++
+            else if (st === 'hazir') hazir++
             else if (st === 'tahakkuk_gonderildi') gonderilen++
             else kalan++
           })
-          return { yapilan, gonderilen, kalan }
+          return { yapilan, hazir, gonderilen, kalan }
         })
         return (
           <>
@@ -1596,16 +1953,17 @@ export default function AylikBeyanTakip() {
                   {ucAylikSecili && <span className="text-yellow-300 text-xs">Çeyrek son ayları: Mart, Haziran, Eylül, Aralık</span>}
                 </div>
                 <div className="flex items-center gap-3 text-xs text-gray-400">
-                  <span className="text-green-400">Verildi</span>
-                  <span className="text-blue-400">Yollandı</span>
-                  <span className="text-purple-400">Gönderildi</span>
                   <span className="text-red-400">Yapılmadı</span>
+                  <span className="text-sky-400">Evrak Alındı</span>
+                  <span className="text-yellow-400">Hazır</span>
+                  <span className="text-green-400">Onaylandı</span>
+                  <span className="text-purple-400">Gönderildi</span>
                 </div>
               </div>
-              <div className="overflow-x-auto">
+              <div className="overflow-auto max-h-[65vh]">
                 <table className="w-full text-sm">
-                  <thead className="bg-blue-900/30">
-                    <tr className="text-gray-400 text-xs whitespace-nowrap">
+                  <thead className="bg-blue-900 sticky top-0 z-10 shadow-[0_2px_6px_rgba(0,0,0,0.35)]">
+                    <tr className="text-gray-300 text-xs whitespace-nowrap">
                       <th className="px-3 py-2 text-left min-w-[170px]">Adı Soyadı</th>
                       {months.map(ay => <th key={ay} className="px-2 py-2 text-center">{ay}</th>)}
                     </tr>
@@ -1617,6 +1975,23 @@ export default function AylikBeyanTakip() {
                       <tr key={c.id} className="border-t border-blue-700/20 hover:bg-blue-800/10 transition-colors">
                         <td className="px-3 py-1.5 whitespace-nowrap text-white font-medium text-xs" title={c.name}>{kisaAd(c.name)}</td>
                         {months.map((ay, m) => {
+                          if (tumModu) {
+                            const h = tumHucre(c, m)
+                            if (h.toplam === 0) return <td key={m} className="px-1 py-1 text-center"><span className="text-gray-700">-</span></td>
+                            const renk = h.yapilan === h.toplam ? durumRenk.onaylandi : h.yapilan > 0 ? durumRenk.hazir : durumRenk.yapilamadi
+                            return (
+                              <td key={m} className="px-1 py-1 text-center">
+                                <button onClick={() => setMatrisCell({ clientId: c.id, clientName: c.name, month0: m })}
+                                  title={`${ay} ${selectedYear} - ${h.yapilan}/${h.toplam} beyan tamam (tıkla: tür bazlı durum)`}
+                                  className={`relative w-full max-w-[64px] mx-auto px-1 py-1 rounded-md border text-[10px] font-bold [text-shadow:0_1px_2px_rgba(0,0,0,0.45)] transition-all hover:scale-105 hover:brightness-110 active:translate-y-[2px] ${renk}`}>
+                                  {h.yapilan}/{h.toplam}
+                                  {h.toplam > 0 && h.yapilan === h.toplam && (
+                                    <span className="absolute -top-1.5 -right-1.5 text-yellow-400 text-[11px] leading-none drop-shadow" title="Tüm beyanlar onaylandı">★</span>
+                                  )}
+                                </button>
+                              </td>
+                            )
+                          }
                           const aktif = hucreAktif(c, m)
                           const st = c.beyanDurumlari?.[mKey(m)] || 'yapilamadi'
                           return (
@@ -1624,8 +1999,17 @@ export default function AylikBeyanTakip() {
                               {aktif ? (
                                 <button onClick={() => setMatrisCell({ clientId: c.id, clientName: c.name, month0: m })}
                                   title={`${ay} ${selectedYear} - ${durumKisa[st] || st} (tıkla: durum + yükleme)`}
-                                  className={`w-full max-w-[64px] mx-auto px-1 py-1 rounded border text-[10px] font-medium transition-all hover:scale-105 ${durumRenk[st] || 'bg-gray-500/20 text-gray-400 border-gray-500/30'}`}>
+                                  className={`relative w-full max-w-[64px] mx-auto px-1 py-1 rounded-md border text-[10px] font-bold [text-shadow:0_1px_2px_rgba(0,0,0,0.45)] transition-all hover:scale-105 hover:brightness-110 active:translate-y-[2px] ${durumRenk[st] || 'bg-gray-500/20 text-gray-400 border-gray-500/30'}`}>
                                   {durumKisa[st] || '-'}
+                                  {yuklemeDurumlari[`${c.id}_${mKey(m)}`] === 'yukleniyor' && (
+                                    <span className="absolute -top-1.5 -right-1.5 text-yellow-300 text-[12px] leading-none drop-shadow animate-pulse" title="Beyanname/tahakkuk GİB'den indirilip yükleniyor...">★</span>
+                                  )}
+                                  {yuklemeDurumlari[`${c.id}_${mKey(m)}`] === 'hata' && (
+                                    <span className="absolute -top-1.5 -right-1.5 text-red-500 text-[12px] leading-none drop-shadow animate-pulse" title="Yükleme başarısız — tekrar denemek için durumu Onaylandı olarak yeniden seçin">★</span>
+                                  )}
+                                  {st === 'onaylandi' && yuklemeDurumlari[`${c.id}_${mKey(m)}`] !== 'yukleniyor' && yuklemeDurumlari[`${c.id}_${mKey(m)}`] !== 'hata' && (
+                                    <span className="absolute -top-1.5 -right-1.5 text-yellow-400 text-[11px] leading-none drop-shadow" title="Onaylandı — belgeler otomatik indirildi/indiriliyor">★</span>
+                                  )}
                                 </button>
                               ) : <span className="text-gray-700">-</span>}
                             </td>
@@ -1640,6 +2024,7 @@ export default function AylikBeyanTakip() {
                       {aySayilari.map((s, m) => (
                         <td key={m} className="px-1 py-2 text-center whitespace-nowrap">
                           <span className="text-green-400 font-semibold">Y:{s.yapilan}</span>{' '}
+                          <span className="text-yellow-400 font-semibold">H:{s.hazir}</span>{' '}
                           <span className="text-purple-400 font-semibold">G:{s.gonderilen}</span>{' '}
                           <span className="text-red-400 font-semibold">K:{s.kalan}</span>
                         </td>
@@ -1648,11 +2033,87 @@ export default function AylikBeyanTakip() {
                   </tfoot>
                 </table>
               </div>
-              <p className="text-gray-500 text-xs px-4 py-2">Y: Yapılan · G: Gönderilen (tahakkuk) · K: Kalan. Hücreye tıklayınca durum seçme ve beyanname/tahakkuk yükleme penceresi açılır.</p>
+              <p className="text-gray-500 text-xs px-4 py-2">Y: Yapılan (Onaylandı) · H: Hazır · G: Gönderilen (tahakkuk) · K: Kalan. Hücreye tıklayınca durum seçme ve beyanname/tahakkuk yükleme penceresi açılır.</p>
+              {tumModu && turOzetleri.length > 0 && (
+                <div className="px-4 py-3 border-t border-blue-700/30">
+                  <p className="text-gray-400 text-xs mb-2">Beyan bazında özet ({selectedYear})</p>
+                  <div className="flex flex-wrap gap-2">
+                    {turOzetleri.map(t => (
+                      <div key={t.tur} className="bg-blue-900/40 border border-blue-700/40 rounded-lg px-3 py-1.5 text-xs">
+                        <span className="text-white font-semibold mr-1.5">{turLabel(t.tur)}:</span>
+                        <span className="text-green-400 font-semibold">Y:{t.yapilan}</span>{' '}
+                        <span className="text-yellow-400 font-semibold">H:{t.hazir}</span>{' '}
+                        <span className="text-purple-400 font-semibold">G:{t.gonderilen}</span>{' '}
+                        <span className="text-red-400 font-semibold">K:{t.kalan}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Matris hucre modal */}
-            {matrisCell && (() => {
+            {matrisCell && tumModu && (() => {
+              // Tum Beyanlar modu: ayin aktif her beyan turu icin ayri durum satiri
+              const c = clients.find(x => x.id === matrisCell.clientId)
+              const liste = c ? tumAktifTurlar(c, matrisCell.month0) : []
+              const dm = c?.beyanDurumlari || {}
+              const turLabel = (tur) => tur === 'muhtasar_3aylik' ? 'Muhtasar (3 Aylık)' : beyanTipleri.find(b => b.id === tur)?.label || tur
+              return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setMatrisCell(null)}>
+                  <div className="bg-blue-900 rounded-2xl border border-blue-700/50 shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center justify-between p-5 border-b border-blue-700/30 sticky top-0 bg-blue-900 rounded-t-2xl">
+                      <div>
+                        <h3 className="text-lg font-bold text-white">{months[matrisCell.month0]} {selectedYear} - Tüm Beyanlar</h3>
+                        <p className="text-gray-400 text-sm">{matrisCell.clientName}</p>
+                      </div>
+                      <button onClick={() => setMatrisCell(null)} className="text-gray-400 hover:text-white p-1"><X className="w-5 h-5" /></button>
+                    </div>
+                    <div className="p-5 space-y-4">
+                      {liste.length === 0 ? (
+                        <p className="text-gray-400 text-sm text-center py-4">Bu dönemde bu müşteriye ait aktif beyan türü bulunamadı.</p>
+                      ) : liste.map(({ tur, key }) => {
+                        const st = dm[key] || 'yapilamadi'
+                        const beyanObj = {
+                          id: `${matrisCell.clientId}_${tur}`,
+                          type: tur,
+                          label: turLabel(tur),
+                          belongYear: selectedYear,
+                          belongMonths: [tur === 'muhtasar_3aylik' ? matrisCell.month0 - 2 : matrisCell.month0]
+                        }
+                        return (
+                          <div key={tur} className="bg-blue-800/20 rounded-xl p-3 border border-blue-700/30">
+                            <p className="text-white text-sm font-bold mb-2.5">{turLabel(tur)}</p>
+                            <div className="grid grid-cols-5 gap-1.5">
+                              {[
+                                { s: 'yapilamadi', label: 'Yapılmadı', icon: <AlertTriangle className="w-3.5 h-3.5" />, cls: 'bg-gradient-to-b from-red-400 to-red-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_3px_0_#7f1d1d,0_6px_12px_rgba(239,68,68,0.35)]' },
+                                { s: 'evrak_alindi', label: 'Evrak Alındı', icon: <FileCheck className="w-3.5 h-3.5" />, cls: 'bg-gradient-to-b from-sky-400 to-sky-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_3px_0_#075985,0_6px_12px_rgba(14,165,233,0.35)]' },
+                                { s: 'hazir', label: 'Hazır', icon: <Clock className="w-3.5 h-3.5" />, cls: 'bg-gradient-to-b from-amber-300 to-yellow-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_3px_0_#92400e,0_6px_12px_rgba(250,204,21,0.35)]' },
+                                { s: 'onaylandi', label: 'Onaylandı', icon: <CheckCircle className="w-3.5 h-3.5" />, cls: 'bg-gradient-to-b from-green-400 to-green-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_3px_0_#14532d,0_6px_12px_rgba(34,197,94,0.35)]' },
+                                { s: 'tahakkuk_gonderildi', label: 'Gönderildi', icon: <Send className="w-3.5 h-3.5" />, cls: 'bg-gradient-to-b from-purple-400 to-purple-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_3px_0_#581c87,0_6px_12px_rgba(168,85,247,0.35)]' },
+                              ].map(({ s, label, icon, cls }) => (
+                                <button key={s} onClick={() => updateBeyanStatus(matrisCell.clientId, beyanObj, s)}
+                                  className={`relative flex flex-col items-center justify-center gap-1 rounded-xl px-1.5 py-2 text-[10px] font-bold text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.45)] transition-all duration-150 hover:-translate-y-0.5 hover:brightness-110 active:translate-y-[3px] active:shadow-[inset_0_2px_8px_rgba(0,0,0,0.4)] ${cls} ${st === s ? 'ring-2 ring-white/90' : 'opacity-80 hover:opacity-100'}`}>
+                                  {icon}
+                                  <span className="leading-tight text-center">{label}</span>
+                                  {st === s && (
+                                    <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-white text-blue-900 shadow">
+                                      <CheckCircle className="w-3 h-3" />
+                                    </span>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })}
+                      <p className="text-gray-500 text-xs">Dosya yükleme ve GİB'den indirme için beyan tipini yukarıdaki menüden seçip hücreye tıklayın veya müşteri detayını açın.</p>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
+            {matrisCell && !tumModu && (() => {
               const key = ucAylikSecili ? `${selectedYear}_${matrisCell.month0 - 2}_muhtasar_3aylik` : `${selectedYear}_${matrisCell.month0}_${mType}`
               const dm = clients.find(c => c.id === matrisCell.clientId)?.beyanDurumlari || {}
               const beyanObj = {
@@ -1676,11 +2137,23 @@ export default function AylikBeyanTakip() {
                     <div className="p-5 space-y-4">
                       <div>
                         <p className="text-xs text-gray-400 mb-2">Durum</p>
-                        <div className="grid grid-cols-2 gap-2">
-                          {['yapilamadi', 'yapildi', 'onaylandi', 'tahakkuk_gonderildi'].map(s => (
+                        <div className="grid grid-cols-2 gap-3">
+                          {[
+                            { s: 'yapilamadi', label: 'Yapılmadı', icon: <AlertTriangle className="w-4 h-4" />, cls: 'bg-gradient-to-b from-red-400 to-red-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_4px_0_#7f1d1d,0_8px_16px_rgba(239,68,68,0.35)]' },
+                            { s: 'evrak_alindi', label: 'Evrak Alındı', icon: <FileCheck className="w-4 h-4" />, cls: 'bg-gradient-to-b from-sky-400 to-sky-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_4px_0_#075985,0_8px_16px_rgba(14,165,233,0.35)]' },
+                            { s: 'hazir', label: 'Hazır', icon: <Clock className="w-4 h-4" />, cls: 'bg-gradient-to-b from-amber-300 to-yellow-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_4px_0_#92400e,0_8px_16px_rgba(250,204,21,0.35)]' },
+                            { s: 'onaylandi', label: 'Onaylandı', icon: <CheckCircle className="w-4 h-4" />, cls: 'bg-gradient-to-b from-green-400 to-green-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_4px_0_#14532d,0_8px_16px_rgba(34,197,94,0.35)]' },
+                            { s: 'tahakkuk_gonderildi', label: 'Gönderildi', icon: <Send className="w-4 h-4" />, cls: 'bg-gradient-to-b from-purple-400 to-purple-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_4px_0_#581c87,0_8px_16px_rgba(168,85,247,0.35)]' },
+                          ].map(({ s, label, icon, cls }) => (
                             <button key={s} onClick={() => updateBeyanStatus(matrisCell.clientId, beyanObj, s)}
-                              className={`px-2 py-2 rounded-lg text-xs font-medium border transition-all ${st === s ? durumRenk[s] : 'bg-blue-900/30 border-blue-700/40 text-gray-400 hover:text-white'}`}>
-                              {durumKisa[s]}
+                              className={`relative flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-xs font-bold text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.45)] transition-all duration-150 hover:-translate-y-0.5 hover:brightness-110 active:translate-y-[3px] active:shadow-[inset_0_2px_8px_rgba(0,0,0,0.4)] ${cls} ${st === s ? 'ring-2 ring-white/90 ring-offset-2 ring-offset-blue-900' : 'opacity-80 hover:opacity-100'}`}>
+                              {icon}
+                              <span>{label}</span>
+                              {st === s && (
+                                <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-white text-blue-900 shadow">
+                                  <CheckCircle className="w-3 h-3" />
+                                </span>
+                              )}
                             </button>
                           ))}
                         </div>
@@ -1703,7 +2176,7 @@ export default function AylikBeyanTakip() {
                           {mType === 'sgk' && (
                             <label className="cursor-pointer bg-green-800/40 hover:bg-green-800/60 border border-green-700/40 rounded-lg px-3 py-2 text-center text-xs text-white font-medium transition-colors">
                               👥 Bordro Yükle
-                              <input type="file" accept=".pdf,.png,.jpg,.jpeg" className="hidden"
+                              <input type="file" accept=".pdf,.xlsx,.xls,.png,.jpg,.jpeg" className="hidden"
                                 onChange={e => handleDocumentUpload(matrisCell.clientId, beyanObj, 'bordro', e.target.files?.[0])} />
                             </label>
                           )}
@@ -1819,10 +2292,10 @@ export default function AylikBeyanTakip() {
           .filter(r => r.b)
           .sort((a, b) => (a.c.name || a.c.company || '').localeCompare(b.c.name || b.c.company || '', 'tr'))
         const edDurumlar = [
-          { v: 'yapilmadi', label: 'Yapılmadı', cls: 'bg-red-500/30 text-red-300 border-red-500/50' },
-          { v: 'eksik', label: 'Eksik', cls: 'bg-yellow-500/30 text-yellow-300 border-yellow-500/50' },
-          { v: 'hazir', label: 'Hazır', cls: 'bg-blue-500/30 text-blue-300 border-blue-500/50' },
-          { v: 'yuklendi', label: 'Yüklendi', cls: 'bg-green-500/30 text-green-300 border-green-500/50' }
+          { v: 'yapilmadi', label: 'Yapılmadı', cls: 'bg-gradient-to-b from-red-400 to-red-600 text-white border-red-700 shadow-[0_2px_0_#7f1d1d,0_4px_8px_rgba(239,68,68,0.3)]' },
+          { v: 'eksik', label: 'Eksik', cls: 'bg-gradient-to-b from-amber-300 to-yellow-500 text-white border-yellow-700 shadow-[0_2px_0_#92400e,0_4px_8px_rgba(250,204,21,0.35)]' },
+          { v: 'hazir', label: 'Hazır', cls: 'bg-gradient-to-b from-blue-400 to-blue-600 text-white border-blue-700 shadow-[0_2px_0_#1e3a8a,0_4px_8px_rgba(59,130,246,0.35)]' },
+          { v: 'yuklendi', label: 'Yüklendi', cls: 'bg-gradient-to-b from-green-400 to-green-600 text-white border-green-700 shadow-[0_2px_0_#166534,0_4px_8px_rgba(34,197,94,0.35)]' }
         ]
         const edKey = (r) => `${r.b.belongYear}_${r.b.belongMonths?.[0]}_edefter`
         return (
@@ -1867,7 +2340,7 @@ export default function AylikBeyanTakip() {
                           <div className="flex flex-wrap justify-center gap-1">
                             {edDurumlar.map(d => (
                               <button key={d.v} onClick={() => updateBeyanStatus(c.id, beyanObj, d.v)}
-                                className={`px-1.5 py-0.5 rounded border text-[10px] font-medium transition-all ${st === d.v ? d.cls : 'bg-blue-900/30 border-blue-700/40 text-gray-500 hover:text-white'}`}>
+                                className={`px-1.5 py-0.5 rounded-md border text-[10px] font-bold [text-shadow:0_1px_2px_rgba(0,0,0,0.45)] transition-all hover:brightness-110 active:translate-y-[2px] ${st === d.v ? d.cls : 'bg-blue-900/30 border-blue-700/40 text-gray-500 hover:text-white'}`}>
                                 {d.label}
                               </button>
                             ))}
@@ -1977,6 +2450,9 @@ export default function AylikBeyanTakip() {
                                 <div className="font-semibold">{b.label}</div>
                                 <div className={isDone ? 'text-green-400' : 'text-red-400'}>{getStatusLabel(b.status)}</div>
                                 <div className="text-gray-400">Son: {b.deadline}</div>
+                                {b.paymentDeadline && (
+                                  <div className="text-gray-400">Ödeme: {b.paymentDeadline}</div>
+                                )}
                                 <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-700"></div>
                               </div>
                             </div>
@@ -2050,7 +2526,7 @@ export default function AylikBeyanTakip() {
                   <div className="text-gray-400 text-xs">Yapıldı</div>
                 </div>
                 <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 text-center">
-                  <div className="text-2xl font-bold text-blue-400">{selectedClient.summary?.onaylandi || 0}</div>
+                  <div className="text-2xl font-bold text-green-400">{selectedClient.summary?.onaylandi || 0}</div>
                   <div className="text-gray-400 text-xs">Onaylandı</div>
                 </div>
                 <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 text-center">
@@ -2272,10 +2748,10 @@ export default function AylikBeyanTakip() {
                               <button onClick={() => updateBeyanStatus(selectedClient.id, beyan, 'yapilamadi')} className={`p-1 rounded-lg transition-colors ${beyan.status === 'yapilamadi' ? 'bg-red-500/20 text-red-400' : 'text-gray-500 hover:text-red-400'}`} title="Yapilmadi">
                                 <AlertTriangle className="w-4 h-4" />
                               </button>
-                              <button onClick={() => updateBeyanStatus(selectedClient.id, beyan, 'yapildi')} className={`p-1 rounded-lg transition-colors ${beyan.status === 'yapildi' ? 'bg-green-500/20 text-green-400' : 'text-gray-500 hover:text-green-400'}`} title="Yapildi">
-                                <CheckCircle className="w-4 h-4" />
+                              <button onClick={() => updateBeyanStatus(selectedClient.id, beyan, 'hazir')} className={`p-1 rounded-lg transition-colors ${beyan.status === 'hazir' ? 'bg-yellow-500/20 text-yellow-400' : 'text-gray-500 hover:text-yellow-400'}`} title="Hazir">
+                                <Clock className="w-4 h-4" />
                               </button>
-                              <button onClick={() => updateBeyanStatus(selectedClient.id, beyan, 'onaylandi')} className={`p-1 rounded-lg transition-colors ${beyan.status === 'onaylandi' ? 'bg-blue-500/20 text-blue-400' : 'text-gray-500 hover:text-blue-400'}`} title="Onaylandi">
+                              <button onClick={() => updateBeyanStatus(selectedClient.id, beyan, 'onaylandi')} className={`p-1 rounded-lg transition-colors ${beyan.status === 'onaylandi' ? 'bg-green-500/20 text-green-400' : 'text-gray-500 hover:text-green-400'}`} title="Onaylandi">
                                 <FileCheck className="w-4 h-4" />
                               </button>
                               {beyan.type !== 'edefter' && (
@@ -2400,6 +2876,18 @@ export default function AylikBeyanTakip() {
                 )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Gecici bildirim — MUBiS asistan karakterinin USTUNDE (bottom-44/32),
+          z-[80] ile her zaman on planda */}
+      {bildiri && (
+        <div className={`fixed bottom-44 md:bottom-32 right-5 z-[80] max-w-sm rounded-xl border shadow-2xl px-4 py-3 text-sm font-medium animate-pulse-once ${bildiri.tur === 'error' ? 'bg-red-900/95 border-red-500/60 text-red-100' : bildiri.tur === 'info' ? 'bg-blue-900/95 border-blue-500/60 text-blue-100' : 'bg-green-900/95 border-green-500/60 text-green-100'}`}>
+          <div className="flex items-start gap-2">
+            <span className="mt-0.5">{bildiri.tur === 'error' ? <AlertTriangle className="w-4 h-4" /> : bildiri.tur === 'info' ? <Clock className="w-4 h-4" /> : <CheckCircle className="w-4 h-4" />}</span>
+            <span className="flex-1">{bildiri.mesaj}</span>
+            <button onClick={() => setBildiri(null)} className="opacity-60 hover:opacity-100 ml-1 text-xs font-bold">✕</button>
           </div>
         </div>
       )}

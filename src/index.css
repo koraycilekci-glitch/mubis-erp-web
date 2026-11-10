@@ -19,12 +19,26 @@
      zeminde acik renk yazi okunamaz hale geliyordu. Tum select'lerde secenek
      zemini koyu, yazi acik olsun — "Musteri Secin" vb. listeler okunabilsin. */
   select option,
-  select optgroup {
+  select optgroup,
+  datalist option {
     background-color: #172554; /* blue-950 */
     color: #f1f5f9; /* slate-100 */
   }
   select option:disabled {
     color: #64748b; /* slate-500 */
+  }
+
+  /* Sayi giris alanlarindaki yukari/asagi (spinner) dugmeleri kaldirilir —
+     fatura kesiminde miktar/birim fiyat/iskonto/oran alanlarini daraltiyordu.
+     Yazma ve klavye oklari calismaya devam eder. */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+    appearance: textfield;
   }
 
   /* Tutarli, gorunur klavye odagi — erisilebilirlik ve profesyonel his icin */
@@ -36,6 +50,17 @@
     outline: 2px solid #fbbf24;
     outline-offset: 2px;
     border-radius: 6px;
+  }
+
+  /* 2.7.496: Tum tablo listelerinde satir ayirici cizgiler belirgin —
+     koyu zeminde border-blue-800/30 gibi soluk cizgiler gozle gorunmezdi.
+     Tailwind border siniflarini ezip tum tbody satirlarina net mavi-gri
+     cizgi uygulanir; tablo basligi (thead) etkilenmez. */
+  table tbody tr {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.38) !important;
+  }
+  table tbody tr:last-child {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.55) !important;
   }
 }
 
@@ -147,5 +172,11 @@
   @keyframes floatSoft {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-10px); }
+  }
+
+  /* Web radyo ekolayzir animasyonu (RadioUstBant) */
+  @keyframes radioEq {
+    0%, 100% { transform: scaleY(0.4); }
+    50% { transform: scaleY(1); }
   }
 }

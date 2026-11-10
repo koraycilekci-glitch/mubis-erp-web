@@ -24,20 +24,21 @@ const SIK_SORULAR = [
 // Giris yapmis musteriye kendi verileriyle ilgili oneriler
 const MUSTERI_SORULARI = [
   'Bu ay toplam ne kadar ödeme yapacağım?',
+  'Cari hesabımdaki bakiyem ne kadar?',
+  'Bu ay tahsilat yapılacak çeklerim var mı?',
   'KDV ödemem ne kadar?',
   'SGK primim ne kadar, son ödeme günü ne zaman?',
-  'Muhasebe ücreti borcum ne kadar?',
-  'Bu ayki ödemelerimi tek tek sayar mısın?'
+  'Muhasebe ücreti borcum ne kadar?'
 ]
 
 // Admin/personel icin mevzuat odakli oneriler
 const PERSONEL_SORULARI = [
+  'Bu ay tahsilat yapılacak çekleri listele',
+  'Vadesi geçen alacağı olan carileri sayar mısın?',
   'KDV tevkifat oranları ve uygulanacağı işlemler nelerdir?',
   'Geçici vergi beyan ve ödeme süreleri nedir?',
   'Muhtasar ve prim hizmet beyannamesi hangi hallerde 3 aylık verilir?',
-  'e-Defter berat yükleme süreleri nasıl hesaplanır?',
-  'Amortisman ayırma şartları ve faydalı ömür nasıl belirlenir?',
-  'Asgari ücret desteği ve 5510 sayılı Kanun teşviklerinden kimler yararlanır?'
+  'e-Defter berat yükleme süreleri nasıl hesaplanır?'
 ]
 
 const MISAFIR_LIMIT = 10
@@ -100,6 +101,8 @@ function MesajMetni({ text }) {
 
 export default function MubisAssistant() {
   const { user } = useAuth()
+  // 2.7.575: personelMi ustte tanimli — asagida teblig rozet hesaplarinda kullaniliyor
+  const personelMi = ['admin', 'super_admin', 'personel'].includes(user?.role)
   const [clientProfile, setClientProfile] = useState(null)
   const [acik, setAcik] = useState(false)
   const [balon, setBalon] = useState(false)
@@ -108,6 +111,57 @@ export default function MubisAssistant() {
   const [yaziyor, setYaziyor] = useState(false)
   const [input, setInput] = useState('')
   const [okunmamis, setOkunmamis] = useState(0)
+
+  // 2.7.542: Yonetici icin "yeni tebligat" bildirimi — son 2 gunde gelen
+  // tebligatlar musteri bazinda gruplanir; kalem balonu uyarir, tiklayinca
+  // panel acilir, oradan e-Tebligat sayfasina gidilir.
+  const [tebligGruplar, setTebligGruplar] = useState([])
+  const [tebligPanel, setTebligPanel] = useState(false)
+  const [tebligDetay, setTebligDetay] = useState(null)
+  const [musteriAdlari, setMusteriAdlari] = useState({})
+  // 2.7.579: X ile kapatilan tebligatlar "goruldu" isaretlenir (localStorage'da
+  // kalici). Ayni tebligat bir daha uyari vermez; yalnizca YENI gelen tebligat
+  // (daha once gorulmemis belge) uyarıyı yeniden tetikler. Eskisi gibi zaman
+  // karsilastirmasi yerine belge kimligi kullanilir — yenileme/oturum kapansa
+  // bile uyari geri donmez.
+  const TEKRIL_GORULEN_KEY = 'mubis_teblig_gorulen'
+  const tebligSatirId = (s) => String(s.belge_no || s.file_url || (s.client_id || '') + '|' + (s.created_at || ''))
+  const [tebligGorulen, setTebligGorulen] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(TEKRIL_GORULEN_KEY) || '[]')) } catch { return new Set() }
+  })
+  const tebligUyariKapat = () => {
+    const tum = new Set(tebligGorulen)
+    tebligGruplar.forEach(g => g.tebligatlar.forEach(s => tum.add(tebligSatirId(s))))
+    musteriTebligatlar.forEach(s => tum.add(tebligSatirId(s)))
+    try { localStorage.setItem(TEKRIL_GORULEN_KEY, JSON.stringify([...tum])) } catch { /* yoksay */ }
+    setTebligGorulen(tum)
+    setTebligPanel(false)
+  }
+  // 2.7.575: Musteri modu — yalnizca KENDINE gelen tebligatlar (admin verisi degil)
+  const [musteriTebligatlar, setMusteriTebligatlar] = useState([])
+  const musteriTebligYeni = musteriTebligatlar.filter(s => !tebligGorulen.has(tebligSatirId(s)))
+  const musteriTebligAdet = musteriTebligYeni.length
+  const tebligGorunurGruplar = tebligGruplar
+    .map(g => {
+      const yeni = g.tebligatlar.filter(s => !tebligGorulen.has(tebligSatirId(s)))
+      return yeni.length ? { ...g, adet: yeni.length, tebligatlar: yeni } : null
+    })
+    .filter(Boolean)
+  const tebligToplam = tebligGorunurGruplar.reduce((t, g) => t + g.adet, 0)
+  // 2.7.575: rozet/balon/panelde kullanilacak adet — personel: tum musteriler,
+  // musteri: yalnizca kendine gelenler
+  const tebligUyariAdet = personelMi ? tebligToplam : musteriTebligAdet
+  const tebligUyariVar = personelMi ? tebligGorunurGruplar.length > 0 : musteriTebligAdet > 0
+
+  // 2.7.543: ustbardaki zil dugmesi paneli acar/kapatir; adet degisince zile haber verilir
+  useEffect(() => {
+    const toggle = () => { if (!acik) setTebligPanel(v => !v) }
+    window.addEventListener('mubis-teblig-panel-toggle', toggle)
+    return () => window.removeEventListener('mubis-teblig-panel-toggle', toggle)
+  }, [acik])
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('mubis-teblig-adet', { detail: tebligToplam }))
+  }, [tebligToplam])
   const [mesajlar, setMesajlar] = useState([])
   const karsilama = asistanKarsilama(clientProfile, user)
   const [sesAyari, setSesAyari] = useState(() => {
@@ -141,12 +195,11 @@ export default function MubisAssistant() {
 
   // Admin/personel asistandan mevzuat destegi alir; musteriye ozel
   // mali ozet, mali musavir mesajlasmasi ve kisisel oneriler gosterilmez.
-  const personelMi = ['admin', 'super_admin', 'personel'].includes(user?.role)
+  // 2.7.575: personelMi tanimi bilesenin en basina tasindi (TDZ duzeltmesi).
 
   // ── Mali musavir mesajlari ──
   const navigate = useNavigate()
   const [clientId, setClientId] = useState(null)
-  const [kisiselOzet, setKisiselOzet] = useState('')
   const [adminMesajlari, setAdminMesajlari] = useState([])
   const [musavireYaz, setMusavireYaz] = useState(false)
   const [replyToId, setReplyToId] = useState(null)
@@ -160,6 +213,76 @@ export default function MubisAssistant() {
     return () => { iptal = true }
   }, [user, personelMi])
 
+  // 2.7.542: Tebligat bildirimi verisi — yonetici/personel: tum musteriler;
+  // 2.7.575: musteri ise YALNIZCA kendine gelen tebligatlar; 60 sn'de bir tazelenir
+  // 2.7.622: "son 2 gunde gelen" artık belgenin GERCEK tebligat tarihine gore
+  // hesaplanir. Daha once created_at (yukleme zamani) kullaniliyordu; toplu
+  // tebligat sorgusu arsivdeki eski belgeleri (2023-2024) de tabloya ilk kez
+  // yazdigi icin hepsi "yeni" sayiliyor ve her giriste 999 tebligat uyarisi
+  // cikiyordu. DB penceresi 7 gun (son yuklemeler), tarayici tarafinda teblig
+  // tarihi 2 gun filtresi uygulanir.
+  useEffect(() => {
+    if (!personelMi && !clientId) return
+    let canli = true
+    const tarihCoz = (metin) => {
+      if (!metin) return null
+      const s = String(metin).trim()
+      let m = s.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/)
+      if (m) return new Date(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0))
+      m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+      if (m) return new Date(+m[1], +m[2] - 1, +m[3])
+      const d = new Date(s)
+      return isNaN(d.getTime()) ? null : d
+    }
+    const yukle = async () => {
+      try {
+        const yediGunOnce = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+        let q = supabase
+          .from('etebligatlar')
+          .select('client_id, belge_no, teblig_tarihi, gonderme_tarihi, kurum, file_url, created_at')
+          .gte('created_at', yediGunOnce)
+        if (!personelMi) q = q.eq('client_id', clientId)
+        const { data, error } = await q.order('created_at', { ascending: false })
+        if (error) throw error
+        if (!canli) return
+        // Gercek teblig tarihi son 2 gun icinde olanlar (arsiv yuklemleri haric)
+        const ikiGunOnceMs = Date.now() - 2 * 24 * 60 * 60 * 1000
+        const son2Gun = (data || []).filter(s => {
+          const t = tarihCoz(s.teblig_tarihi) || tarihCoz(s.gonderme_tarihi)
+          return t ? t.getTime() >= ikiGunOnceMs : false
+        })
+        if (!personelMi) { setMusteriTebligatlar(son2Gun); return }
+        const harita = new Map()
+        for (const s of son2Gun) {
+          const k = String(s.client_id)
+          if (!harita.has(k)) harita.set(k, { clientId: s.client_id, adet: 0, tebligatlar: [] })
+          const g = harita.get(k)
+          g.adet++
+          g.tebligatlar.push(s)
+        }
+        setTebligGruplar([...harita.values()].sort((a, b) => b.adet - a.adet))
+      } catch { /* tablo yoksa sessiz gec */ }
+    }
+    yukle()
+    const timer = setInterval(yukle, 60000)
+    return () => { canli = false; clearInterval(timer) }
+  }, [personelMi, clientId])
+
+  // Musteri adlarini tek istekte getir (liste gorselinde gosterilir)
+  useEffect(() => {
+    const idler = [...new Set(tebligGruplar.map(g => String(g.clientId)))]
+    if (!idler.length) { setMusteriAdlari({}); return }
+    let canli = true
+    supabase.from('clients').select('id, name, short_name').in('id', idler)
+      .then(({ data }) => {
+        if (!canli || !data) return
+        const m = {}
+        for (const c of data) m[String(c.id)] = c.name || c.short_name || ''
+        setMusteriAdlari(m)
+      }).catch(() => {})
+    return () => { canli = false }
+  }, [tebligGruplar])
+
   useEffect(() => {
     if (!clientId) {
       setClientProfile(null)
@@ -169,7 +292,7 @@ export default function MubisAssistant() {
     let iptal = false
     supabase
       .from('clients')
-      .select('name, shortName, short_name, company, phonenumbers')
+      .select('name, short_name, company, phonenumbers')
       .eq('id', clientId)
       .maybeSingle()
       .then(({ data }) => {
@@ -227,16 +350,6 @@ export default function MubisAssistant() {
     const t = setInterval(() => mesajlariYukle(), 60000)
     return () => clearInterval(t)
   }, [clientId, mesajlariYukle])
-
-  // ── Musteriye ozel mali ozet (AI'ya baglam olarak gonderilir) ──
-  useEffect(() => {
-    if (!clientId) { setKisiselOzet(''); return }
-    let iptal = false
-    buildClientAiContext(clientId)
-      .then(metin => { if (!iptal) setKisiselOzet(metin || '') })
-      .catch(e => console.warn('Kisisel AI ozeti olusturulamadi:', e))
-    return () => { iptal = true }
-  }, [clientId])
 
   // Pencere acilinca admin mesajlarini okundu isaretle ve sesli oku
   useEffect(() => {
@@ -355,10 +468,15 @@ export default function MubisAssistant() {
     setMesajlar(yeniMesajlar)
 
     try {
-      // Musteri girisi varsa kisisel mali ozet (borc, tahakkuk, son tarihler) eklenir
       let kisisel = ''
-      if (kisiselOzet) {
-        kisisel = `\n\nKULLANICININ MUBIS VERILERI:\n${kisiselOzet}`
+      if (clientId) {
+        const ozet = await buildClientAiContext(clientId).catch(e => {
+          console.warn('Kisisel AI ozeti olusturulamadi:', e)
+          return ''
+        })
+        kisisel = ozet
+          ? `\n\nKULLANICININ MUBIS VERILERI:\n${ozet}`
+          : '\n\nMÜŞTERİNİN GÜNCEL MALİ VERİLERİ ALINAMADI. Kişisel ödeme veya borç tutarlarını tahmin etme; verilere şu anda erişilemediğini belirt.'
       }
 
       // Admin/personel musteri+evrak sorgusu yapıyorsa baglam uret
@@ -406,7 +524,7 @@ export default function MubisAssistant() {
     } finally {
       setYaziyor(false)
     }
-  }, [input, mesajlar, misafir, user, yaziyor, kisiselOzet, personelMi])
+  }, [input, mesajlar, misafir, user, yaziyor, clientId, personelMi])
 
   function mikrofon() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
@@ -491,22 +609,172 @@ export default function MubisAssistant() {
         </div>
       )}
 
+      {/* 2.7.542: Tebligat bildirim paneli — 3. resimdeki tasarim.
+          Top balona tiklaninca acilir; satirdaki dugme e-Tebligat sayfasina goturur. */}
+      {tebligPanel && !acik && !personelMi && (
+        /* 2.7.575: Musteri paneli — yalnizca KENDINE gelen tebligatlar */
+        <div className="fixed bottom-[112px] md:bottom-[118px] right-4 md:right-6 z-[65] w-[calc(100vw-2rem)] max-w-[430px] bg-blue-950/95 backdrop-blur-md border border-amber-500/40 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden animate-fade-in-up">
+          <div className="flex items-center gap-2.5 px-4 py-3 border-b border-blue-800/50 bg-amber-500/5">
+            <div className="flex-1 min-w-0">
+              <h2 className="text-white font-semibold text-sm leading-tight">Gelen e-Tebligatlarınız</h2>
+              <p className="text-amber-300/80 text-xs">Son 2 günde size {musteriTebligAdet} yeni tebligat geldi</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setTebligPanel(false); navigate('/portal?tab=tebligatlarim') }}
+              className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-500/90 hover:bg-amber-400 text-blue-950 text-xs font-bold transition"
+            >
+              e-Tebligatlarım
+            </button>
+            <button
+              type="button"
+              onClick={tebligUyariKapat}
+              aria-label="Uyariyi kapat"
+              title="Kapat (yeni tebligat gelene kadar uyarı gösterilmez)"
+              className="shrink-0 p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="divide-y divide-blue-800/40 max-h-72 overflow-y-auto">
+            {musteriTebligYeni.length === 0 && (
+              <div className="px-4 py-6 text-center text-gray-400 text-sm">Son 2 günde yeni tebligatınız yok.</div>
+            )}
+            {musteriTebligYeni.map((s, si) => (
+              <div key={(s.belge_no || '') + si} className="px-4 py-2.5 flex flex-wrap items-center gap-2.5">
+                <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-bold shrink-0">{s.teblig_tarihi || s.gonderme_tarihi || '—'}</span>
+                <span className="text-white text-sm font-medium flex-1 min-w-[130px] truncate" title={s.kurum || ''}>{s.kurum || 'Kurum belirtilmemiş'}</span>
+                {s.file_url
+                  ? <span className="text-green-400 text-xs shrink-0">PDF hazır</span>
+                  : <span className="text-gray-500 text-xs shrink-0">PDF indirilmedi</span>}
+              </div>
+            ))}
+          </div>
+          <div className="px-4 py-2 border-t border-blue-800/50 flex justify-end">
+            <button
+              type="button"
+              onClick={() => { setTebligPanel(false); setAcik(true) }}
+              className="text-[11px] text-gray-400 hover:text-white transition"
+            >
+              Sohbete geç
+            </button>
+          </div>
+        </div>
+      )}
+      {tebligPanel && !acik && personelMi && (
+        <div className="fixed bottom-[112px] md:bottom-[118px] right-4 md:right-6 z-[65] w-[calc(100vw-2rem)] max-w-[430px] bg-blue-950/95 backdrop-blur-md border border-amber-500/40 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden animate-fade-in-up">
+          <div className="flex items-center gap-2.5 px-4 py-3 border-b border-blue-800/50 bg-amber-500/5">
+            <div className="flex-1 min-w-0">
+              <h2 className="text-white font-semibold text-sm leading-tight">Son 2 Günde Gelen Tebligatlar</h2>
+              <p className="text-amber-300/80 text-xs">{tebligGorunurGruplar.length} müşteri · {tebligToplam} tebligat</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setTebligPanel(false); navigate('/admin/etebligatlar') }}
+              className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-500/90 hover:bg-amber-400 text-blue-950 text-xs font-bold transition"
+            >
+              Tümü
+            </button>
+            <button
+              type="button"
+              onClick={tebligUyariKapat}
+              aria-label="Uyariyi kapat"
+              title="Kapat (yeni tebligat gelene kadar uyarı gösterilmez)"
+              className="shrink-0 p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="divide-y divide-blue-800/40 max-h-72 overflow-y-auto">
+            {tebligGorunurGruplar.map(g => (
+              <div key={String(g.clientId)}>
+                <div className="px-4 py-2.5 flex flex-wrap items-center gap-2.5">
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-bold shrink-0">{g.adet} yeni</span>
+                  <span className="text-white text-sm font-medium flex-1 min-w-[130px] truncate" title={musteriAdlari[String(g.clientId)] || `Müşteri #${g.clientId}`}>
+                    {musteriAdlari[String(g.clientId)] || `Müşteri #${g.clientId}`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { setTebligPanel(false); navigate(`/admin/etebligatlar?musteri=${g.clientId}&yeni=1`) }}
+                    className="shrink-0 px-2.5 py-1 rounded-md bg-amber-500/90 hover:bg-amber-400 text-blue-950 text-[11px] font-bold transition"
+                  >
+                    e-Tebligat'a Git
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTebligDetay(d => d === String(g.clientId) ? null : String(g.clientId))}
+                    className="shrink-0 px-2 py-1 rounded-md bg-blue-900/40 border border-blue-700/40 text-gray-300 text-[11px] hover:bg-blue-900/60 transition"
+                  >
+                    {tebligDetay === String(g.clientId) ? 'Gizle' : 'Detay'}
+                  </button>
+                </div>
+                {tebligDetay === String(g.clientId) && (
+                  <div className="px-4 pb-2.5">
+                    {g.tebligatlar.slice(0, 12).map((s, si) => (
+                      <div key={(s.belge_no || '') + si} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 py-1 text-xs pl-2">
+                        <span className="text-gray-400 min-w-[86px]">{s.teblig_tarihi || s.gonderme_tarihi || '—'}</span>
+                        <span className="text-gray-200 flex-1 min-w-[130px] truncate">{s.kurum || '—'}</span>
+                        {s.file_url
+                          ? <span className="text-green-400">PDF hazır</span>
+                          : <span className="text-gray-500">PDF indirilmedi</span>}
+                      </div>
+                    ))}
+                    {g.tebligatlar.length > 12 && (
+                      <div className="text-gray-500 text-xs pl-2 pt-1">+ {g.tebligatlar.length - 12} tebligat daha</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="px-4 py-2 border-t border-blue-800/50 flex justify-end">
+            <button
+              type="button"
+              onClick={() => { setTebligPanel(false); setAcik(true) }}
+              className="text-[11px] text-gray-400 hover:text-white transition"
+            >
+              Sohbete geç
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Yuzen kalem karakteri */}
       {!acik && (
         <div className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-[60] flex items-end gap-3">
           {balon && (
-            <div className="hidden sm:block relative bg-white text-blue-950 rounded-2xl rounded-br-sm px-4 py-3 shadow-2xl max-w-[230px] animate-fade-in-up">
-              <p className="text-sm font-semibold leading-snug">MUBİS Asistan'a sorun,</p>
-              <p className="text-sm text-blue-700 leading-snug">anında cevap alın!</p>
-              <div className="absolute -bottom-1.5 right-5 w-3 h-3 bg-white rotate-45" />
+            <div className={`hidden sm:block relative rounded-2xl rounded-br-sm px-4 py-3 shadow-2xl max-w-[240px] animate-fade-in-up ${tebligUyariVar ? 'bg-amber-400 text-blue-950' : 'bg-white text-blue-950'}`}>
+              {tebligUyariVar ? (
+                personelMi ? (
+                  <>
+                    <p className="text-sm font-bold leading-snug">{tebligToplam} yeni tebligat geldi!</p>
+                    <p className="text-xs text-blue-900/80 leading-snug mt-0.5">{tebligGorunurGruplar.length} müşteriye — görmek için tıklayın</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-bold leading-snug">Size {musteriTebligAdet} yeni e-Tebligat geldi!</p>
+                    <p className="text-xs text-blue-900/80 leading-snug mt-0.5">görmek için tıklayın</p>
+                  </>
+                )
+              ) : (
+                <>
+                  <p className="text-sm font-semibold leading-snug">MUBİS Asistan'a sorun,</p>
+                  <p className="text-sm text-blue-700 leading-snug">anında cevap alın!</p>
+                </>
+              )}
+              <div className={`absolute -bottom-1.5 right-5 w-3 h-3 rotate-45 ${tebligUyariVar ? 'bg-amber-400' : 'bg-white'}`} />
             </div>
           )}
 
           <button
-            onClick={() => { setAcik(true); setBalon(false) }}
+            onClick={() => {
+              setBalon(false)
+              if (tebligUyariVar) { setTebligPanel(v => !v); return }
+              setAcik(true)
+            }}
             onMouseEnter={() => setBalon(true)}
             onMouseLeave={() => setBalon(false)}
-            aria-label="MUBİS Asistan'ı aç"
+            aria-label="MUBİS Asistan"
             className="group relative w-[76px] h-[76px] md:w-24 md:h-24 rounded-full bg-gradient-to-br from-blue-600 via-blue-700 to-blue-900 border-2 border-blue-300/40 shadow-[0_10px_35px_rgba(30,64,175,0.55)] hover:scale-110 transition-transform duration-300"
           >
             <span className="absolute inset-0 rounded-full bg-blue-400/30 animate-ping-slow" />
@@ -516,11 +784,15 @@ export default function MubisAssistant() {
               className="absolute left-1/2 -translate-x-1/2 bottom-1 w-[95%] object-contain animate-mascot-idle group-hover:animate-mascot-wave drop-shadow-[0_6px_10px_rgba(0,0,0,0.35)]"
             />
             <span className="absolute bottom-1.5 right-1.5 w-4 h-4 rounded-full bg-emerald-400 border-2 border-blue-900" />
-            {okunmamis > 0 && (
+            {tebligUyariAdet > 0 ? (
+              <span className="absolute -top-1 -right-1 min-w-[22px] h-[22px] px-1 rounded-full bg-amber-400 text-blue-950 text-[11px] font-bold flex items-center justify-center border-2 border-blue-950 animate-pulse">
+                {tebligUyariAdet > 99 ? '99+' : tebligUyariAdet}
+              </span>
+            ) : (okunmamis > 0 && (
               <span className="absolute -top-1 -right-1 min-w-[22px] h-[22px] px-1 rounded-full bg-red-500 text-white text-[11px] font-bold flex items-center justify-center border-2 border-blue-950">
                 {okunmamis}
               </span>
-            )}
+            ))}
           </button>
         </div>
       )}
@@ -671,10 +943,10 @@ export default function MubisAssistant() {
               <div className="pt-1">
                 <div className="flex items-center gap-1.5 text-gray-500 text-xs font-semibold mb-2">
                   <Sparkles className="w-3.5 h-3.5" />
-                  {personelMi ? 'Mevzuat Soruları' : kisiselOzet ? 'Size Özel Sorular' : 'Sık Sorulan Sorular'}
+                  {personelMi ? 'Mevzuat Soruları' : clientId ? 'Size Özel Sorular' : 'Sık Sorulan Sorular'}
                 </div>
                 <div className="space-y-2">
-                  {(personelMi ? PERSONEL_SORULARI : kisiselOzet ? MUSTERI_SORULARI : SIK_SORULAR).map((s, i) => (
+                  {(personelMi ? PERSONEL_SORULARI : clientId ? MUSTERI_SORULARI : SIK_SORULAR).map((s, i) => (
                     <button
                       key={i}
                       onClick={() => gonder(s)}

@@ -1,21 +1,26 @@
 import { useEffect, useState } from 'react'
-import { Users, CalendarClock, TrendingUp, Sparkles } from 'lucide-react'
+import { Users, CalendarClock, TrendingUp, Sparkles, Activity } from 'lucide-react'
 import { useClients } from '../hooks/useClients'
 import { getEmployees } from '../services/clientService'
 import PersonelKayitlari from './izin/PersonelKayitlari'
 import IzinGirisiSorgulama from './izin/IzinGirisiSorgulama'
 import KidemIhbarHesap from './izin/KidemIhbarHesap'
+import SaglikRapor from './izin/SaglikRapor'
 import { asArray, clientName } from './izin/izinUtils'
 
 const TABS = [
-  { key: 'personel', label: 'Personel Kayıtları', icon: Users },
-  { key: 'izin', label: 'İzin Girişi / Sorgulama', icon: CalendarClock },
-  { key: 'kidem-ihbar', label: 'Kıdem / İhbar Hesaplama', icon: TrendingUp }
+  { key: 'personel', label: 'Personel', icon: Users },
+  { key: 'izin', label: 'İzin', icon: CalendarClock },
+  { key: 'kidem-ihbar', label: 'Kıdem / İhbar', icon: TrendingUp },
+  { key: 'saglik-rapor', label: 'Rapor', icon: Activity }
 ]
 
 export default function IzinTakip({ clientId: propClientId }) {
   const { clients = [] } = useClients()
-  const clientList = Array.isArray(clients) ? clients : []
+  // 2.7.5xx: Müşteri listesi açılır listede alfabetik (Türkçe) — tüm rollerde
+  const clientList = (Array.isArray(clients) ? clients : [])
+    .slice()
+    .sort((a, b) => clientName(a).localeCompare(clientName(b), 'tr'))
   const [clientId, setClientId] = useState(propClientId || '')
   const [employees, setEmployees] = useState([])
   const [activeTab, setActiveTab] = useState('personel')
@@ -107,6 +112,7 @@ export default function IzinTakip({ clientId: propClientId }) {
           reload={reloadEmployees}
           setLoading={setLoading}
           setError={setError}
+          onTabChange={setActiveTab}
         />
       )}
 
@@ -125,6 +131,15 @@ export default function IzinTakip({ clientId: propClientId }) {
           employees={employees}
           clientList={clientList}
           setError={setError}
+        />
+      )}
+
+      {activeTab === 'saglik-rapor' && (
+        <SaglikRapor
+          clientId={clientId}
+          employees={employees}
+          clientList={clientList}
+          isMusteri={!!propClientId}
         />
       )}
     </div>

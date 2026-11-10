@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useClients } from '../hooks/useClients'
-import { searchNace, formatNaceCode, getNaceDesc } from '../utils/naceCodes'
+import { searchNace, formatNaceCode, getNaceDesc, naceAciklama, naceSadeceKod } from '../utils/naceCodes'
 import { KIRA_STOPAJ_ORANI, kiraGecmisi, paraTR, tarihTR } from '../utils/kiraUtils'
 import * as XLSX from 'xlsx'
 import { 
@@ -11,23 +11,39 @@ import {
   Globe, CreditCard, Hash, ListChecks, Shield,
   Briefcase, Tag, Upload, Search, Home, ExternalLink,
   Eye, EyeOff, Lock, Landmark, KeyRound, Receipt, Users, AlertTriangle, DollarSign,
-  Send, MessageCircle, Download, Camera, CheckCircle
+  Send, MessageCircle, Download, Camera, CheckCircle, BookOpen,
+  FolderOpen, FileSearch, Inbox, MessageSquare, Smartphone, Copy
 } from 'lucide-react'
-import { getAccountPlans, saveAccountPlans, getEmployees, addEmployee, updateEmployee, deleteEmployee, saveEmployeesFromExcel, getPartners, addPartner, updatePartner, deletePartner, setEdevletAktifPartner } from '../services/clientService'
-import { getAccountingFee, saveAccountingFee, getPayments, addPayment, deletePayment, hesaplaBorcOzeti, openReceipt, applyPaymentToDebt, rejectPayment } from '../services/paymentService'
+import { getAccountPlans, saveAccountPlans, getEmployees, addEmployee, updateEmployee, deleteEmployee, saveEmployeesFromExcel, getPartners, addPartner, updatePartner, deletePartner, setEdevletAktifPartner, updateClient as updateClientDb, addClient, findClientByTcVkn } from '../services/clientService'
+import { getAccountingFee, saveAccountingFee, getPayments, addPayment, deletePayment, updatePayment, hesaplaBorcOzeti, openReceipt, applyPaymentToDebt, rejectPayment, normalizeDonem } from '../services/paymentService'
 import { createNotification } from '../services/notificationService'
-import { uploadGelirBeyanDocument, uploadGeciciVergiDocument, uploadVergiLevhasi, uploadMaliEvrak, uploadAdminDocument, uploadMakbuz, analyzePersonnelDocument } from '../services/documentService'
+import { uploadGelirBeyanDocument, uploadGeciciVergiDocument, uploadVergiLevhasi, uploadMaliEvrak, uploadAdminDocument, uploadMakbuz, uploadPaymentMakbuz, analyzePersonnelDocument } from '../services/documentService'
 import { etebligatlariGetirVeYukle } from '../services/gibIndirmeService'
+import { getAppSetting, setAppSetting, deleteAppSetting } from '../services/settingsService'
 import { gibYardimciIs, edevletKimlikGetir } from '../utils/gibOdemeHelper'
+import { tecilliPlanPdfOku } from '../services/tecilliService'
 import { ASGARI_UCRET, nettenBrute } from '../data/defaults'
-import { formatTurkishInput, parseTurkishNumber, parseMoneyInput, formatMoney } from '../utils/numberFormat'
+import { formatTurkishInput, parseTurkishNumber, parseMoneyInput, formatMoney, hamTutarGirdisi } from '../utils/numberFormat'
 import { formatDateTR } from '../utils/dateUtils'
 import { supabase } from '../lib/supabase'
-import ZReportManager from '../components/ZReportManager'
-import ExpenseUploader from '../components/ExpenseUploader'
 import KiraTalepOnay from '../components/KiraTalepOnay'
 import PortalErisimKarti from '../components/PortalErisimKarti'
 import PortalOtomasyonKarti from '../components/PortalOtomasyonKarti'
+// YardimciSurumUyari App.jsx'te global render ediliyor; burada import gerekmez
+
+// Musteri portalindaki sekmelere karsi gelen moduller. Varsayilan: ACIK
+// (clients tablosunda alan tanimsizsa/null'sa modul gorunur; false yazilirsa kapanir).
+const PORTAL_MODULLERI = [
+  { alan: 'evraklarim_modulu', camel: 'evraklarimModulu', label: 'Evraklarım', icon: FolderOpen },
+  { alan: 'beyannamelerim_modulu', camel: 'beyannamelerimModulu', label: 'Beyannamelerim', icon: FileSearch },
+  { alan: 'faturalarim_modulu', camel: 'faturalarimModulu', label: 'Faturalarım', icon: Receipt },
+  { alan: 'kdv_dokumleri_modulu', camel: 'kdvDokumleriModulu', label: 'KDV Dökümleri', icon: FileText },
+  { alan: 'etebligatlarim_modulu', camel: 'etebligatlarimModulu', label: 'e-Tebligatlarım', icon: Inbox },
+  { alan: 'muhasebe_borcum_modulu', camel: 'muhasebeBorcumModulu', label: 'Muhasebe Borcum', icon: DollarSign },
+  { alan: 'mesajlarim_modulu', camel: 'mesajlarimModulu', label: 'Mesajlarım', icon: MessageSquare },
+  { alan: 'kira_stopaj_modulu', camel: 'kiraStopajModulu', label: 'Kira Stopaj Listesi', icon: FileText },
+  { alan: 'belge_yukle_modulu', camel: 'belgeYukleModulu', label: 'Belge Yükle', icon: Camera },
+]
 
 export default function ClientDetail() {
   const { id } = useParams()
@@ -38,12 +54,17 @@ export default function ClientDetail() {
   const [loading, setLoading] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
   const [activeTab, setActiveTab] = useState('info')
-  const [uploadDocType, setUploadDocType] = useState(null)
   const [editData, setEditData] = useState({})
   // e-Devlet islemleri (e-Tebligat getir / SGK prim ode)
   const [edevletIslem, setEdevletIslem] = useState(null) // 'etebligat' | 'sgk' | null
   const [edevletDurum, setEdevletDurum] = useState('')
+  // Tecilli Tahsilat odeme plani
+  const [tecilliYukleniyor, setTecilliYukleniyor] = useState(false)
+  const [tahakkukTercihKaydediyor, setTahakkukTercihKaydediyor] = useState(false)
+  const [tecilliDurum, setTecilliDurum] = useState('')
+  const tecilliFileRef = useRef(null)
   const [hesapKodlari, setHesapKodlari] = useState([])
+  const [hesapBasamak, setHesapBasamak] = useState('1')
   const [hesapSearch, setHesapSearch] = useState('')
   const [naceResults, setNaceResults] = useState([])
   const [showNaceDropdown, setShowNaceDropdown] = useState(false)
@@ -67,9 +88,15 @@ export default function ClientDetail() {
   const [clientPayments, setClientPayments] = useState([])
   const [showPaymentForm, setShowPaymentForm] = useState(false)
   const [paymentForm, setPaymentForm] = useState({ tutar: '', odeme_tipi: 'eft', donem: '', aciklama: '', odeme_tarihi: new Date().toISOString().split('T')[0] })
+  const [seciliBorcKalemler, setSeciliBorcKalemler] = useState([]) // coklu borc kalemi (tutar otomatik dagitilir)
+  const [duzeltmeDuzenlenen, setDuzeltmeDuzenlenen] = useState(null) // { payment } — borc kalemi duzeltme
+  const [duzeltmeSecim, setDuzeltmeSecim] = useState('')
+  const [odemeOnayModal, setOdemeOnayModal] = useState(null) // { payment } — online odemeyi borctan dusme
+  const [odemeOnaySecimler, setOdemeOnaySecimler] = useState([]) // coklu borc kalemi secimi
+  const [makbuzOnizleme, setMakbuzOnizleme] = useState(null) // odemeye ekli makbuzun url'si
+  const [odemeMakbuzHedef, setOdemeMakbuzHedef] = useState(null) // makbuz eklenecek odeme
+  const odemeMakbuzInputRef = useRef(null)
   // Borctan dusme modal (online odemeler icin)
-  const [borcDusModal, setBorcDusModal] = useState(null) // { payment }
-  const [borcDusSecim, setBorcDusSecim] = useState('')
   // Serbest meslek makbuzu yukleme
   const [makbuzForm, setMakbuzForm] = useState({ name: '', tutar: '', donem: '' })
   const [makbuzFile, setMakbuzFile] = useState(null)
@@ -104,6 +131,73 @@ export default function ClientDetail() {
   // MUBiS Proxy durumu
   const [proxyReady, setProxyReady] = useState(false)
   const [proxyLoading, setProxyLoading] = useState(false)
+
+  // ===== Cep Fatura (MFatura) Kurulumu =====
+  const [faturaMail, setFaturaMail] = useState(null)
+  const [faturaMailHedef, setFaturaMailHedef] = useState('')
+  const [faturaMailKopya, setFaturaMailKopya] = useState('')
+  const [faturaMailGoster, setFaturaMailGoster] = useState(false)
+
+  // Kayitli cep fatura kurulumunu yukle
+  useEffect(() => {
+    let iptal = false
+    if (client?.id) {
+      getAppSetting(`fatura_mail_${client.id}`).then(v => {
+        if (!iptal && v) { setFaturaMail(v); setFaturaMailHedef(v.hedef || '') }
+      }).catch(() => {})
+    }
+    return () => { iptal = true }
+  }, [client?.id])
+
+  const trSlug = (s) => (s || '').toLowerCase()
+    .replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ı/g, 'i').replace(/i̇/g, 'i')
+    .replace(/ö/g, 'o').replace(/ç/g, 'c')
+    .replace(/[^a-z0-9]+/g, '').slice(0, 20)
+  const gucluParolaUret = () => {
+    const harf = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ'
+    const rak = '23456789'
+    const ozel = '!#$%&*+?'
+    const pick = (set, n) => Array.from({ length: n }, () => set[Math.floor(Math.random() * set.length)]).join('')
+    return pick(harf, 4) + pick(rak, 3) + pick(ozel, 1) + pick(harf, 3) + pick(rak, 2)
+  }
+  const faturaMailKopyala = async (metin, etiket) => {
+    try { await navigator.clipboard.writeText(metin) } catch { /* panoya erisilemezse sessiz gec */ }
+    setFaturaMailKopya(etiket)
+    setTimeout(() => setFaturaMailKopya(''), 1600)
+  }
+  const cepFaturaKurulumHazirla = async () => {
+    if (!client?.id) return
+    const hedef = (faturaMailHedef || client.email || '').trim()
+    if (!hedef) { alert('Müşterinin e-postası boş. Hedef mail adresini girin.'); return }
+    const alias = `${trSlug(client.shortName || client.name)}@mubiserp.com.tr`
+    const parola = gucluParolaUret()
+    const kayit = { alias, hedef, parola, tarih: new Date().toISOString(), durum: 'hazir' }
+    await setAppSetting(`fatura_mail_${client.id}`, kayit)
+    setFaturaMail(kayit)
+    setFaturaMailHedef(hedef)
+  }
+  const cepFaturaSil = async () => {
+    if (!faturaMail || !client?.id) return
+    if (!window.confirm('Cep fatura kurulum kaydı silinsin mi? (MFatura hesabı silinmez, yalnızca MUBiS kaydı kaldırılır)')) return
+    try { await deleteAppSetting(`fatura_mail_${client.id}`) } catch { /* yine de ekrandan kaldir */ }
+    setFaturaMail(null)
+  }
+  const cepFaturaWhatsAppMetni = () => {
+    if (!faturaMail) return ''
+    const tel = (client.whatsapp || client.phone || '').replace(/\D/g, '').replace(/^0/, '90')
+    const mesaj = [
+      `${client.name} — MFatura (Cep Fatura) Giriş Bilgileriniz`,
+      '',
+      'E-Posta: ' + faturaMail.alias,
+      'Parola: ' + faturaMail.parola,
+      '',
+      'Uygulama: MFatura - Kolay Fatura (Play Store)',
+      'Giriş yaptıktan sonra "G.İ.B. Ayarları" bölümüne vergi dairesi vermiş olduğunuz İnteraktif Vergi Dairesi kullanıcı adı ve şifrenizi girin. Ardından ücretsiz fatura kesebilirsiniz.',
+      '',
+      'Not: Bu e-posta adresine gelen doğrulama mailleri kendi e-postanıza yönlendirilmektedir (' + faturaMail.hedef + ').'
+    ].join('\n')
+    return `https://wa.me/${tel}?text=${encodeURIComponent(mesaj)}`
+  }
 
   // MUBiS Proxy baglanti kontrolu
   useEffect(() => {
@@ -478,8 +572,10 @@ export default function ClientDetail() {
     try {
       const result = await updateClient(parseInt(id), data)
       if (result.success) {
-        setClient(data)
-        setEditData(data)
+        // data yalnizca guncellenen alanlari icerir (id yok); mevcut client
+        // uzerine yamalayarak id/auth_user_id gibi kimlik alanlarini koru
+        setClient(prev => ({ ...prev, ...data }))
+        setEditData(prev => ({ ...prev, ...data }))
       } else {
         alert('Kaydetme hatasi: ' + (result.error || 'Bilinmeyen hata'))
       }
@@ -516,6 +612,57 @@ export default function ClientDetail() {
     setEdevletIslem(null)
   }
 
+  // Tecilli Tahsilat: var/yok secimi
+  const handleTecilliToggle = async () => {
+    const yeni = !(client.tecilliTahsilat || client.tecilli_tahsilat)
+    const sonuc = await updateClient(parseInt(id), { tecilli_tahsilat: yeni })
+    if (sonuc.success) {
+      setClient(prev => prev ? { ...prev, tecilliTahsilat: yeni, tecilli_tahsilat: yeni } : prev)
+      setTecilliDurum(yeni ? 'Tecilli Tahsilat acildi. Odeme planini PDF olarak yukleyin.' : 'Tecilli Tahsilat kapatildi.')
+    } else {
+      alert('Tecilli Tahsilat kaydedilemedi: ' + sonuc.error)
+    }
+  }
+
+  // Tecilli Tahsilat odeme plani yukle: GIB "Borc Taksitli Detay Listesi" PDF
+  // -> belge no, vergi dairesi ve taksit satirlari clients.tecilli_plan'a yazilir
+  const handleTecilliPlanYukle = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setTecilliYukleniyor(true)
+    setTecilliDurum('PDF okunuyor...')
+    try {
+      const belgeler = await tecilliPlanPdfOku(file)
+      const ozet = belgeler.map(b => `${b.vergiDairesi} - ${b.belgeNo} (${b.taksitSayisi} taksit)`).join('\n')
+      if (!window.confirm(`${belgeler.length} belge bulundu:\n\n${ozet}\n\nOdeme plani kaydedilsin mi?`)) {
+        setTecilliYukleniyor(false)
+        setTecilliDurum('')
+        return
+      }
+      const sonuc = await updateClient(parseInt(id), { tecilli_tahsilat: true, tecilli_plan: belgeler })
+      if (!sonuc.success) throw new Error(sonuc.error || 'Kaydedilemedi')
+      setClient(prev => prev ? { ...prev, tecilliTahsilat: true, tecilli_tahsilat: true, tecilliPlan: belgeler, tecilli_plan: belgeler } : prev)
+      setTecilliDurum(`Odeme plani yuklendi: ${belgeler.length} belge, ${belgeler.reduce((a, b) => a + b.taksitSayisi, 0)} taksit.`)
+    } catch (err) {
+      setTecilliDurum('Hata: ' + (err.message || 'PDF okunamadi'))
+    } finally {
+      setTecilliYukleniyor(false)
+    }
+  }
+
+  // Tecilli Tahsilat planini temizle
+  const handleTecilliPlanSil = async () => {
+    if (!window.confirm('Yuklu odeme plani silinsin mi?')) return
+    const sonuc = await updateClient(parseInt(id), { tecilli_plan: [] })
+    if (sonuc.success) {
+      setClient(prev => prev ? { ...prev, tecilliPlan: [], tecilli_plan: [] } : prev)
+      setTecilliDurum('Odeme plani silindi.')
+    } else {
+      alert('Silinemedi: ' + sonuc.error)
+    }
+  }
+
   // SGK prim odemesi: e-Devlet uzerinden (turkiye.gov.tr)
   const handleSgkPrimOde = async () => {
     setEdevletIslem('sgk')
@@ -542,6 +689,22 @@ export default function ClientDetail() {
       alert('SGK odeme baslatma hatasi: ' + (err.message || 'Bilinmeyen hata'))
       setEdevletDurum('')
       setEdevletIslem(null)
+    }
+  }
+
+  // Tahakkuk gonderim tercihi (beyan_durumlari JSON'unda tasinir, aninda kaydedilir)
+  const handleTahakkukGonderimDegistir = async (deger) => {
+    if (!client) return
+    setTahakkukTercihKaydediyor(true)
+    try {
+      const yeniDurumlar = { ...(client.beyanDurumlari || client.beyan_durumlari || {}), tahakkukGonderim: deger }
+      await updateClientDb(client.id, { beyanDurumlari: yeniDurumlar })
+      setClient(prev => ({ ...prev, beyanDurumlari: yeniDurumlar }))
+    } catch (e) {
+      console.error('Tahakkuk gonderim tercihi kaydedilemedi:', e)
+      alert('Gönderim tercihi kaydedilemedi: ' + (e.message || 'Bilinmeyen hata'))
+    } finally {
+      setTahakkukTercihKaydediyor(false)
     }
   }
 
@@ -602,14 +765,46 @@ export default function ClientDetail() {
       cleanData.openDate = cleanData.isAcilisTarihi
     }
     if (cleanData.faaliyetKodu) {
-      cleanData.naceCode = cleanData.faaliyetKodu
+      cleanData.naceCode = naceSadeceKod(cleanData.faaliyetKodu)
       delete cleanData.faaliyetKodu
     }
+    if (cleanData.naceCode) cleanData.naceCode = naceSadeceKod(cleanData.naceCode)
     if (cleanData.activityField && !cleanData.naceDesc) {
       cleanData.naceDesc = cleanData.activityField
     }
+    // "711101 - ACIKLAMA" birlesik kaydindan aciklama ayrilmamissa naceDesc'e yaz
+    const naceAck = naceAciklama(cleanData.naceCode || '')
+    if (naceAck && !cleanData.naceDesc && naceAck !== cleanData.naceCode) cleanData.naceDesc = naceAck
     const result = await saveClient(cleanData)
     if (result.success) setIsEditing(false)
+  }
+
+  // Portal Sifreleri kartlarindaki kayitli bilgileri temizler
+  // (camelCase alan adlari -> DB snake_case kolonlari)
+  const PORTAL_SIFRE_KOLON = {
+    dvsUsername: 'dvs_username', dvsPassword: 'dvs_password',
+    sgkUser: 'sgk_user', sgkIsyeriKodu: 'sgk_isyeri_kodu',
+    sgkSistemSifre: 'sgk_sistem_sifre', sgkIsyeriSifre: 'sgk_isyeri_sifre',
+    ticaretSicilNo: 'ticaret_sicil_no',
+    edevletUser: 'edevlet_user', edevletPass: 'edevlet_pass',
+  }
+  const portalSifreSil = async (alanlar, etiket) => {
+    if (!window.confirm(`${etiket} kayitli bilgileri silinecek. Emin misiniz?`)) return
+    const yama = {}
+    alanlar.forEach(a => {
+      yama[PORTAL_SIFRE_KOLON[a] || a] = ''
+    })
+    const { error } = await supabase
+      .from('clients')
+      .update(yama)
+      .eq('id', id)
+    if (error) {
+      alert('Silinemedi: ' + error.message)
+      return
+    }
+    const temiz = {}
+    alanlar.forEach(a => { temiz[a] = '' })
+    setClient(prev => ({ ...prev, ...temiz }))
   }
 
   // Kira bilgisi helper'lari (kira_bilgisi text/JSONB alani)
@@ -986,7 +1181,58 @@ export default function ClientDetail() {
     await saveClient(updated)
   }
 
+  // E-imza bayraklari (efatura/earsiv/esmm icin) — app_settings'te JSON
+  const [eimzaBayraklari, setEimzaBayraklari] = useState({ efatura: false, earsiv: false, esmm: false })
+  const eimzaKey = `ehizmet_eimza_${client?.id}`
+  useEffect(() => {
+    let iptal = false
+    getAppSetting(eimzaKey).then(v => {
+      if (iptal) return
+      try { setEimzaBayraklari({ efatura: false, earsiv: false, esmm: false, ...(JSON.parse(v || '{}')) }) } catch { /* varsayilan */ }
+    }).catch(() => {})
+    return () => { iptal = true }
+  }, [eimzaKey])
+
+  const toggleEimza = async (key) => {
+    const yeni = { ...eimzaBayraklari, [key]: !eimzaBayraklari[key] }
+    setEimzaBayraklari(yeni)
+    try { await setAppSetting(eimzaKey, JSON.stringify(yeni)) } catch { /* yoksay */ }
+  }
+
   // Ortak ekle veya guncelle (partners tablosu)
+  // Adi ortaklik ortaklari ayni zamanda MUSTERI listesine de eklenir:
+  // gecici vergi + gelir vergisini kendi adlarina verirler (KDV/muhtasar/SGK
+  // ortaklik VKN'si uzerinden oldugundan beyan_profile.yalnizGelir=true isaretlenir).
+  const ortakMusterisiniSenkronizeEt = async (p) => {
+    try {
+      if (!p.name || !(p.tc || p.vkn)) return null
+      const mevcut = await findClientByTcVkn(p.tc, p.vkn)
+      if (mevcut) {
+        if (p.musteriSinifi) {
+          await updateClientDb(mevcut.id, { musteriSinifi: p.musteriSinifi })
+        }
+        return mevcut
+      }
+      return await addClient({
+        type: 'individual',
+        name: p.name,
+        shortName: p.title || '',
+        tc: p.tc || '',
+        vkn: p.vkn || '',
+        taxOffice: p.vergi_dairesi || '',
+        phone: p.phone || '',
+        email: p.email || '',
+        address: p.address || '',
+        taxType: 'Gelir Vergisi',
+        musteriSinifi: p.musteriSinifi || '2. Sinif',
+        beyanProfile: { yalnizGelir: true, ortaklik_ref: parseInt(id), ortaklik_ad: client.name || '' }
+      })
+    } catch (e) {
+      console.warn('Ortak musterisi senkronize edilemedi:', e)
+      return null
+    }
+  }
+
   const handleSavePartner = async () => {
     if (!newPartner.name) return
     try {
@@ -1000,9 +1246,10 @@ export default function ClientDetail() {
       } else {
         await addPartner(parseInt(id), payload)
       }
+      if (isAdiOrtaklik) await ortakMusterisiniSenkronizeEt(payload)
       const liste = await loadPartners()
       await syncSermayeToplami(liste)
-      setNewPartner({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', sermaye: '', paySayisi: '', address: '', edevletSifre: '' })
+      setNewPartner({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', sermaye: '', paySayisi: '', address: '', edevletSifre: '', musteriSinifi: '' })
       setShowPartnerForm(false)
       setEditPartnerId(null)
     } catch (err) {
@@ -1024,6 +1271,7 @@ export default function ClientDetail() {
       paySayisi: partner.pay_sayisi != null ? String(partner.pay_sayisi) : '',
       address: partner.address || '',
       edevletSifre: partner.edevlet_sifre || '',
+      musteriSinifi: partner.musteri_sinifi || '',
     })
     setEditPartnerId(partner.id)
     setShowPartnerForm(true)
@@ -1097,7 +1345,11 @@ export default function ClientDetail() {
         const codes = []
         jsonData.forEach((row, i) => {
           if (i === 0) return
-          if (row[0]) codes.push({ code: String(row[0]).trim(), name: String(row[1] || '').trim() })
+          const kod = row[0] != null ? String(row[0]).trim() : ''
+          // Hesap kodlari RAKAMLA baslar; "HESAP KODU" basligi, "GENEL
+          // TOPLAM" satiri gibi Excel kalintilarini eler
+          if (!kod || !/^\d/.test(kod)) return
+          codes.push({ code: kod, name: String(row[1] || '').trim() })
         })
         // Supabase'e kaydet
         try {
@@ -1226,9 +1478,9 @@ export default function ClientDetail() {
   const yil = new Date().getFullYear()
 
   const handlePersonelUcretChange = (value) => {
-    const formatted = formatTurkishInput(value)
-    const num = parseTurkishNumber(formatted)
-    if (!value || isNaN(num)) {
+    const ham = hamTutarGirdisi(value)
+    const num = parseTurkishNumber(ham)
+    if (!ham || isNaN(num)) {
       setPersonelForm(prev => ({ ...prev, brut_ucret: '' }))
       return
     }
@@ -1236,7 +1488,7 @@ export default function ClientDetail() {
       const brut = Math.round(nettenBrute(num, yil))
       setPersonelForm(prev => ({ ...prev, brut_ucret: String(brut) }))
     } else {
-      setPersonelForm(prev => ({ ...prev, brut_ucret: formatted }))
+      setPersonelForm(prev => ({ ...prev, brut_ucret: ham }))
     }
   }
 
@@ -1332,21 +1584,110 @@ export default function ClientDetail() {
     } catch (err) { alert('Hata: ' + err.message) }
   }
 
-  // Odeme kaydet
+  // Odeme kaydet — coklu borc kalemi secilebilir; tutar kalemlere otomatik pay edilir
+  // (kalem kalanina gore: or. Önceki Dönem 50.000 + Temmuz 3.750 ... kalan bakiye ilk kaleme eklenir)
   const handleSavePayment = async () => {
     const tutarSayi = parseTurkishNumber(paymentForm.tutar)
     if (!tutarSayi || tutarSayi <= 0) return alert('Tutar giriniz!')
+    if (!seciliBorcKalemler.length) return alert('En az bir borç kalemi seçin!')
     try {
-      await addPayment({ client_id: parseInt(id), ...paymentForm, tutar: tutarSayi, odeme_kanali: 'manuel', durum: 'onaylandi' })
+      const fee = accountingFee
+      const toplandi = (p) => p.durum !== 'reddedildi' && (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel')
+      const odenmis = (kalem) => (clientPayments || []).filter(p => normalizeDonem(p.donem) === kalem && toplandi(p)).reduce((s, p) => s + (Number(p.tutar) || 0), 0)
+      const kalemTutar = (kalem) => {
+        if (kalem === 'Onceki Donem') return Number(fee?.onceki_donem_borc) || 0
+        if (kalem === 'Defter Tasdik') return Number(fee?.defter_tasdik_ucreti) || 0
+        return /^(\d{4})-(\d{2})$/.test(kalem) ? (Number(fee?.aylik_ucret) || 0) : 0
+      }
+      let bakiye = tutarSayi
+      let paySayisi = 0
+      for (const kalem of seciliBorcKalemler) {
+        const kalan = Math.max(0, kalemTutar(kalem) - odenmis(kalem))
+        const pay = Math.min(kalan, bakiye)
+        if (pay > 0) {
+          await addPayment({
+            client_id: parseInt(id),
+            tutar: pay,
+            odeme_tipi: paymentForm.odeme_tipi,
+            donem: kalem,
+            aciklama: paySayisi ? `${paymentForm.aciklama || 'Ödeme'} (${paySayisi + 1}. pay)`.trim() : (paymentForm.aciklama || ''),
+            odeme_tarihi: paymentForm.odeme_tarihi,
+            odeme_kanali: 'manuel',
+            durum: 'onaylandi'
+          })
+          bakiye -= pay
+          paySayisi++
+        }
+      }
+      if (bakiye > 0) {
+        // Kalemler dolduktan sonra artan bakiye ilk secilen kaleme eklenir
+        // (borc hesabinda kalem limitli sayilir, fazla saymaz)
+        await addPayment({
+          client_id: parseInt(id),
+          tutar: bakiye,
+          odeme_tipi: paymentForm.odeme_tipi,
+          donem: seciliBorcKalemler[0],
+          aciklama: `${paymentForm.aciklama || 'Ödeme'} (artan bakiye)`.trim(),
+          odeme_tarihi: paymentForm.odeme_tarihi,
+          odeme_kanali: 'manuel',
+          durum: 'onaylandi'
+        })
+      }
       setPaymentForm({ tutar: '', odeme_tipi: 'eft', donem: '', aciklama: '', odeme_tarihi: new Date().toISOString().split('T')[0] })
+      setSeciliBorcKalemler([])
       setShowPaymentForm(false)
       await loadAccounting()
+      alert(paySayisi > 1 ? `Ödeme ${paySayisi} borç kalemine dağıtıldı.` : 'Ödeme kaydedildi.')
     } catch (err) { alert('Hata: ' + err.message) }
   }
 
   const handleDeletePayment = async (payId) => {
     if (!confirm('Bu odeme kaydini silmek istiyor musunuz?')) return
     try { await deletePayment(payId); await loadAccounting() } catch (err) { alert('Hata: ' + err.message) }
+  }
+
+  // Borc kalemini duzeltme modalini ac (mevcut donem onay kutusuna alinir)
+  const openDuzeltme = (payment) => {
+    setDuzeltmeSecim(normalizeDonem(payment.donem || ''))
+    setDuzeltmeDuzenlenen({ payment })
+  }
+
+  // Duzeltmeyi uygula — satirin donemini gunceller (borc yeniden hesaplanir)
+  const handleDuzeltmeUygula = async () => {
+    const payment = duzeltmeDuzenlenen?.payment
+    if (!payment) return
+    try {
+      await updatePayment(payment.id, { donem: duzeltmeSecim })
+      setDuzeltmeDuzenlenen(null)
+      setDuzeltmeSecim('')
+      await loadAccounting()
+      alert('Borc kalemi duzeltildi.')
+    } catch (err) {
+      const detay = [err.message, err.details, err.hint, err.code].filter(Boolean).join(' | ')
+      alert('Hata: ' + detay)
+    }
+  }
+
+  // Odemeye makbuz ekle/degistir: Storage'a yukler, satira url kaydeder
+  const handleOdemeMakbuzSec = async (e) => {
+    const p = odemeMakbuzHedef
+    const dosya = e.target.files?.[0]
+    if (!p || !dosya) return
+    try {
+      setDocLoading(true)
+      const uploaded = await uploadPaymentMakbuz({ client, paymentId: p.id, file: dosya })
+      if (!uploaded?.url) throw new Error('Yukleme sonucu url donmedi')
+      await updatePayment(p.id, { makbuz_url: uploaded.url })
+      await loadAccounting()
+      alert('Makbuz odemeye eklendi.')
+    } catch (err) {
+      const detay = [err.message, err.details, err.hint, err.code].filter(Boolean).join(' | ')
+      alert('Makbuz ekleme hatasi: ' + detay)
+    } finally {
+      setDocLoading(false)
+      setOdemeMakbuzHedef(null)
+      if (odemeMakbuzInputRef.current) odemeMakbuzInputRef.current.value = ''
+    }
   }
 
   // Borc kalemleri: onceki donem, defter tasdik ve aylik donemler
@@ -1374,33 +1715,61 @@ export default function ClientDetail() {
     return secenekler
   }
 
-  const openBorcDusModal = (payment) => {
-    setBorcDusSecim('')
-    setBorcDusModal({ payment })
+  // Yesil ✓: pencere acar — hangi borc kalemlerinden dusulecegi coklu secilir
+  const handleMarkPaid = (payment) => {
+    setOdemeOnaySecimler([])
+    setOdemeOnayModal({ payment })
   }
 
-  // Secilen borc kalemine online odemeyi isle
-  const handleApplyToDebt = async () => {
-    const payment = borcDusModal?.payment
+  // Secilen borc kalemlerine odemeyi dagitarak isle (tutar kalem kalanina gore pay edilir)
+  const handleOdemeOnayUygula = async () => {
+    const payment = odemeOnayModal?.payment
     if (!payment) return
-    if (!borcDusSecim) return alert('Borc kalemi secin!')
+    if (!odemeOnaySecimler.length) return alert('En az bir borç kalemi seçin!')
     try {
-      await applyPaymentToDebt(payment.id, borcDusSecim)
-      setBorcDusModal(null)
+      const fee = accountingFee
+      const toplandi = (p) => p.durum !== 'reddedildi' && (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel')
+      const odenmis = (kalem) => (clientPayments || []).filter(p => p.id !== payment.id && normalizeDonem(p.donem) === kalem && toplandi(p)).reduce((s, p) => s + (Number(p.tutar) || 0), 0)
+      const kalemTutar = (kalem) => {
+        if (kalem === 'Onceki Donem') return Number(fee?.onceki_donem_borc) || 0
+        if (kalem === 'Defter Tasdik') return Number(fee?.defter_tasdik_ucreti) || 0
+        return /^(\d{4})-(\d{2})$/.test(kalem) ? (Number(fee?.aylik_ucret) || 0) : 0
+      }
+      let bakiye = Number(payment.tutar) || 0
+      let ilklendi = false
+      for (const kalem of odemeOnaySecimler) {
+        const kalan = Math.max(0, kalemTutar(kalem) - odenmis(kalem))
+        const pay = Math.min(kalan, bakiye)
+        if (pay <= 0) continue
+        if (!ilklendi) {
+          await updatePayment(payment.id, { donem: kalem, durum: 'uygulandi', tutar: pay })
+          ilklendi = true
+        } else {
+          await addPayment({
+            client_id: payment.client_id,
+            tutar: pay,
+            odeme_tipi: payment.odeme_tipi || 'eft',
+            donem: kalem,
+            aciklama: 'Toplu odeme payi',
+            odeme_tarihi: payment.odeme_tarihi || new Date().toISOString().split('T')[0],
+            odeme_kanali: payment.odeme_kanali || 'manuel',
+            durum: 'uygulandi'
+          })
+        }
+        bakiye -= pay
+      }
+      if (bakiye > 0 && !ilklendi) {
+        // Kalemlerin hepsi dolu — ilk secilen kaleme tam tutarla isle (hesap limitli sayar)
+        await updatePayment(payment.id, { donem: odemeOnaySecimler[0], durum: 'uygulandi' })
+      }
+      setOdemeOnayModal(null)
+      setOdemeOnaySecimler([])
       await loadAccounting()
-      // Musteriye bildirim gonder
-      try {
-        await createNotification({
-          client_id: parseInt(id),
-          audience: 'client',
-          type: 'odeme',
-          title: 'Odemeniz Borctan Dusuldu',
-          message: `${Number(payment.tutar).toLocaleString('tr-TR')} TL tutarindaki odemeniz ${borcDusSecim} borcundan dusuldu.`,
-          route: '/portal?tab=borc'
-        })
-      } catch (notifErr) { console.error('Musteri odeme bildirimi hatasi:', notifErr) }
       alert('Odeme borctan dusuldu.')
-    } catch (err) { alert('Hata: ' + err.message) }
+    } catch (err) {
+      const detay = [err.message, err.details, err.hint, err.code].filter(Boolean).join(' | ')
+      alert('Hata: ' + detay)
+    }
   }
 
   const handleRejectPayment = async (payment) => {
@@ -1447,6 +1816,7 @@ export default function ClientDetail() {
 
   const tabs = [
     { id: 'info', label: 'Bilgiler', icon: Building2 },
+    { id: 'moduller', label: 'Modüller', icon: BookOpen },
     ...(isCompany ? [{ id: 'officials', label: 'Ortaklar / Yetkililer', icon: User }] : []),
     { id: 'banks', label: 'Bankalar', icon: CreditCard },
     { id: 'kurumlar', label: 'Kurum Erisimi', icon: Landmark },
@@ -1454,67 +1824,212 @@ export default function ClientDetail() {
     { id: 'documents', label: 'Evraklar', icon: FileText },
     ...((client.musteriSinifi === '1. Sinif' || isCompany) ? [{ id: 'hesapkodlari', label: 'Hesap Kodlari', icon: Hash }] : []),
     { id: 'personel', label: 'Personel', icon: Users },
-    { id: 'zrapor', label: 'Belge Yükle', icon: Camera },
     { id: 'muhasebe', label: 'Muhasebe Ucreti', icon: DollarSign },
   ]
 
+  // Hesap kodlari rakam sayfalari: "1'ler" sekmesi 1 ile baslayan kodlari,
+  // "2'ler" sekmesi 2 ile baslayanlari gosterir. Sekmeler yalnizca RAKAM
+  // (1-9) olur; harf/baska karakterle baslayan kodlar sekme uretmez (yalniz
+  // aramayla bulunur). Arama kutusu doluyken arama TUM kodlar uzerinden yapilir.
+  const hesapBasamaklar = [...new Set(hesapKodlari.map(hk => String(hk.kod || '').charAt(0)).filter(d => /\d/.test(d)))].sort()
   const filteredHesapKodlari = hesapKodlari.filter(hk => {
-    if (!hesapSearch) return true
-    return hk.kod.includes(hesapSearch) || hk.ad.toLowerCase().includes(hesapSearch.toLowerCase())
+    if (hesapSearch) {
+      return hk.kod.includes(hesapSearch) || hk.ad.toLowerCase().includes(hesapSearch.toLowerCase())
+    }
+    return String(hk.kod || '').charAt(0) === hesapBasamak
   })
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
-        <div className="flex items-center space-x-4">
-          <button onClick={() => navigate('/admin/musteriler')} className="text-gray-400 hover:text-white transition-colors">
-            <ArrowLeft className="w-6 h-6" />
-          </button>
-          <div className="flex items-center space-x-3">
-            <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-xl ${isCompany ? 'bg-gradient-to-br from-blue-500 to-blue-700' : 'bg-gradient-to-br from-purple-500 to-purple-700'}`}>
+      {/* YardimciSurumUyari App.jsx'te global render ediliyor; burada tekrar gereksiz */}
+      {/* Header + Sekmeler: tek kart */}
+      <div className="rounded-2xl overflow-hidden border border-blue-700/40 bg-gradient-to-br from-blue-800/60 via-blue-900/70 to-blue-950/90 shadow-xl shadow-black/20 mb-8">
+        {/* Ust kisim: kimlik + aksiyonlar */}
+        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 px-5 sm:px-6 py-5">
+          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+            <button onClick={() => navigate('/admin/musteriler')} className="text-blue-200/60 hover:text-white transition-colors shrink-0" title="Musteri listesine don">
+              <ArrowLeft className="w-6 h-6" />
+            </button>
+            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-white font-bold text-2xl shadow-lg shadow-black/30 shrink-0 ${isCompany ? 'bg-gradient-to-br from-blue-500 to-blue-700' : 'bg-gradient-to-br from-purple-500 to-purple-700'}`}>
               {client.name?.charAt(0) || '?'}
             </div>
-            <div>
-              <h1 className="text-2xl font-bold text-white">{client.name}</h1>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-gray-400 text-sm">{isCompany ? `VKN: ${client.vkn || '-'}` : `TC: ${client.tc || '-'}`}</span>
-                <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${client.status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+            <div className="min-w-0">
+              <h1 className="text-lg sm:text-xl font-bold text-white leading-snug break-words">{client.name}</h1>
+              <div className="flex items-center gap-2.5 flex-wrap mt-1">
+                <span className="text-blue-200/70 text-sm">{isCompany ? `VKN: ${client.vkn || '-'}` : `TC: ${client.tc || '-'}`}</span>
+                <span className="w-px h-3.5 bg-blue-400/30" />
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-medium ${client.status === 'active' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${client.status === 'active' ? 'bg-emerald-400' : 'bg-red-400'}`} />
                   {client.status === 'active' ? 'Aktif' : 'Pasif'}
                 </span>
-                {client.musteriSinifi && <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-yellow-500/20 text-yellow-400">{client.musteriSinifi}</span>}
+                {client.musteriSinifi && <span className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-yellow-500/15 text-yellow-400">{client.musteriSinifi}</span>}
               </div>
             </div>
           </div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={() => navigate(`/admin/client/${id}/beyan-profile`)} className="bg-teal-500/20 text-teal-400 px-3 py-2 rounded-lg text-sm font-medium hover:bg-teal-500/30 flex items-center gap-1">
-            <ListChecks className="w-4 h-4" /><span>Beyan Profili</span>
-          </button>
-          <button onClick={() => navigate(`/admin/client/${id}/beyan-takip`)} className="bg-blue-500/20 text-blue-400 px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-500/30 flex items-center gap-1">
-            <FileText className="w-4 h-4" /><span>Beyan Takip</span>
-          </button>
-          {isEditing ? (
-            <>
-              <button onClick={handleSave} className="bg-green-500/20 text-green-400 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1"><Save className="w-4 h-4" /><span>Kaydet</span></button>
-              <button onClick={() => { setIsEditing(false); setEditData(client) }} className="bg-red-500/20 text-red-400 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1"><X className="w-4 h-4" /><span>Iptal</span></button>
-            </>
-          ) : (
-            <button onClick={() => setIsEditing(true)} className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1">
-              <Edit3 className="w-4 h-4" /><span>Duzenle</span>
+          <div className="flex items-center gap-2.5 flex-wrap shrink-0">
+            <button onClick={() => navigate(`/admin/client/${id}/beyan-profile`)} className="bg-blue-600/30 border border-blue-500/40 text-blue-100 px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-blue-600/50 transition-all flex items-center gap-2">
+              <ListChecks className="w-4 h-4" /><span>Beyan Profili</span>
             </button>
-          )}
+            <button onClick={() => navigate(`/admin/client/${id}/beyan-takip`)} className="bg-blue-600/30 border border-blue-500/40 text-blue-100 px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-blue-600/50 transition-all flex items-center gap-2">
+              <FileText className="w-4 h-4" /><span>Beyan Takip</span>
+            </button>
+            <span className="w-px h-8 bg-blue-500/30 hidden sm:block" />
+            {isEditing ? (
+              <>
+                <button onClick={handleSave} className="bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-emerald-500/30 transition-all flex items-center gap-2"><Save className="w-4 h-4" /><span>Kaydet</span></button>
+                <button onClick={() => { setIsEditing(false); setEditData(client) }} className="bg-red-500/20 border border-red-500/40 text-red-400 px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-red-500/30 transition-all flex items-center gap-2"><X className="w-4 h-4" /><span>Iptal</span></button>
+              </>
+            ) : (
+              <button onClick={() => setIsEditing(true)} className="bg-gradient-to-r from-yellow-400 to-yellow-500 text-blue-950 px-5 py-2.5 rounded-xl text-sm font-semibold shadow-lg shadow-yellow-900/30 hover:brightness-110 transition-all flex items-center gap-2">
+                <Edit3 className="w-4 h-4" /><span>Duzenle</span>
+              </button>
+            )}
+          </div>
+        </div>
+        {/* Alt kisim: sekmeler */}
+        <div className="bg-blue-950/60 border-t border-blue-700/40 px-3 sm:px-4 py-2.5">
+          <div className="flex flex-wrap items-center gap-0.5">
+            {tabs.map((tab, i) => (
+              <Fragment key={tab.id}>
+                {i > 0 && <span className="w-px h-5 bg-blue-500/25 mx-1" />}
+                <button
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`relative flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === tab.id ? 'bg-blue-500/50 text-white shadow-md shadow-blue-950/40' : 'text-blue-100/70 hover:text-white hover:bg-white/5'}`}
+                >
+                  <tab.icon className={`w-4 h-4 ${activeTab === tab.id ? 'text-blue-100' : 'text-blue-200/60'}`} /><span>{tab.label}</span>
+                  {activeTab === tab.id && <span className="absolute left-3 right-3 bottom-0.5 h-[3px] bg-gradient-to-r from-yellow-400 to-yellow-500 rounded-full" />}
+                </button>
+              </Fragment>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex space-x-1 bg-blue-950/40 rounded-xl p-1 mb-6 overflow-x-auto">
-        {tabs.map((tab) => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === tab.id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>
-            <tab.icon className="w-4 h-4" /><span>{tab.label}</span>
-          </button>
-        ))}
-      </div>
+      {/* ==================== MODULLER TAB ==================== */}
+      {activeTab === 'moduller' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Cari Hesap Modulu */}
+          <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+            <h3 className="text-lg font-semibold text-white mb-4">Cari Hesap Modülü</h3>
+            <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+              <div>
+                <div className="flex items-center gap-2 text-sm text-gray-200">
+                  <BookOpen className="w-4 h-4 text-yellow-400" /> Cari Hesap Takip
+                </div>
+                <p className="text-[11px] text-gray-500 mt-0.5">Açık olunca müşteri portalında "Cari Hesap Takip" menüsü görünür</p>
+              </div>
+              <button
+                onClick={async () => {
+                  const yeni = !client.cari_hesap_modulu
+                  setClient(prev => ({ ...prev, cari_hesap_modulu: yeni }))
+                  try {
+                    await updateClientDb(client.id, { cariHesapModulu: yeni })
+                  } catch (e) {
+                    setClient(prev => ({ ...prev, cari_hesap_modulu: !yeni }))
+                    alert('Kaydedilemedi: ' + e.message)
+                  }
+                }}
+                className={`relative w-12 h-6 rounded-full transition-colors shrink-0 ${client.cari_hesap_modulu ? 'bg-emerald-500' : 'bg-gray-600'}`}
+                title={client.cari_hesap_modulu ? 'Modül açık — kapatmak için tıkla' : 'Modül kapalı — açmak için tıkla'}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${client.cari_hesap_modulu ? 'translate-x-6' : ''}`} />
+              </button>
+            </div>
+          </div>
+
+          {/* E-Arsiv / E-Fatura Kesim Modulu */}
+          <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+            <h3 className="text-lg font-semibold text-white mb-4">e-Arşiv / e-Fatura Kesimi</h3>
+            <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+              <div>
+                <div className="flex items-center gap-2 text-sm text-gray-200">
+                  <FileText className="w-4 h-4 text-yellow-400" /> Fatura Kesimi
+                </div>
+                <p className="text-[11px] text-gray-500 mt-0.5">Açık olunca müşteri portalında "Fatura Kesimi" menüsü görünür</p>
+              </div>
+              <button
+                onClick={async () => {
+                  const yeni = client.earsiv_efatura_modulu === false
+                  setClient(prev => ({ ...prev, earsiv_efatura_modulu: yeni }))
+                  try {
+                    await updateClientDb(client.id, { earsivEfaturaModulu: yeni })
+                  } catch (e) {
+                    setClient(prev => ({ ...prev, earsiv_efatura_modulu: !yeni }))
+                    alert('Kaydedilemedi: ' + e.message)
+                  }
+                }}
+                className={`relative w-12 h-6 rounded-full transition-colors shrink-0 ${client.earsiv_efatura_modulu !== false ? 'bg-emerald-500' : 'bg-gray-600'}`}
+                title={client.earsiv_efatura_modulu !== false ? 'Modül açık — kapatmak için tıkla' : 'Modül kapalı — açmak için tıkla'}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${client.earsiv_efatura_modulu !== false ? 'translate-x-6' : ''}`} />
+              </button>
+            </div>
+          </div>
+
+          {/* Personel Modulu */}
+          <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+            <h3 className="text-lg font-semibold text-white mb-4">Personel Modülü</h3>
+            <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+              <div>
+                <div className="flex items-center gap-2 text-sm text-gray-200">
+                  <Users className="w-4 h-4 text-yellow-400" /> Personel
+                </div>
+                <p className="text-[11px] text-gray-500 mt-0.5">Açık olunca müşteri portalında "Personel" menüsü görünür</p>
+              </div>
+              <button
+                onClick={async () => {
+                  const yeni = client.personel_modulu === false
+                  setClient(prev => ({ ...prev, personel_modulu: yeni }))
+                  try {
+                    await updateClientDb(client.id, { personelModulu: yeni })
+                  } catch (e) {
+                    setClient(prev => ({ ...prev, personel_modulu: !yeni }))
+                    alert('Kaydedilemedi: ' + e.message)
+                  }
+                }}
+                className={`relative w-12 h-6 rounded-full transition-colors shrink-0 ${client.personel_modulu !== false ? 'bg-emerald-500' : 'bg-gray-600'}`}
+                title={client.personel_modulu !== false ? 'Modül açık — kapatmak için tıkla' : 'Modül kapalı — açmak için tıkla'}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${client.personel_modulu !== false ? 'translate-x-6' : ''}`} />
+              </button>
+            </div>
+          </div>
+
+          {/* Musteri portal sekmeleri — tum moduller varsayilan ACIK */}
+          {PORTAL_MODULLERI.map(m => {
+            const acik = client[m.alan] !== false
+            return (
+              <div key={m.alan} className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+                <h3 className="text-lg font-semibold text-white mb-4">{m.label} Modülü</h3>
+                <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm text-gray-200">
+                      <m.icon className="w-4 h-4 text-yellow-400" /> {m.label}
+                    </div>
+                    <p className="text-[11px] text-gray-500 mt-0.5">Açık olunca müşteri portalında "{m.label}" menüsü görünür</p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const yeni = !acik
+                      setClient(prev => ({ ...prev, [m.alan]: yeni }))
+                      try {
+                        await updateClientDb(client.id, { [m.camel]: yeni })
+                      } catch (e) {
+                        setClient(prev => ({ ...prev, [m.alan]: !yeni }))
+                        alert('Kaydedilemedi: ' + e.message)
+                      }
+                    }}
+                    className={`relative w-12 h-6 rounded-full transition-colors shrink-0 ${acik ? 'bg-emerald-500' : 'bg-gray-600'}`}
+                    title={acik ? 'Modül açık — kapatmak için tıkla' : 'Modül kapalı — açmak için tıkla'}
+                  >
+                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${acik ? 'translate-x-6' : ''}`} />
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* ==================== INFO TAB ==================== */}
       {activeTab === 'info' && (
@@ -1568,7 +2083,23 @@ export default function ClientDetail() {
                   </div>
                   <InfoRow label="Vergi Dairesi" value={client.taxOffice} editKey="taxOffice" isEditing={isEditing} editData={editData} setEditData={setEditData} />
                   <InfoRow label="Sehir" value={client.city} editKey="city" isEditing={isEditing} editData={editData} setEditData={setEditData} />
-                  {/* Musteri Turu - Dropdown (sirket/adi ortaklik/apartman yonetimi) */}
+                  {/* Musteri Sinifi - Dropdown (sirket + adi ortaklik) */}
+                  <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                    <span className="text-gray-400 text-sm">Musteri Sinifi</span>
+                    {isEditing ? (
+                      <select value={editData.musteriSinifi || ''} onChange={(e) => setEditData({...editData, musteriSinifi: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400">
+                        <option value="">Seciniz</option>
+                        <option value="1. Sinif">1. Sinif (Bilanco)</option>
+                        <option value="2. Sinif">2. Sinif (Isletme)</option>
+                        <option value="Serbest Meslek">Serbest Meslek</option>
+                        <option value="Basit Usul">Basit Usul</option>
+                        <option value="Dernek">Dernek</option>
+                        <option value="Apartman Yonetimi">Apartman Yonetimi</option>
+                      </select>
+                    ) : (
+                      <span className="text-white text-sm font-medium">{client.musteriSinifi || '-'}</span>
+                    )}
+                  </div>
                   <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
                     <span className="text-gray-400 text-sm">Musteri Turu</span>
                     {isEditing ? (
@@ -1693,7 +2224,7 @@ export default function ClientDetail() {
                   />
                 ) : (
                   <span className="text-white text-sm font-medium text-right max-w-[60%]">
-                    {client.activityField || client.naceDesc || getNaceDesc(client.faaliyetKodu || client.naceCode) || '-'}
+                    {client.activityField || client.naceDesc || naceAciklama(client.faaliyetKodu || client.naceCode) || getNaceDesc(client.faaliyetKodu || client.naceCode) || '-'}
                   </span>
                 )}
               </div>
@@ -1770,6 +2301,66 @@ export default function ClientDetail() {
             {edevletDurum && (
               <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300 mt-3">
                 {edevletDurum}
+              </div>
+            )}
+          </div>
+
+          {/* Tecilli Tahsilat Odeme Plani */}
+          <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
+            <h3 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+              <DollarSign className="w-5 h-5 text-yellow-400" />
+              Tecilli Tahsilat Ödeme Planı
+            </h3>
+            <p className="text-xs text-gray-400 mb-4">
+              Var seçilirse müşterinin vergi takviminde aylık taksitler ayrı ödeme kutuları olarak gösterilir. Ödeme planı, GIB "Borc Taksitli Detay Listesi" PDF çıktısından otomatik okunur.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleTecilliToggle}
+                className={`px-4 py-2 rounded-xl font-medium text-sm transition-colors ${
+                  (client.tecilliTahsilat || client.tecilli_tahsilat)
+                    ? 'bg-green-600/30 border border-green-500/40 text-green-300'
+                    : 'bg-blue-900/30 border border-blue-700/40 text-gray-300'
+                }`}
+              >
+                {(client.tecilliTahsilat || client.tecilli_tahsilat) ? 'Var (Aktif)' : 'Yok (Pasif)'}
+              </button>
+              {(client.tecilliTahsilat || client.tecilli_tahsilat) && (
+                <>
+                  <button
+                    onClick={() => tecilliFileRef.current?.click()}
+                    disabled={tecilliYukleniyor}
+                    className="flex items-center gap-2 bg-blue-600/30 hover:bg-blue-600/50 border border-blue-500/40 text-blue-200 py-2 px-4 rounded-xl font-medium text-sm transition-colors disabled:opacity-50"
+                  >
+                    <Upload className="w-4 h-4" />
+                    {tecilliYukleniyor ? 'Okunuyor...' : 'Ödeme Planı Yükle (PDF)'}
+                  </button>
+                  {(client.tecilliPlan?.length || client.tecilli_plan?.length) > 0 && (
+                    <button
+                      onClick={handleTecilliPlanSil}
+                      className="flex items-center gap-2 bg-red-600/20 hover:bg-red-600/40 border border-red-500/30 text-red-300 py-2 px-4 rounded-xl font-medium text-sm transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Planı Sil
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+            <input ref={tecilliFileRef} type="file" accept="application/pdf" className="hidden" onChange={handleTecilliPlanYukle} />
+            {(client.tecilliPlan || client.tecilli_plan || []).length > 0 && (
+              <div className="mt-3 space-y-1">
+                {(client.tecilliPlan || client.tecilli_plan).map(b => (
+                  <div key={b.belgeNo} className="text-xs text-gray-300 bg-blue-900/20 rounded-lg px-3 py-2 flex items-center justify-between">
+                    <span className="font-mono">{b.belgeNo}</span>
+                    <span>{b.vergiDairesi} • {b.taksitSayisi} taksit • {Number(b.toplamTutar || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {tecilliDurum && (
+              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300 mt-3">
+                {tecilliDurum}
               </div>
             )}
           </div>
@@ -1859,6 +2450,25 @@ export default function ClientDetail() {
                 )}
               </div>
               <InfoRow label="E-Posta" value={client.email} editKey="email" isEditing={isEditing} editData={editData} setEditData={setEditData} />
+
+              {/* Tahakkuk gonderim tercihi: beyan onaylaninca tahakkuklar buraya gore gonderilir */}
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <span className="text-gray-400 text-sm">Tahakkuk Gönderim Şekli</span>
+                <div className="flex items-center gap-2">
+                  {tahakkukTercihKaydediyor && <span className="text-yellow-400 text-xs">kaydediliyor...</span>}
+                  <select
+                    value={(client.beyanDurumlari || client.beyan_durumlari || {})?.tahakkukGonderim || 'whatsapp'}
+                    onChange={(e) => handleTahakkukGonderimDegistir(e.target.value)}
+                    disabled={tahakkukTercihKaydediyor}
+                    className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm focus:outline-none focus:border-yellow-400"
+                  >
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="mail">E-Posta</option>
+                    <option value="ikisi">WhatsApp + E-Posta</option>
+                    <option value="yok">Gönderim Yok</option>
+                  </select>
+                </div>
+              </div>
               
               {/* Birden Fazla Telefon / WhatsApp */}
               <div className="p-3 bg-blue-900/20 rounded-xl">
@@ -2247,85 +2857,6 @@ export default function ClientDetail() {
             </div>
           </div>
 
-          {/* Kira Gecmisi */}
-          {(getKiraBilgisi(client).kiraGecmisi || []).length > 0 && (
-            <div className="md:col-span-2 bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
-              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2"><History className="w-5 h-5 text-yellow-400" /> Kira Gecmisi</h3>
-              <div className="space-y-3">
-                {(getKiraBilgisi(client).kiraGecmisi || []).map((donem, idx) => {
-                  const isEditingHistory = editingHistoryIndex === idx
-                  return (
-                    <div key={idx} className="bg-blue-900/20 rounded-xl p-4 border border-blue-700/30">
-                      {isEditingHistory ? (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-                          <div>
-                            <label className="text-xs text-gray-400">Baslangic</label>
-                            <input type="date" value={historyEditData.kiraBaslangic || ''} onChange={e => setHistoryEditData({...historyEditData, kiraBaslangic: e.target.value})} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                          </div>
-                          <div>
-                            <label className="text-xs text-gray-400">Bitis</label>
-                            <input type="date" value={historyEditData.kiraBitis || ''} onChange={e => setHistoryEditData({...historyEditData, kiraBitis: e.target.value})} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                          </div>
-                          <div>
-                            <label className="text-xs text-gray-400">Net Kira</label>
-                            <input type="text" value={historyEditData.netKira || ''} onChange={e => setHistoryEditData({...historyEditData, netKira: e.target.value})} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                          </div>
-                          <div>
-                            <label className="text-xs text-gray-400">Brut Kira</label>
-                            <input type="text" value={historyEditData.brutKira || ''} onChange={e => setHistoryEditData({...historyEditData, brutKira: e.target.value})} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                          </div>
-                          <div>
-                            <label className="text-xs text-gray-400">Aciklama</label>
-                            <input type="text" value={historyEditData.aciklama || ''} onChange={e => setHistoryEditData({...historyEditData, aciklama: e.target.value})} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-yellow-400" />
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col gap-2">
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-1 text-sm">
-                            <div><span className="text-gray-400 text-xs">Baslangic</span><p className="text-white">{formatDisplayDate(donem.kiraBaslangic)}</p></div>
-                            <div><span className="text-gray-400 text-xs">Bitis</span><p className="text-white">{formatDisplayDate(donem.kiraBitis)}</p></div>
-                            <div><span className="text-gray-400 text-xs">Net</span><p className="text-yellow-400">{
-                              (() => {
-                                const net = parseTurkishNumber(donem.netKira)
-                                const brut = parseTurkishNumber(donem.brutKira)
-                                if (Number.isFinite(net) && net > 0) return paraTR(net) + ' TL'
-                                if (Number.isFinite(brut) && brut > 0) return paraTR(brut * (1 - KIRA_STOPAJ_ORANI)) + ' TL'
-                                return '-'
-                              })()
-                            }</p></div>
-                            <div><span className="text-gray-400 text-xs">Brut</span><p className="text-yellow-400">{
-                              (() => {
-                                const net = parseTurkishNumber(donem.netKira)
-                                const brut = parseTurkishNumber(donem.brutKira)
-                                if (Number.isFinite(brut) && brut > 0) return paraTR(brut) + ' TL'
-                                if (Number.isFinite(net) && net > 0) return paraTR(net / (1 - KIRA_STOPAJ_ORANI)) + ' TL'
-                                return '-'
-                              })()
-                            }</p></div>
-                          </div>
-                          {donem.aciklama && <p className="text-gray-400 text-xs">{donem.aciklama}</p>}
-                        </div>
-                      )}
-                      <div className="flex items-center justify-end gap-2 mt-3">
-                        {isEditingHistory ? (
-                          <>
-                            <button onClick={() => updateKiraHistoryItem(idx)} className="text-xs bg-green-500/20 text-green-400 px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-green-500/30"><Save className="w-3 h-3"/> Kaydet</button>
-                            <button onClick={() => { setEditingHistoryIndex(null); setHistoryEditData({}) }} className="text-xs bg-red-500/20 text-red-400 px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-red-500/30"><X className="w-3 h-3"/> Vazgec</button>
-                          </>
-                        ) : (
-                          <>
-                            <button onClick={() => startEditHistoryItem(idx, donem)} className="text-xs bg-yellow-500/20 text-yellow-400 px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-yellow-500/30"><Edit3 className="w-3 h-3"/> Duzenle</button>
-                            <button onClick={() => deleteKiraHistoryItem(idx)} className="text-xs bg-red-500/20 text-red-400 px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-red-500/30"><Trash2 className="w-3 h-3"/> Sil</button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
           {/* Onemli Tarihler */}
           <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2"><Calendar className="w-5 h-5 text-yellow-400" /> Onemli Tarihler</h3>
@@ -2362,7 +2893,7 @@ export default function ClientDetail() {
         <div className="bg-blue-950/40 rounded-2xl p-6 border border-blue-800/30">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-semibold text-white">{isAdiOrtaklik ? 'Adi Ortaklik Ortaklari' : 'Sirket Ortaklari / Yetkililer'}</h3>
-            <button onClick={() => { setShowPartnerForm(!showPartnerForm); setEditPartnerId(null); setNewPartner({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', sermaye: '', paySayisi: '', address: '', edevletSifre: '' }) }} className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1">
+            <button onClick={() => { setShowPartnerForm(!showPartnerForm); setEditPartnerId(null); setNewPartner({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', sermaye: '', paySayisi: '', address: '', edevletSifre: '', musteriSinifi: '' }) }} className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1">
               <Plus className="w-4 h-4" /><span>Ortak Ekle</span>
             </button>
           </div>
@@ -2395,10 +2926,26 @@ export default function ClientDetail() {
                 <input type="text" value={newPartner.phone} onChange={(e) => setNewPartner({...newPartner, phone: e.target.value})} placeholder="Telefon" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
                 <input type="text" value={newPartner.email} onChange={(e) => setNewPartner({...newPartner, email: e.target.value})} placeholder="E-Posta" className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
                 <textarea value={newPartner.address} onChange={(e) => setNewPartner({...newPartner, address: e.target.value})} placeholder="Adres" rows={1} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400 resize-none sm:col-span-2" />
+                {isAdiOrtaklik && (
+                  <select
+                    value={newPartner.musteriSinifi || ''}
+                    onChange={(e) => setNewPartner({...newPartner, musteriSinifi: e.target.value})}
+                    className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
+                  >
+                    <option value="">Müşteri Sınıfı (varsayılan: 2. Sınıf)</option>
+                    <option value="1. Sinif">1. Sinif (Bilanco)</option>
+                    <option value="2. Sinif">2. Sinif (Isletme)</option>
+                    <option value="Serbest Meslek">Serbest Meslek</option>
+                    <option value="Basit Usul">Basit Usul</option>
+                  </select>
+                )}
               </div>
+              {isAdiOrtaklik && (
+                <p className="text-gray-400 text-xs mt-2">Adi ortaklıkta ortak kaydedildiğinde müşteri listesine de eklenir — geçici vergi ve gelir vergisini kendi adına verir; KDV, muhtasar ve SGK ortaklık VKN'si üzerinden takip edilir.</p>
+              )}
               <div className="flex gap-2 mt-3">
                 <button onClick={handleSavePartner} className="bg-green-500/20 text-green-400 px-4 py-2 rounded-lg text-sm font-medium">{editPartnerId ? 'Guncelle' : 'Kaydet'}</button>
-                <button onClick={() => { setShowPartnerForm(false); setEditPartnerId(null); setNewPartner({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', sermaye: '', paySayisi: '', address: '', edevletSifre: '' }) }} className="bg-red-500/20 text-red-400 px-4 py-2 rounded-lg text-sm font-medium">Iptal</button>
+                <button onClick={() => { setShowPartnerForm(false); setEditPartnerId(null); setNewPartner({ name: '', title: '', phone: '', email: '', tc: '', vkn: '', vergi_dairesi: '', hisse_orani: '', sermaye: '', paySayisi: '', address: '', edevletSifre: '', musteriSinifi: '' }) }} className="bg-red-500/20 text-red-400 px-4 py-2 rounded-lg text-sm font-medium">Iptal</button>
               </div>
             </div>
           )}
@@ -2510,12 +3057,24 @@ export default function ClientDetail() {
               { key: 'esmm', label: 'e-SMM' },
               { key: 'edefter', label: 'e-Defter' },
             ].map((item) => (
-              <button key={item.key} onClick={() => toggleEService(item.key)} className={`flex items-center justify-between p-4 rounded-xl border transition-all cursor-pointer ${client[item.key] ? 'bg-green-500/10 border-green-500/30 hover:bg-green-500/20' : 'bg-blue-900/20 border-blue-700/20 hover:bg-blue-800/30'}`}>
-                <span className="text-white text-sm font-medium">{item.label}</span>
-                <span className={`px-3 py-1 rounded-full text-xs font-medium ${client[item.key] ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-500'}`}>
-                  {client[item.key] ? 'Aktif' : 'Pasif'}
-                </span>
-              </button>
+              <div key={item.key} className={`p-4 rounded-xl border transition-all ${client[item.key] ? 'bg-green-500/10 border-green-500/30' : 'bg-blue-900/20 border-blue-700/20'}`}>
+                <button onClick={() => toggleEService(item.key)} className={`w-full flex items-center justify-between cursor-pointer ${client[item.key] ? 'hover:bg-green-500/10' : 'hover:bg-blue-800/30'} -m-1 p-1 rounded-lg`}>
+                  <span className="text-white text-sm font-medium">{item.label}</span>
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${client[item.key] ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-500'}`}>
+                    {client[item.key] ? 'Aktif' : 'Pasif'}
+                  </span>
+                </button>
+                {item.key !== 'edefter' && client[item.key] !== undefined && (
+                  <button onClick={() => toggleEimza(item.key)}
+                    className={`mt-2 w-full flex items-center justify-between px-3 py-1.5 rounded-lg border text-xs transition-all cursor-pointer ${eimzaBayraklari[item.key] ? 'bg-yellow-400/10 border-yellow-400/40 hover:bg-yellow-400/20' : 'bg-blue-900/30 border-blue-700/30 hover:bg-blue-800/40'}`}
+                    title={`${item.label} icin e-imza durumu`}>
+                    <span className={eimzaBayraklari[item.key] ? 'text-yellow-300 font-medium' : 'text-gray-500'}>e-İmza</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${eimzaBayraklari[item.key] ? 'bg-yellow-400/20 text-yellow-300' : 'bg-gray-500/20 text-gray-500'}`}>
+                      {eimzaBayraklari[item.key] ? 'Aktif' : 'Pasif'}
+                    </span>
+                  </button>
+                )}
+              </div>
             ))}
           </div>
           {client.edefter && (
@@ -2550,6 +3109,9 @@ export default function ClientDetail() {
                 <div className="flex items-center gap-2 mb-3">
                   <span className="text-lg">🏛️</span>
                   <span className="text-white font-medium text-sm">Dijital Vergi Dairesi</span>
+                  {!isEditing && (client.dvsUsername || client.dvsPassword) && (
+                    <button onClick={() => portalSifreSil(['dvsUsername', 'dvsPassword'], 'Dijital Vergi Dairesi')} title="Kayitli kullanici/sifreyi sil" className="ml-auto text-gray-500 hover:text-red-400 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                  )}
                 </div>
                 {isEditing ? (
                   <div className="space-y-2">
@@ -2579,6 +3141,9 @@ export default function ClientDetail() {
                 <div className="flex items-center gap-2 mb-3">
                   <span className="text-lg">🏥</span>
                   <span className="text-white font-medium text-sm">SGK / e-Bildirge</span>
+                  {!isEditing && (client.sgkUser || client.sgkIsyeriKodu || client.sgkSistemSifre || client.sgkIsyeriSifre) && (
+                    <button onClick={() => portalSifreSil(['sgkUser', 'sgkIsyeriKodu', 'sgkSistemSifre', 'sgkIsyeriSifre'], 'SGK / e-Bildirge')} title="Kayitli SGK bilgilerini sil" className="ml-auto text-gray-500 hover:text-red-400 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                  )}
                 </div>
                 {isEditing ? (
                   <div className="space-y-2">
@@ -2622,14 +3187,17 @@ export default function ClientDetail() {
                 <div className="flex items-center gap-2 mb-3">
                   <span className="text-lg">🏢</span>
                   <span className="text-white font-medium text-sm">Ticaret Odasi</span>
+                  {!isEditing && client.ticaretSicilNo && (
+                    <button onClick={() => portalSifreSil(['ticaretSicilNo'], 'Ticaret Odasi')} title="Kayitli ticari sicil noyu sil" className="ml-auto text-gray-500 hover:text-red-400 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                  )}
                 </div>
                 {isEditing ? (
                   <div className="space-y-2">
-                    <input type="text" value={editData.ticariSicilNo || ''} onChange={(e) => setEditData({...editData, ticariSicilNo: e.target.value})} placeholder="Ticari Sicil Numarasi" className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                    <input type="text" value={editData.ticaretSicilNo || ''} onChange={(e) => setEditData({...editData, ticaretSicilNo: e.target.value})} placeholder="Ticari Sicil Numarasi" className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    <div className="flex items-center justify-between"><span className="text-gray-400 text-xs">Ticari Sicil No:</span><span className="text-gray-200 text-sm font-mono">{client.ticariSicilNo || '-'}</span></div>
+                    <div className="flex items-center justify-between"><span className="text-gray-400 text-xs">Ticari Sicil No:</span><span className="text-gray-200 text-sm font-mono">{client.ticaretSicilNo || '-'}</span></div>
                   </div>
                 )}
                 <p className="text-gray-500 text-[10px] mt-2 italic">Ticari sicil numarasiyla sorgulama yapilir</p>
@@ -2640,6 +3208,9 @@ export default function ClientDetail() {
                 <div className="flex items-center gap-2 mb-3">
                   <span className="text-lg">🇹🇷</span>
                   <span className="text-white font-medium text-sm">e-Devlet</span>
+                  {!isEditing && (client.edevletUser || client.edevletPass) && (
+                    <button onClick={() => portalSifreSil(['edevletUser', 'edevletPass'], 'e-Devlet')} title="Kayitli TC/sifreyi sil" className="ml-auto text-gray-500 hover:text-red-400 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                  )}
                 </div>
                 {isEditing ? (
                   <div className="space-y-2">
@@ -2768,7 +3339,7 @@ export default function ClientDetail() {
                 {proxyLoading ? <><span className="animate-spin">⏳</span> Giris yapiliyor...</> : <><span>🇹🇷</span> e-Devlet Giris</>}
               </button>
             )}
-            <p className="text-gray-400 text-xs mb-3">Ticari Sicil No ile sorgulama yapilir{client.ticariSicilNo ? ` - Sicil No: ${client.ticariSicilNo}` : ''}</p>
+            <p className="text-gray-400 text-xs mb-3">Ticari Sicil No ile sorgulama yapilir{client.ticaretSicilNo ? ` - Sicil No: ${client.ticaretSicilNo}` : ''}</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {[
                 { label: 'ITO Giris', url: 'https://online.ito.org.tr/', icon: '🔑', color: 'from-blue-500/20 to-blue-600/20 border-blue-500/30' },
@@ -3127,6 +3698,18 @@ export default function ClientDetail() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
                 <input type="text" value={hesapSearch} onChange={(e) => setHesapSearch(e.target.value)} placeholder="Hesap kodu veya adi ara..." className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 pl-9 pr-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
               </div>
+              {hesapBasamaklar.length > 1 && !hesapSearch && (
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {hesapBasamaklar.map(d => {
+                    const adet = hesapKodlari.filter(hk => String(hk.kod || '').charAt(0) === d).length
+                    return (
+                      <button key={d} onClick={() => setHesapBasamak(d)} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border ${hesapBasamak === d ? 'bg-yellow-500/30 text-yellow-300 border-yellow-500/50' : 'bg-blue-900/30 text-gray-400 border-blue-700/30 hover:text-white'}`}>
+                        {d}'ler ({adet})
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
               <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
                 <table className="w-full">
                   <thead className="bg-blue-900/30 sticky top-0"><tr className="text-left text-gray-400 text-sm"><th className="px-4 py-2">#</th><th className="px-4 py-2">Hesap Kodu</th><th className="px-4 py-2">Hesap Adi</th></tr></thead>
@@ -3208,10 +3791,11 @@ export default function ClientDetail() {
                     </label>
                   </div>
                   <input type="text" inputMode="decimal" placeholder={personelUcretTipi === 'net' ? 'Net Ucret' : 'Brut Ucret'} value={personelForm.brut_ucret} onChange={(e) => handlePersonelUcretChange(e.target.value)}
+                    onBlur={(e) => setPersonelForm(prev => ({ ...prev, brut_ucret: formatTurkishInput(e.target.value) }))}
                     disabled={personelAsgariUcret}
                     className={`bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400 ${personelAsgariUcret ? 'opacity-60 cursor-not-allowed' : ''}`} />
                   {personelUcretTipi === 'net' && personelForm.brut_ucret && !personelAsgariUcret && (
-                    <p className="text-[10px] text-yellow-400">Hesaplanan brut: {Number(personelForm.brut_ucret).toLocaleString('tr-TR', {minimumFractionDigits: 2})} TL</p>
+                    <p className="text-[10px] text-yellow-400">Hesaplanan brut: {formatMoney(parseTurkishNumber(personelForm.brut_ucret))} TL</p>
                   )}
                 </div>
                 <div>
@@ -3311,54 +3895,6 @@ export default function ClientDetail() {
         </div>
       )}
 
-      {activeTab === 'zrapor' && (
-        <div className="space-y-6">
-          {/* Belge Türü Seçimi */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <button
-              onClick={() => setUploadDocType('zreport')}
-              className={`p-4 rounded-xl border-2 transition-all ${uploadDocType === 'zreport' ? 'border-yellow-400 bg-yellow-400/10' : 'border-blue-700/50 bg-blue-900/20 hover:border-blue-500/50'}`}
-            >
-              <div className="flex items-center gap-3">
-                <Camera className="w-6 h-6 text-yellow-400" />
-                <div className="text-left">
-                  <div className="text-white font-medium">Z Raporu</div>
-                  <div className="text-gray-400 text-sm">Yazarkasa Z raporu yükle ve OCR ile oku</div>
-                </div>
-              </div>
-            </button>
-            
-            <button
-              onClick={() => setUploadDocType('expense')}
-              className={`p-4 rounded-xl border-2 transition-all ${uploadDocType === 'expense' ? 'border-green-400 bg-green-400/10' : 'border-blue-700/50 bg-blue-900/20 hover:border-blue-500/50'}`}
-            >
-              <div className="flex items-center gap-3">
-                <Receipt className="w-6 h-6 text-green-400" />
-                <div className="text-left">
-                  <div className="text-white font-medium">Gider Fişi</div>
-                  <div className="text-gray-400 text-sm">Gider fişi yükle ve OCR ile oku</div>
-                </div>
-              </div>
-            </button>
-          </div>
-          
-          {/* Seçilen Belge Türüne Göre İçerik */}
-          {uploadDocType === 'zreport' && (
-            <ZReportManager clientId={id} clientName={client.name || client.company || ''} clientType={client.client_type} />
-          )}
-          
-          {uploadDocType === 'expense' && (
-            <ExpenseUploader clientId={id} clientName={client.name || client.company || ''} />
-          )}
-          
-          {!uploadDocType && (
-            <div className="text-center py-8 text-gray-400">
-              Yukarıdan belge türü seçin
-            </div>
-          )}
-        </div>
-      )}
-
       {/* ==================== MUHASEBE UCRETI TAB ==================== */}
       {activeTab === 'muhasebe' && (
         <div className="space-y-6">
@@ -3407,6 +3943,12 @@ export default function ClientDetail() {
                   </div>
                 </div>
                  {ozet.sonOdeme && <p className="text-xs text-gray-500 mt-2">Son odeme: {formatDateTR(ozet.sonOdeme)}</p>}
+                 {/* Kesin teşhis: odemelerin db'deki ham durum/donem degerleri */}
+                 {clientPayments.length > 0 && (
+                   <p className="text-[10px] text-gray-500 mt-2 break-words">
+                     Teşhis: {clientPayments.map(p => `${Number(p.tutar).toLocaleString('tr-TR')} TL · ${p.durum || '(durum yok)'} · dönem: ${p.donem || '(boş)'}`).join(' | ')} | Beklenen kalem dönemleri: Onceki Donem / Defter Tasdik / 2026-MM
+                   </p>
+                 )}
               </div>
             )
           })()}
@@ -3553,11 +4095,24 @@ export default function ClientDetail() {
                       <option value="nakit">Nakit</option>
                     </select>
                   </div>
-                  <div>
-                    <label className="text-xs text-gray-400">Donem</label>
-                    <input type="text" value={paymentForm.donem} onChange={(e) => setPaymentForm({...paymentForm, donem: e.target.value})}
-                      placeholder="Orn: 2026-07"
-                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
+                  <div className="md:col-span-2">
+                    <label className="text-xs text-gray-400">Borç Kalemleri (birden fazla seçebilirsiniz — tutar otomatik dağıtılır)</label>
+                    <div className="mt-1 max-h-36 overflow-y-auto border border-blue-700/40 rounded-lg p-2 bg-blue-900/20 space-y-1">
+                      {getBorcKalemleri().map(o => (
+                        <label key={o.value} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-blue-800/40 cursor-pointer text-sm text-white">
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 accent-green-500"
+                            checked={seciliBorcKalemler.includes(o.value)}
+                            onChange={(e) => setSeciliBorcKalemler(e.target.checked ? [...seciliBorcKalemler, o.value] : seciliBorcKalemler.filter(v => v !== o.value))}
+                          />
+                          {o.label}
+                        </label>
+                      ))}
+                    </div>
+                    {seciliBorcKalemler.length > 0 && (
+                      <p className="text-xs text-green-400 mt-1">{seciliBorcKalemler.length} kalem seçildi</p>
+                    )}
                   </div>
                   <div>
                     <label className="text-xs text-gray-400">Tarih</label>
@@ -3617,13 +4172,19 @@ export default function ClientDetail() {
                         </td>
                         <td className="px-4 py-2 text-center">
                           <div className="flex items-center justify-center gap-1">
-                            {(p.durum === 'alindi' || p.durum === 'bekliyor') && p.odeme_kanali !== 'manuel' && (
+                            {/* Tek tik odendi olarak isaretle + Reddet */}
+                            {!['uygulandi', 'onaylandi', 'reddedildi'].includes(p.durum) && (
                               <div className="flex items-center gap-1">
-                                <button onClick={() => openBorcDusModal(p)} title="Borctan Dus" className="text-green-400 hover:text-green-300 p-1"><CheckCircle className="w-4 h-4" /></button>
+                                <button onClick={() => handleMarkPaid(p)} title="Ödendi olarak işaretle - Borçtan Düş" className="text-green-400 hover:text-green-300 p-1"><CheckCircle className="w-4 h-4" /></button>
                                 <button onClick={() => handleRejectPayment(p)} title="Reddet" className="text-red-400 hover:text-red-300 p-1"><X className="w-4 h-4" /></button>
                               </div>
                             )}
                             <button onClick={() => handleOpenReceipt(p)} title="Makbuz Goster" className="text-blue-400 hover:text-blue-300 p-1"><Receipt className="w-4 h-4" /></button>
+                            <button onClick={() => openDuzeltme(p)} title="Borç Kalemini Düzelt" className="text-yellow-400 hover:text-yellow-300 p-1"><Edit3 className="w-4 h-4" /></button>
+                            {p.makbuz_url && (
+                              <button onClick={() => setMakbuzOnizleme(p.makbuz_url)} title="Makbuzu Goruntule" className="text-green-400 hover:text-green-300 p-1"><Eye className="w-4 h-4" /></button>
+                            )}
+                            <button onClick={() => { setOdemeMakbuzHedef(p); if (odemeMakbuzInputRef.current) odemeMakbuzInputRef.current.click() }} title={p.makbuz_url ? 'Makbuzu Degistir' : 'Makbuz Ekle'} className="text-purple-400 hover:text-purple-300 p-1"><Upload className="w-4 h-4" /></button>
                             <button onClick={() => handleDeletePayment(p.id)} title="Sil" className="text-red-400 hover:text-red-300 p-1"><Trash2 className="w-4 h-4" /></button>
                           </div>
                         </td>
@@ -3639,35 +4200,85 @@ export default function ClientDetail() {
         </div>
       )}
 
-      {/* Borctan Dusme Modal */}
-      {borcDusModal?.payment && (
+      {/* Gizli makbuz dosya girisi (odeme satirindan makbuz ekleme) */}
+      <input ref={odemeMakbuzInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleOdemeMakbuzSec} />
+
+      {/* Odemeye Ekli Makbuz Onizleme */}
+      {makbuzOnizleme && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/65 p-6">
+          <div className="w-full max-w-4xl h-[92vh] bg-white rounded-xl overflow-hidden flex flex-col shadow-2xl">
+            <div className="flex items-center justify-between px-4 py-2.5 bg-green-700 text-white flex-shrink-0">
+              <span className="font-bold text-sm tracking-wide">MAKBUZ ONIZLEME</span>
+              <div className="flex gap-2">
+                <a href={makbuzOnizleme} target="_blank" rel="noreferrer" className="px-3.5 py-1.5 bg-yellow-400 text-green-900 rounded-md font-bold text-[13px] hover:bg-yellow-300">Sekmede Ac</a>
+                <button onClick={() => setMakbuzOnizleme(null)} className="px-3.5 py-1.5 bg-white/15 rounded-md text-[13px] hover:bg-white/25">Kapat</button>
+              </div>
+            </div>
+            <iframe src={makbuzOnizleme} title="Makbuz" className="flex-1 w-full border-0" />
+          </div>
+        </div>
+      )}
+
+      {/* Online Odemeyi Borctan Dusme Penceresi (yesil ✓) */}
+      {odemeOnayModal?.payment && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-md rounded-2xl border border-blue-700/40 bg-blue-950 p-6 shadow-2xl">
-            <h3 className="text-lg font-semibold text-white mb-1 flex items-center gap-2"><CheckCircle className="w-5 h-5 text-green-400" /> Borctan Dus</h3>
+            <h3 className="text-lg font-semibold text-white mb-1 flex items-center gap-2"><CheckCircle className="w-5 h-5 text-green-400" /> Odemeyi Borctan Dus</h3>
             <p className="text-sm text-gray-400 mb-4">
-              {Number(borcDusModal.payment.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} TL tutarindaki online odemeyi hangi borc kaleminden dusmek istersiniz?
+              {Number(odemeOnayModal.payment.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} TL tutarindaki odemeyi hangi borc kalemlerinden duselim? Birden fazla secabilirsiniz — tutar otomatik dagitilir.
+            </p>
+            <div className="max-h-52 overflow-y-auto border border-blue-700/40 rounded-lg p-2 bg-blue-900/20 space-y-1">
+              {getBorcKalemleri().map(o => (
+                <label key={o.value} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-blue-800/40 cursor-pointer text-sm text-white">
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 accent-green-500"
+                    checked={odemeOnaySecimler.includes(o.value)}
+                    onChange={(e) => setOdemeOnaySecimler(e.target.checked ? [...odemeOnaySecimler, o.value] : odemeOnaySecimler.filter(v => v !== o.value))}
+                  />
+                  {o.label}
+                </label>
+              ))}
+            </div>
+            {odemeOnaySecimler.length > 0 && (
+              <p className="text-xs text-green-400 mt-2">{odemeOnaySecimler.length} kalem seçildi</p>
+            )}
+            <div className="mt-6 flex gap-3 justify-end">
+              <button onClick={() => setOdemeOnayModal(null)} className="px-4 py-2 rounded-lg bg-blue-900/40 text-gray-300 hover:bg-blue-800/50 text-sm">Vazgeç</button>
+              <button onClick={handleOdemeOnayUygula} className="px-4 py-2 rounded-lg bg-green-500 text-white font-semibold hover:bg-green-400 text-sm flex items-center gap-1"><CheckCircle className="w-4 h-4" /> Dus</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Borç Kalemi Düzeltme Modal */}
+      {duzeltmeDuzenlenen?.payment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-blue-700/40 bg-blue-950 p-6 shadow-2xl">
+            <h3 className="text-lg font-semibold text-white mb-1 flex items-center gap-2"><Edit3 className="w-5 h-5 text-yellow-400" /> Borç Kalemini Düzelt</h3>
+            <p className="text-sm text-gray-400 mb-4">
+              {Number(duzeltmeDuzenlenen.payment.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} TL ödemenin borç kalemini seçin. Kaydedince borç yeniden hesaplanır.
             </p>
             <select
-              value={borcDusSecim}
-              onChange={(e) => setBorcDusSecim(e.target.value)}
+              value={duzeltmeSecim}
+              onChange={(e) => setDuzeltmeSecim(e.target.value)}
               className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
             >
-              <option value="">Borc kalemi secin</option>
+              <option value="">Borç kalemi seçin</option>
               {getBorcKalemleri().map(o => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
             <div className="mt-6 flex gap-3 justify-end">
-              <button onClick={() => setBorcDusModal(null)} className="px-4 py-2 rounded-lg bg-blue-900/40 text-gray-300 hover:bg-blue-800/50 text-sm">Vazgec</button>
-              <button onClick={handleApplyToDebt} className="px-4 py-2 rounded-lg bg-green-500 text-white font-semibold hover:bg-green-400 text-sm flex items-center gap-1"><CheckCircle className="w-4 h-4" /> Uygula</button>
+              <button onClick={() => setDuzeltmeDuzenlenen(null)} className="px-4 py-2 rounded-lg bg-blue-900/40 text-gray-300 hover:bg-blue-800/50 text-sm">Vazgeç</button>
+              <button onClick={handleDuzeltmeUygula} className="px-4 py-2 rounded-lg bg-yellow-500 text-white font-semibold hover:bg-yellow-400 text-sm flex items-center gap-1"><Edit3 className="w-4 h-4" /> Düzelt</button>
             </div>
           </div>
         </div>
       )}
 
       {/* Kira Guncelleme Modal */}
-      {kiraUpdateModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      {kiraUpdateModalOpen && (        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-md rounded-2xl border border-blue-700/40 bg-blue-950 p-6 shadow-2xl">
             <h3 className="text-lg font-semibold text-white mb-1 flex items-center gap-2"><Edit3 className="w-5 h-5 text-yellow-400" /> Kirayi Guncelle</h3>
             <p className="text-sm text-gray-400 mb-4">Yeni kira tutari girin; mevcut donem arsivlenir ve yeni donem 1 yil uzatilarak olusturulur.</p>

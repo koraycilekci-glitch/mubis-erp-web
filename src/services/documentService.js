@@ -133,10 +133,56 @@ export async function uploadClientDocument({
  */
 export async function getClientDocumentUrl({ client, year, month, beyanType, documentType }) {
   const prefix = await getPrefix(client)
-  const path = getDocumentPath({ client, year, beyanType, month, documentType, prefix })
+  const path = getDocumentPath({ client, year, month, beyanType, documentType, prefix })
   const { data, error } = await supabase.storage.from(BUCKET_NAME).createSignedUrl(path, 60 * 60 * 24 * 7)
   if (error) return null
   return data?.signedUrl || null
+}
+
+/**
+ * Müşteri klasörüne serbest yol ile dosya yükler (e-Fatura PDF/XML vb).
+ * relPath ornek: 'faturalar/2026/giden_<uuid>.xml'
+ */
+// Uzantidan icerik tipi tahmini — file.type boşsa (JSZip'ten gelen dosyalar
+// gibi) tarayici "octet-stream" dosyasini goruntulemek yerine INDIRIR ve bos
+// koyu sekme acar. Dogru contentType ile yuklemek preview'in calismasini saglar.
+const icerikTipiTahmin = (ad) => {
+  const e = (/\.([a-z0-9]+)$/i.exec(String(ad || '')) || [])[1]?.toLowerCase()
+  return ({
+    html: 'text/html', htm: 'text/html',
+    xml: 'application/xml',
+    pdf: 'application/pdf',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    xls: 'application/vnd.ms-excel',
+    csv: 'text/csv',
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp'
+  })[e] || 'application/octet-stream'
+}
+
+export async function uploadClientFile({ client, relPath, file }) {
+  const prefix = await getPrefix(client)
+  const path = `${prefix}${getClientFolderName(client)}/${relPath}`
+
+  let lastError = null
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { error } = await supabase
+      .storage
+      .from(BUCKET_NAME)
+      .upload(path, file, { upsert: true, contentType: file.type || icerikTipiTahmin(file.name || relPath) })
+
+    if (!error) {
+      const { data: publicUrlData } = supabase
+        .storage
+        .from(BUCKET_NAME)
+        .getPublicUrl(path)
+      return { path, url: publicUrlData?.publicUrl || '' }
+    }
+
+    lastError = error
+    console.warn(`Storage upload denemesi ${attempt + 1} basarisiz:`, error.message || error)
+    if (attempt === 0) await new Promise(r => setTimeout(r, 800))
+  }
+  throw lastError
 }
 
 /**
@@ -152,6 +198,133 @@ export async function listClientDocuments(client) {
 
   if (error) throw error
   return data || []
+}
+
+/**
+ * Tahakkuk dosya adindan donem cikarir: { yil, ay } | null.
+ * Ay adi (agustos_kdv.pdf, temmuz-beyanname.pdf), tarih (24082026),
+ * yil-ay (2026-08) veya ay-yil (08.2026) kaliplari desteklenir.
+ * Donem tespit edilemezse null doner (kesifte bu dosyalar atlanir —
+ * yanlis aya yazilmasin).
+ */
+export function tahakkukDonemi(dosyaAdi) {
+  const s = String(dosyaAdi || '')
+    .toLocaleLowerCase('tr')
+    .replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's')
+    .replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c')
+  // NOT: aylar 0-tabanlıdır (Ocak=0). Çağıranlar JS Date/month ile karşılaştırır.
+  const aylar = { ocak: 0, subat: 1, mart: 2, nisan: 3, mayis: 4, haziran: 5, temmuz: 6, agustos: 7, eylul: 8, ekim: 9, kasim: 10, aralik: 11 }
+  // Ay adı araması için alt çizgi/tire ayırıcıyı boşluğa çevir — aksi halde
+  // \btemmuz\b, 'temmuz_sgk.pdf'te eşleşmez (_ kelime karakteridir)
+  const ayAdiMetni = s.replace(/[_-]+/g, ' ')
+  // 1) Türkçe ay adı
+  for (const [ad, no] of Object.entries(aylar)) {
+    if (new RegExp(`\\b${ad}\\b`).test(ayAdiMetni)) return { yil: null, ay: no }
+  }
+  // 2) İngilizce ay adı
+  const en = { january: 0, jan: 0, february: 1, feb: 1, march: 2, mar: 2, april: 3, apr: 3, may: 4, june: 5, jun: 5, july: 6, jul: 6, august: 7, aug: 7, september: 8, sep: 8, october: 9, oct: 9, november: 10, nov: 10, december: 11, dec: 11 }
+  for (const [ad, no] of Object.entries(en)) {
+    if (new RegExp(`\\b${ad}\\b`).test(ayAdiMetni)) return { yil: null, ay: no }
+  }
+  // 3) gün/ay/yıl → 24082026 veya 24.08.2026 (alt çizgi/tire de ayırıcı olabilir)
+  let m = ayAdiMetni.match(/\b(\d{2})[._\s-]?(\d{2})[._\s-]?(20\d\d)\b/)
+  if (m) {
+    const gun = parseInt(m[1], 10), ay = parseInt(m[2], 10)
+    if (gun >= 1 && gun <= 31 && ay >= 1 && ay <= 12) return { yil: parseInt(m[3], 10), ay: ay - 1 }
+  }
+  // 4) yıl-ay → 2026-08 / 2026_8 / 202608
+  m = ayAdiMetni.match(/\b(20\d\d)[._\s-]?(\d{2})\b/)
+  if (m) {
+    const ay = parseInt(m[2], 10)
+    if (ay >= 1 && ay <= 12) return { yil: parseInt(m[1], 10), ay: ay - 1 }
+  }
+  // 5) ay-yıl → 08.2026 / 8-2026
+  m = ayAdiMetni.match(/\b(\d{1,2})[._\s-](20\d\d)\b/)
+  if (m) {
+    const ay = parseInt(m[1], 10)
+    if (ay >= 1 && ay <= 12) return { yil: parseInt(m[2], 10), ay: ay - 1 }
+  }
+  return null
+}
+
+/**
+ * Verilen yıl/ay/tür için müşteri klasöründeki TÜM tahakkuk PDF'lerini
+ * tarar (birden fazla sicil/sigorta tahakkuku olabilir). Üç klasör
+ * şablonu taranır:
+ *   tahakkuklar/<yil>/<tur>/          (yardimci sorgu akisi)
+ *   evraklar/<yil>/<tur>/             (admin/otomasyon toplu yukleme)
+ *   mali_veriler/<tur>/<yil>/<ay>/    (admin dönemsel yukleme)
+ * Dosya adindan donemi cikarilabilen ve sorgulanan donemle UYUSAN
+ * dosyalar dondurulur — aksi halde agustos tahakkuku tum eski aylara
+ * yazilirdi (yanlis donem goruntuleme + silince geri gelme).
+ * Dönen her og: { path, url, name }
+ */
+export async function tahakkuklariKesfet(client, year, turSlug, month = null) {
+  const prefix = await getPrefix(client)
+  const folder = prefix + getClientFolderName(client)
+  // Gecici vergi yalnizca admin panelinin dönem klasorunden (mali_veriler/.../period)
+  // yuklenir; genel tahakkuklar/evraklar klasorleri taranmaz (429 onleme).
+  const klasorler = turSlug === 'gecici_vergi'
+    ? []
+    : [
+        `${folder}/tahakkuklar/${year}/${turSlug}/`,
+        `${folder}/evraklar/${year}/${turSlug}/`
+      ]
+  // Dönem-bağımlı (month/period) klasörler: buradaki dosyaların dönemi
+  // klasörden bellidir; dosya adı dönem içermese bile dahil edilir.
+  const periodKlasorler = new Set()
+  if (month != null) {
+    if (turSlug !== 'gecici_vergi') {
+      const mKlasor = `${folder}/mali_veriler/${turSlug}/${year}/${month}/`
+      klasorler.push(mKlasor)
+      periodKlasorler.add(mKlasor)
+    }
+    // Gecici vergi admin panelinde 1-4 donem olarak yuklenir; portal tarafinda
+    // filingMonth 1/4/7/10'dur. Her iki klasor adini da tara.
+    if (turSlug === 'gecici_vergi') {
+      const periodMap = { 4: 1, 7: 2, 10: 3, 1: 4 }
+      const period = periodMap[month]
+      if (period != null) {
+        const pKlasor = `${folder}/mali_veriler/${turSlug}/${year}/${period}/`
+        klasorler.push(pKlasor)
+        periodKlasorler.add(pKlasor)
+      }
+      // Yedek: portal ayi ile de dene (bazi eski yuklemeler ay klasorune yapilmis olabilir)
+      const mKlasor = `${folder}/mali_veriler/${turSlug}/${year}/${month}/`
+      klasorler.push(mKlasor)
+      periodKlasorler.add(mKlasor)
+    }
+  }
+  const sonuc = []
+  let anyListSucceeded = false
+  for (const k of klasorler) {
+    const { data, error } = await supabase
+      .storage
+      .from(BUCKET_NAME)
+      .list(k, { limit: 100 })
+    if (error || !data) continue
+    anyListSucceeded = true
+    const periodSpecific = periodKlasorler.has(k)
+    for (const o of data) {
+      if (!o.id || !/\.pdf$/i.test(o.name)) continue
+    // Beyanname/mizan dosyalarini tahakkuk olarak ekleme
+    if (/beyan|mizan/i.test(o.name)) continue
+      const donem = tahakkukDonemi(o.name)
+      // Genel klasorlerde donem tespit edilemeyen dosyalar atlanir (yanlis aya yazilmasin).
+      if (!donem && !periodSpecific) continue
+      // Dönem tespit edildiyse sorgulanan dönemle uyuşmalı.
+      if (donem) {
+        if (month != null && donem.ay !== month) continue
+        if (donem.yil && donem.yil !== year) continue
+      }
+      const path = k + o.name
+      if (sonuc.some(s => s.path === path)) continue
+      const { data: pub } = supabase.storage.from(BUCKET_NAME).getPublicUrl(path)
+      sonuc.push({ path, url: pub?.publicUrl || '', name: o.name, uploadedAt: o.created_at || '' })
+    }
+    await new Promise(r => setTimeout(r, 150))
+  }
+  return { files: sonuc, hadError: !anyListSucceeded }
 }
 
 /**
@@ -282,6 +455,13 @@ export async function uploadMakbuz({ client, name, file }) {
   const folder = (await getPrefix(client)) + getClientFolderName(client)
   const safeName = slugify(name || file.name.replace(/\.pdf$/i, ''))
   const path = `${folder}/makbuzlar/${safeName}_${Date.now()}.pdf`
+  return uploadGenericDocument(client, path, file)
+}
+
+// Odemeye ozel makbuz yukleme (odeme satirindan eklenir/guncellenir)
+export async function uploadPaymentMakbuz({ client, paymentId, file }) {
+  const folder = (await getPrefix(client)) + getClientFolderName(client)
+  const path = `${folder}/makbuzlar/odeme_${paymentId}_${Date.now()}.pdf`
   return uploadGenericDocument(client, path, file)
 }
 

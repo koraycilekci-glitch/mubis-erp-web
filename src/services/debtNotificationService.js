@@ -91,9 +91,9 @@ async function sendEmailMessage({ to, subject, body }) {
   return sendEmail({ toEmail: to, subject, message: body })
 }
 
-function buildDebtText(client, ozet, fee = null, bankInfo = null, linkUrl = '') {
+function buildDebtText(client, ozet, fee = null, bankInfo = null, linkUrl = '', bankAccounts = null) {
   const name = client.company || client.name || 'Değerli Müşterimiz'
-  return buildBorcMesaji({ clientName: name, fee, ozet, bankInfo, linkUrl })
+  return buildBorcMesaji({ clientName: name, fee, ozet, bankInfo, bankAccounts, linkUrl })
 }
 
 // Musteri icin kalan borc tutarinda online odeme linki olusturur
@@ -143,12 +143,14 @@ export async function buildDebtPayload(clientId, { settings = null, bankInfo = n
       try { effSettings = await getSettings() } catch { effSettings = null }
     }
     let effBank = bankInfo
+    let effHesaplar = null
     if (!effBank) {
-      try { effBank = await getBankInfo() } catch { effBank = null }
+      try { effHesaplar = await getBankAccounts() } catch { effHesaplar = null }
+      effBank = effHesaplar?.[0] || null
     }
 
     const linkUrl = await createClientPaymentLink(client, ozet)
-    const message = `${buildDebtText(client, ozet, fee, effBank, linkUrl)}\n\nSaygılarımızla,\nMUBiS ERP`
+    const message = `${buildDebtText(client, ozet, fee, effBank, linkUrl, effHesaplar)}\n\nSaygılarımızla,\nMUBiS ERP`
 
     const waNumbers = []
     if (client?.phone) waNumbers.push(client.phone)
@@ -193,6 +195,7 @@ export async function sendDebtNotification(clientId, channel, settings = null) {
   const waConfig = getWhatsAppConfig(effSettings)
   const smtpConfig = getSMTPConfig(effSettings)
   const bankInfo = await getBankInfo().catch(() => null)
+  const bankAccounts = await getBankAccounts().catch(() => null)
 
   // Musteriye ozel online odeme linki (kalan borc tutariyla)
   const linkUrl = await createClientPaymentLink(client, ozet)
@@ -227,7 +230,7 @@ export async function sendDebtNotification(clientId, channel, settings = null) {
       
       if (waNumbers.length === 0) throw new Error('Telefon numarasi yok')
       
-      const message = `${buildDebtText(client, ozet, fee, bankInfo, linkUrl)}\n\nSaygılarımızla,\nMUBiS ERP`
+      const message = `${buildDebtText(client, ozet, fee, bankInfo, linkUrl, bankAccounts)}\n\nSaygılarımızla,\nMUBiS ERP`
 
       const waChannel = getWhatsAppChannel(effSettings)
       let gonderilen = 0
@@ -268,7 +271,7 @@ export async function sendDebtNotification(clientId, channel, settings = null) {
       
       if (emailList.length === 0) throw new Error('E-posta adresi yok')
       
-      const html = buildDebtText(client, ozet, fee, bankInfo, linkUrl)
+      const html = buildDebtText(client, ozet, fee, bankInfo, linkUrl, bankAccounts)
       
       for (const to of emailList) {
         try {
@@ -332,3 +335,4 @@ export async function getDebtNotificationHistory(clientId = null) {
   if (error) throw error
   return data || []
 }
+

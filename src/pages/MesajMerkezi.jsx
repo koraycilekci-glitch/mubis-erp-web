@@ -10,6 +10,7 @@ import {
   ONCELIKLER, AKSIYONLAR, asistanMetniOlustur, sendMessageToClient,
   getMessages, getMessageSummaryByClient, markAllAsRead
 } from '../services/messageService'
+import { efaturaSorgula } from '../services/efaturaService'
 import { openWhatsAppWeb } from '../services/whatsappService'
 
 const HAZIR_SABLONLAR = [
@@ -82,6 +83,51 @@ export default function MesajMerkezi() {
   const [kanallar, setKanallar] = useState(['portal'])
   const [gonderiliyor, setGonderiliyor] = useState(false)
   const [sonuc, setSonuc] = useState(null)
+
+  // 2.7.575: Musteri "fatura güncelleme talebi" mesajlarina admin tarafi "Fatura Güncelle" düğmesi
+  const [fgIslem, setFgIslem] = useState({ mesajId: null, calisiyor: false, metin: '' })
+
+  const faturaGuncelle = async (m) => {
+    if (!seciliMusteri || fgIslem.calisiyor) return
+    // Dönem bilgisi mesaj metninden okunur (dönem: AA/YYYY); yoksa içinde bulunulan ay
+    const dt = /dönem:\s*(\d{2})\/(\d{4})/.exec(m.message || '')
+    const simdi = new Date()
+    const ay = dt ? parseInt(dt[1], 10) : simdi.getMonth() + 1
+    const yil = dt ? parseInt(dt[2], 10) : simdi.getFullYear()
+    const donemEtiket = `${String(ay).padStart(2, '0')}/${yil}`
+    setFgIslem({ mesajId: m.id, calisiyor: true, metin: `[${donemEtiket}] Luca sorgusu başlatıldı — yardımcı program penceresini izleyin (birkaç dakika sürebilir).` })
+    try {
+      const sonuc = await efaturaSorgula({
+        client: seciliMusteri,
+        yil,
+        ay,
+        sorguTip: 'efatura',
+        yon: 'hepsi',
+        mod: 'sorgula',
+        kaynak: 'luca',
+        onDurum: (d) => {
+          if (d === 'luca-girisi') setFgIslem(f => ({ ...f, metin: `[${donemEtiket}] Luca bağlantısı ve sorgu işlemi sürüyor; yanıt bekleniyor...` }))
+          else if (d === 'dosya-bekleniyor') setFgIslem(f => ({ ...f, metin: `[${donemEtiket}] Faturalar indiriliyor, lütfen bekleyin...` }))
+          else if (d === 'yukleniyor') setFgIslem(f => ({ ...f, metin: `[${donemEtiket}] İndirilen faturalar MUBiS'e yükleniyor...` }))
+        }
+      })
+      const sayi = sonuc?.sayi ?? 0
+      await sendMessageToClient({
+        clientId: seciliMusteri.id,
+        clientName: seciliMusteri.name,
+        title: 'Fatura Yükleme',
+        message: `${donemEtiket} dönemine ait güncel faturalarınız sisteme yüklendi.${sayi ? ` İşlenen dosya sayısı: ${sayi}.` : ''}`,
+        priority: 'normal',
+        actionType: 'bilgi',
+        channels: ['portal'],
+        senderName: kisaAd
+      })
+      setFgIslem({ mesajId: m.id, calisiyor: false, metin: `Tamamlandı — [${donemEtiket}] güncel faturalar MUBiS'e yüklendi, müşteriye bildirim gönderildi.` })
+      loadMesajlar(seciliMusteri.id)
+    } catch (e) {
+      setFgIslem({ mesajId: m.id, calisiyor: false, metin: 'Hata: ' + (e?.message || 'Fatura sorgulama başarısız') })
+    }
+  }
 
   const listeSonu = useRef(null)
 
@@ -316,8 +362,9 @@ export default function MesajMerkezi() {
                   )}
                   {mesajlar.map(m => {
                     const bizden = m.sender === 'admin'
+                    const faturaTalebi = !bizden && /fatura güncelleme talebi/i.test(m.message || '')
                     return (
-                      <div key={m.id} className={`flex ${bizden ? 'justify-end' : 'justify-start'}`}>
+                      <div key={m.id} className={`flex flex-col ${bizden ? 'items-end' : 'items-start'}`}>
                         <div className={`max-w-[80%] rounded-2xl px-4 py-3 ${
                           bizden
                             ? 'bg-blue-600 text-white rounded-br-md'
@@ -341,6 +388,31 @@ export default function MesajMerkezi() {
                             {bizden && m.is_read && <span className="text-green-300">okundu</span>}
                           </div>
                         </div>
+                        {/* 2.7.575: Fatura güncelleme talebi mesajına admin aksiyon düğmesi */}
+                        {faturaTalebi && (
+                          <>
+                            <button
+                              onClick={() => faturaGuncelle(m)}
+                              disabled={fgIslem.calisiyor}
+                              title="Müşterinin faturalarını Luca'dan sorgulayıp MUBiS'e yükler; bitince müşteriye bildirim gider"
+                              className="mt-1.5 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold bg-gradient-to-b from-yellow-300 to-amber-500 border-b-4 border-amber-700 text-blue-950 hover:from-yellow-200 hover:to-amber-400 active:translate-y-0.5 active:border-b-2 transition-all disabled:opacity-60"
+                            >
+                              {fgIslem.calisiyor && fgIslem.mesajId === m.id ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                              Fatura Güncelle
+                            </button>
+                            {fgIslem.mesajId === m.id && fgIslem.metin && (
+                              <div className={`mt-1 max-w-[80%] rounded-lg px-3 py-2 text-[11px] border ${
+                                fgIslem.calisiyor
+                                  ? 'bg-blue-500/10 border-blue-500/30 text-blue-200'
+                                  : fgIslem.metin.startsWith('Hata')
+                                    ? 'bg-red-500/10 border-red-500/30 text-red-200'
+                                    : 'bg-green-500/10 border-green-500/30 text-green-200'
+                              }`}>
+                                {fgIslem.metin}
+                              </div>
+                            )}
+                          </>
+                        )}
                       </div>
                     )
                   })}

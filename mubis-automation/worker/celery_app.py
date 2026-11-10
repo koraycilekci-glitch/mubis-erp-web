@@ -1,5 +1,6 @@
 import os
 from celery import Celery
+from celery.schedules import crontab
 from shared.config import get_settings
 
 settings = get_settings()
@@ -8,7 +9,7 @@ app = Celery(
     "mubis_automation",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
-    include=["worker.tasks"],
+    include=["worker.tasks", "scheduler.scheduler"],
 )
 
 app.conf.update(
@@ -21,4 +22,11 @@ app.conf.update(
     task_time_limit=3600,  # 1 saat
     worker_prefetch_multiplier=1,
     broker_connection_retry_on_startup=True,
+    beat_schedule={
+        "daily-work-permit-expiry-reminders": {
+            "task": "worker.tasks.check_work_permit_expiry_task",
+            "schedule": crontab(hour=6, minute=0),
+            "options": {"queue": "automation"},
+        },
+    },
 )

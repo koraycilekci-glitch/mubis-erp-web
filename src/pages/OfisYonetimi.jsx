@@ -8,6 +8,7 @@ import {
   getOfficeStats, createOffice, updateOffice, setOfficeActive,
   getOfficeUsers, assignUserToOffice
 } from '../services/officeService'
+import { MENU, PERSONEL_VARSAYILAN } from '../components/AdminSidebar'
 import { supabase } from '../lib/supabase'
 
 export default function OfisYonetimi() {
@@ -292,6 +293,78 @@ function OfisDetayModal({ ofis, onClose, onDone, onError }) {
   const [atamaEmail, setAtamaEmail] = useState('')
   const [yeniKullanici, setYeniKullanici] = useState({ name: '', email: '', password: '' })
 
+  // ---- Personel menü yetkileri (offices.personel_yetkileri jsonb) ----
+  // Kayıt yokken sidebar varsayılanı PERSONEL_VARSAYILAN (AdminSidebar).
+  // UI de aynı varsayılanla başlar; Kaydet ile harita yetkili hale gelir.
+  const VARSAYILAN_YETKI = Object.fromEntries(
+    PERSONEL_VARSAYILAN.filter(k => k !== '/admin').map(k => [k, true])
+  )
+  const [yetkiler, setYetkiler] = useState(() => ({
+    ...VARSAYILAN_YETKI,
+    ...(ofis.personel_yetkileri || {})
+  }))
+
+  const yetkiAcik = (anahtar) => anahtar === '/admin' ? true : !!yetkiler[anahtar]
+  const yetkiDegistir = (anahtar, acik) => setYetkiler(y => {
+    const n = { ...y }
+    if (acik) n[anahtar] = true
+    else delete n[anahtar]
+    return n
+  })
+  const tumunuDegistir = (acik) => {
+    if (!acik) { setYetkiler({}); return }
+    const n = {}
+    for (const m of MENU) {
+      if (m.superAdminOnly) continue
+      n[m.id || m.to] = true
+      ;(m.children || []).forEach(c => { n[c.to] = true })
+    }
+    setYetkiler(n)
+  }
+  // --------------------------------------------------------------------
+
+  // ---- 2.7.623: Mukellef dosya gorunurlugu (offices.mukellef_yetkileri) ----
+  // { <kullaniciId>: { <mukellefProfileId>: false } } — anahtar yoksa ACIK
+  // (varsayilan: her admin ve personel tum mukellef dosyalarini gorur).
+  // Admin buradan kisiye gore dosyayi kapatabilir/acabilir.
+  const [mukellefler, setMukellefler] = useState([])
+  const [mukellefYetkileri, setMukellefYetkileri] = useState(() => ofis.mukellef_yetkileri || {})
+
+  useEffect(() => {
+    let canli = true
+    const yukle = async () => {
+      try {
+        let query = supabase
+          .from('profiles')
+          .select('id, name, role, office_id, mukellef')
+          .in('role', ['admin', 'super_admin', 'personel'])
+          .eq('office_id', ofis.id)
+        query = ofis.owner_id
+          ? query.or(`mukellef.eq.true,id.eq.${ofis.owner_id}`)
+          : query.eq('mukellef', true)
+        const { data } = await query
+        if (canli) setMukellefler((data || []).sort((a, b) => String(a.name).localeCompare(String(b.name), 'tr')))
+      } catch { /* yoksay */ }
+    }
+    yukle()
+    return () => { canli = false }
+  }, [ofis.id, ofis.owner_id])
+
+  const mukellefGorunurMu = (kullaniciId, mukellefId) =>
+    mukellefYetkileri?.[kullaniciId]?.[mukellefId] !== false
+  const mukellefGorunumDegistir = (kullaniciId, mukellefId, acik) => {
+    setMukellefYetkileri(y => {
+      const n = { ...(y || {}) }
+      const satir = { ...(n[kullaniciId] || {}) }
+      if (acik) delete satir[mukellefId]
+      else satir[mukellefId] = false
+      if (Object.keys(satir).length) n[kullaniciId] = satir
+      else delete n[kullaniciId]
+      return n
+    })
+  }
+  // --------------------------------------------------------------------
+
   const kullaniciListesiniYenile = () => {
     getOfficeUsers(ofis.id).then(setKullanicilar).catch(() => {})
   }
@@ -387,7 +460,9 @@ function OfisDetayModal({ ofis, onClose, onDone, onError }) {
     try {
       await updateOffice(ofis.id, {
         ...form,
-        valid_until: form.valid_until || null
+        valid_until: form.valid_until || null,
+        personel_yetkileri: yetkiler,
+        mukellef_yetkileri: mukellefYetkileri || {}
       })
       onDone('Ofis guncellendi')
     } catch (e) {
@@ -396,6 +471,11 @@ function OfisDetayModal({ ofis, onClose, onDone, onError }) {
       setIslem(false)
     }
   }
+
+  // Personel menü yetkileri anahtar listesi — sidebar MENU'sünden üretilir
+  const yetkiSatirlari = MENU
+    .filter(m => !m.superAdminOnly && m.id !== 'beyannamelerim')
+    .map(m => ({ anahtar: m.id || m.to, etiket: m.label, alt: (m.children || []).map(c => ({ anahtar: c.to, etiket: c.label })) }))
 
   // Mevcut bir kullaniciyi e-posta ile bu ofise tasi
   const kullaniciAta = async () => {
@@ -552,6 +632,121 @@ function OfisDetayModal({ ofis, onClose, onDone, onError }) {
               </p>
             </div>
           </div>
+
+          {/* ---- Personel Menü Yetkileri ---- */}
+          <div className="pt-3 border-t border-blue-800/40">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-white text-sm font-medium">Personel Menü Yetkileri</p>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => tumunuDegistir(true)}
+                  className="px-2 py-1 rounded-lg bg-green-500/15 text-green-300 text-[11px] hover:bg-green-500/25"
+                >
+                  Tümünü Aç
+                </button>
+                <button
+                  onClick={() => tumunuDegistir(false)}
+                  className="px-2 py-1 rounded-lg bg-red-500/15 text-red-300 text-[11px] hover:bg-red-500/25"
+                >
+                  Tümünü Kapat
+                </button>
+              </div>
+            </div>
+            <p className="text-gray-500 text-[11px] mb-2">
+              Personel hesapları sol menüde yalnızca açık işaretli bölümleri görür. AnaSayfa her zaman açıktır; kaydedilmeden önce varsayılan olarak yalnız mali müşavir bölümü açıktır.
+            </p>
+            <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
+              {yetkiSatirlari.map(satir => (
+                <div key={satir.anahtar}>
+                  <label className="flex items-center justify-between gap-2 bg-blue-900/25 rounded-lg px-3 py-2 cursor-pointer hover:bg-blue-900/40">
+                    <span className="text-gray-300 text-xs font-medium">{satir.etiket}</span>
+                    <input
+                      type="checkbox"
+                      checked={yetkiAcik(satir.anahtar)}
+                      onChange={e => yetkiDegistir(satir.anahtar, e.target.checked)}
+                      className="w-4 h-4 accent-yellow-400 flex-shrink-0"
+                    />
+                  </label>
+                  {satir.alt.length > 0 && yetkiAcik(satir.anahtar) && (
+                    <div className="ml-4 mt-1 space-y-1 border-l border-blue-800/50 pl-3">
+                      {satir.alt.map(alt => (
+                        <label key={alt.anahtar} className="flex items-center justify-between gap-2 bg-blue-900/15 rounded-lg px-3 py-1.5 cursor-pointer hover:bg-blue-900/30">
+                          <span className="text-gray-400 text-[11px]">{alt.etiket}</span>
+                          <input
+                            type="checkbox"
+                            checked={yetkiAcik(alt.anahtar)}
+                            onChange={e => yetkiDegistir(alt.anahtar, e.target.checked)}
+                            className="w-3.5 h-3.5 accent-yellow-400 flex-shrink-0"
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {/* Mali müşavir bölümü (beyannamelerim) — etiketi ofis adi olan grup */}
+              <label className="flex items-center justify-between gap-2 bg-blue-900/25 rounded-lg px-3 py-2 cursor-pointer hover:bg-blue-900/40">
+                <span className="text-yellow-300 text-xs font-medium">Mali Müşavir Bölümü (Beyannamelerim / Faturalarım ...)</span>
+                <input
+                  type="checkbox"
+                  checked={yetkiAcik('beyannamelerim')}
+                  onChange={e => yetkiDegistir('beyannamelerim', e.target.checked)}
+                  className="w-4 h-4 accent-yellow-400 flex-shrink-0"
+                />
+              </label>
+            </div>
+          </div>
+
+          {/* ---- 2.7.623: Mükellef Dosya Görünürlüğü ---- */}
+          {mukellefler.length > 0 && (
+            <div className="pt-3 border-t border-blue-800/40">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-white text-sm font-medium">Mükellef Dosya Görünürlüğü</p>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/15 text-green-300">Varsayılan: Herkes görebilir</span>
+              </div>
+              <p className="text-gray-500 text-[11px] mb-2">
+                Mükellef = Evet işaretli admin/personel dosyaları (Beyannamelerim, Faturalarım vb.) varsayılan olarak tüm admin ve personelde açıktır. Kisiye ve dosyaya göre açıp kapatabilirsiniz; Kaydet'e basmayi unutmayin.
+              </p>
+              <div className="overflow-x-auto max-h-64 overflow-y-auto rounded-xl border border-blue-800/50">
+                <table className="w-full text-xs">
+                  <thead className="bg-blue-900/40 sticky top-0">
+                    <tr>
+                      <th className="text-left px-3 py-2 text-gray-400 font-medium whitespace-nowrap">Kullanıcı</th>
+                      {mukellefler.map(m => (
+                        <th key={m.id} className="px-2 py-2 text-yellow-300 font-medium whitespace-nowrap">{m.name}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {kullanicilar.filter(k => k.role !== 'musteri').map(k => (
+                      <tr key={k.id} className="border-t border-blue-800/30">
+                        <td className="px-3 py-2 text-gray-300 whitespace-nowrap">
+                          {k.name || k.email}
+                          <span className="text-gray-500 text-[10px] ml-1.5">({k.role === 'personel' ? 'Personel' : k.role === 'super_admin' ? 'Ana Admin' : 'Admin'})</span>
+                        </td>
+                        {mukellefler.map(m => {
+                          const acik = mukellefGorunurMu(k.id, m.id)
+                          return (
+                            <td key={m.id} className="px-2 py-2 text-center">
+                              <button
+                                onClick={() => mukellefGorunumDegistir(k.id, m.id, !acik)}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors ${acik ? 'bg-green-500/20 text-green-300 hover:bg-green-500/30' : 'bg-red-500/20 text-red-300 hover:bg-red-500/30'}`}
+                              >
+                                {acik ? 'Açık' : 'Kapalı'}
+                              </button>
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {kullanicilar.filter(k => k.role !== 'musteri').length === 0 && (
+                  <p className="text-gray-500 text-[11px] px-3 py-3">Bu ofise kayıtlı admin/personel bulunamadı.</p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="p-4 border-t border-blue-800/40 flex gap-2 sticky bottom-0 bg-blue-950">

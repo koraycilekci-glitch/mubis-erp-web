@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
 import { getSettings, saveSettings, getDefaultDocumentPermissions, parseDocumentPermissions, getDefaultDocumentFolders, parseDocumentFolders } from '../services/settingsService'
-import { getBankInfo, saveBankInfo } from '../services/paymentService'
-import { Settings as SettingsIcon, Lock, Clock, Users, Eye, EyeOff, CheckCircle, AlertCircle, Save, RefreshCw, MessageCircle, Mail, FolderOpen, FolderTree, Plus, Trash2, Pencil, Volume2, Play, CreditCard, Building2 } from 'lucide-react'
+import { getBankInfo, saveBankInfo, getBankAccounts, saveBankAccounts } from '../services/paymentService'
+import { gibYardimciIs, yardimciFetch } from '../utils/gibOdemeHelper'
+import { Settings as SettingsIcon, Lock, Clock, Users, Eye, EyeOff, CheckCircle, AlertCircle, Save, RefreshCw, MessageCircle, Mail, FolderOpen, FolderTree, Plus, Minus, Trash2, Pencil, Volume2, Play, CreditCard, Building2, Link2, Bot, Landmark, Shield } from 'lucide-react'
 import FolderStructureEditor from '../components/FolderStructureEditor'
 import { SES_TERCIHLERI, VARSAYILAN_SES_AYARI, seslerHazirOlunca, sesSec, konus, sesAyariCoz, sesDestekleniyor, sesCinsiyeti, cinsiyetSesiVar } from '../utils/speechUtils'
 
@@ -43,13 +44,98 @@ export default function Settings() {
   const [createLoading, setCreateLoading] = useState(false)
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [editingUser, setEditingUser] = useState(null)
-  const [editForm, setEditForm] = useState({ name: '', email: '', role: 'personel' })
+  const [editForm, setEditForm] = useState({ name: '', email: '', role: 'personel', mukellef: false })
+
+  // Ana ekran asistani cinsiyeti (erkek/kadin) — localStorage'da tutulur
+  const [adminCinsiyet, setAdminCinsiyet] = useState(() => localStorage.getItem('admin_cinsiyet_v1') || 'erkek')
+  // 2.7.543: ana ekranda namaz vakitleri/imsakiye (varsayilan kapali)
+  const [namazGoster, setNamazGoster] = useState(() => localStorage.getItem('admin_namaz_v1') === '1')
+  // 2.7.546: ana ekranda web radyo (varsayilan kapali)
+  const [radyoGoster, setRadyoGoster] = useState(() => localStorage.getItem('admin_radio_v1') === '1')
+  // 2.7.546: ana ekranda YouTube Müzik (varsayilan kapali)
+  const [ytMuzikGoster, setYtMuzikGoster] = useState(() => localStorage.getItem('admin_ytmusic_v1') === '1')
+  // 2.7.546: ana ekranda Spotify (varsayilan kapali)
+  const [spotifyGoster, setSpotifyGoster] = useState(() => localStorage.getItem('admin_spotify_v1') === '1')
+  const cinsiyetKaydet = (c) => {
+    setAdminCinsiyet(c)
+    localStorage.setItem('admin_cinsiyet_v1', c)
+  }
+
+  useEffect(() => {
+    if (activeTab === 'masaustu-asistan') adminAtaDurumGetir()
+  }, [activeTab])
+
+  // Yardimci programi "yonetici olarak calistir"a sabitleme (guncelleme
+  // sonrasi tekrar tanimlama gereksinimini kaldirir)
+  const [adminAta, setAdminAta] = useState(null) // null=bilinmiyor, true/false
+  const [adminAtaMsg, setAdminAtaMsg] = useState('')
+  const adminAtaDurumGetir = async () => {
+    try {
+      const s = await gibYardimciIs('admin-durum', {})
+      setAdminAta(s?.ok ? !!s.ata : null)
+    } catch { setAdminAta(null) }
+  }
+  const adminAtaKaydet = async (acik) => {
+    setAdminAtaMsg('')
+    try {
+      const s = await gibYardimciIs('admin-ata', { acik })
+      if (s?.ok) { setAdminAta(acik); setAdminAtaMsg(acik ? 'Yardimci program "yonetici olarak calistir"a sabitlendi' : 'Yonetici bayragi kaldirildi') }
+      else setAdminAtaMsg('Islem basarisiz: ' + (s?.hata || '?'))
+    } catch {
+      setAdminAta('MUBiS yardimci programi bu bilgisayarda calismiyor')
+    }
+  }
+
+  // 2.8.0: Sunucu yardimcisi (VPS) ayarlari — localStorage 'mubis_sunucu'
+  const [sunucuUrl, setSunucuUrl] = useState('')
+  const [sunucuMsg, setSunucuMsg] = useState('')
+  const [sunucuAktif, setSunucuAktif] = useState(false)
+  const sunucuAyarOkuLocal = () => {
+    try { return JSON.parse(localStorage.getItem('mubis_sunucu') || 'null') } catch { return null }
+  }
+  useEffect(() => {
+    const mevcut = sunucuAyarOkuLocal()
+    if (mevcut) {
+      setSunucuUrl(mevcut.url || '')
+      if ('anahtar' in mevcut) localStorage.setItem('mubis_sunucu', JSON.stringify({ url: mevcut.url || '' }))
+    }
+    setSunucuAktif(!!mevcut?.url)
+  }, [])
+  const sunucuAyarKaydet = () => {
+    setSunucuMsg('')
+    const url = String(sunucuUrl || '').trim().replace(/\/+$/, '')
+    if (!url) {
+      localStorage.removeItem('mubis_sunucu')
+      setSunucuAktif(false)
+      setSunucuMsg('Sunucu ayari kaldirildi — yerel yardimci program kullanilacak')
+      return
+    }
+    localStorage.setItem('mubis_sunucu', JSON.stringify({ url }))
+    setSunucuAktif(true)
+    setSunucuMsg('Kaydedildi — isler artik sunucu yardimcisina gidecek')
+  }
+  const sunucuTestEt = async () => {
+    setSunucuMsg('Test ediliyor...')
+    try {
+      const url = String(sunucuUrl || '').trim().replace(/\/+$/, '')
+      if (!url) { setSunucuMsg('Once sunucu adresi girin'); return }
+      // 2.8.2: HTTPS sayfadan http://VPS'e dogru fetch mixed-content engeline
+      // takilir — test de ayni-origin proxy (/api/yardimci) uzerinden yapilir.
+      const r = await yardimciFetch('/api/yardimci/ping', { signal: AbortSignal.timeout(15000) })
+      const j = await r.json().catch(() => ({}))
+      if (j?.app === 'mubis-gib-yardimci') setSunucuMsg(`Baglanti basarili — surum ${j.version || '?'} (mod: ${j.mod || 'yerel'})`)
+      else setSunucuMsg('Yanit yardimci servisten gelmedi: ' + JSON.stringify(j).slice(0, 120))
+    } catch (e) {
+      setSunucuMsg('Sunucuya ulasilamadi: ' + (e?.message || ''))
+    }
+  }
 
   // Iletisim ayarlari
   const [commSettings, setCommSettings] = useState({
     whatsapp_phone_number_id: '',
     whatsapp_access_token: '',
     whatsapp_template_name: 'beyanname_bildirim',
+    whatsapp_web_kaynak: 'vps',
     smtp_host: '',
     smtp_port: '587',
     smtp_user: '',
@@ -66,6 +152,10 @@ export default function Settings() {
   const [commErr, setCommErr] = useState('')
   const [showToken, setShowToken] = useState(false)
   const [showSmtpPass, setShowSmtpPass] = useState(false)
+  // WhatsApp Web QR baglanti durumu
+  const [waQrDurum, setWaQrDurum] = useState('') // '' | kontrol | qr-yukleniyor | qr-hazir | bagli | bagli-degil | hata
+  const [waQrGoruntu, setWaQrGoruntu] = useState('')
+  const [waQrHata, setWaQrHata] = useState('')
 
   // Evrak gorunurlugu
   const [docPermissions, setDocPermissions] = useState(getDefaultDocumentPermissions())
@@ -79,9 +169,10 @@ export default function Settings() {
   const [folderMsg, setFolderMsg] = useState('')
   const [folderErr, setFolderErr] = useState('')
 
-  // Banka bilgileri (EFT/Havale)
+  // Banka bilgileri (EFT/Havale) — coklu hesap destegi
   const [bankInfo, setBankInfo] = useState({ banka: '', hesapSahibi: '', iban: '' })
-  const [bankInfoEdit, setBankInfoEdit] = useState({ banka: '', hesapSahibi: '', iban: '' })
+  const [bankalar, setBankalar] = useState([{ banka: '', hesapSahibi: '', iban: '' }])
+  const [ibanKopyalandi, setIbanKopyalandi] = useState(-1)
   const [bankInfoLoading, setBankInfoLoading] = useState(false)
   const [bankInfoMsg, setBankInfoMsg] = useState('')
   const [bankInfoErr, setBankInfoErr] = useState('')
@@ -90,18 +181,182 @@ export default function Settings() {
   // Aktif odeme kurulusu (iclerinden secilen)
   const [activeProviderLocal, setActiveProviderLocal] = useState('paytr')
 
+  // Luca Baglanti Merkezi (e-Fatura/e-Arsiv sorgulama) - 3 alanli giris
+  const [lucaInfo, setLucaInfo] = useState({ member: '', username: '', password: '' })
+  const [lucaEdit, setLucaEdit] = useState({ member: '', username: '', password: '' })
+  const [lucaLoading, setLucaLoading] = useState(false)
+  const [lucaMsg, setLucaMsg] = useState('')
+  const [lucaErr, setLucaErr] = useState('')
+  const [showLucaPass, setShowLucaPass] = useState(false)
+
+  // GIB Baglanti Merkezi (admin vergi dairesi hesabi — beyan otomasyonu bununla iner)
+  const [gibInfo, setGibInfo] = useState({ kullanici: '', parola: '' })
+  const [gibEdit, setGibEdit] = useState({ kullanici: '', parola: '' })
+  const [gibLoading, setGibLoading] = useState(false)
+  const [gibMsg, setGibMsg] = useState('')
+  const [gibErr, setGibErr] = useState('')
+  const [showGibPass, setShowGibPass] = useState(false)
+
+  // Kayit Klasorleri (admin) — beyanname + fatura gelen/giden klasorleri.
+  // Her muhasebeci (ofis) kendi yollarini ayarlayabilir.
+  const [klasorInfo, setKlasorInfo] = useState({ beyanname: '', gelen: '', giden: '' })
+  const [klasorEdit, setKlasorEdit] = useState({ beyanname: '', gelen: '', giden: '' })
+  const [klasorLoading, setKlasorLoading] = useState(false)
+  const [klasorMsg, setKlasorMsg] = useState('')
+  const [klasorErr, setKlasorErr] = useState('')
+
   useEffect(() => {
     loadCommSettings()
     loadBankInfoData()
+    loadLucaInfo()
+    loadGibInfo()
+    loadKlasorleri()
   }, [])
+
+  const loadGibInfo = async () => {
+    try {
+      const settings = await getSettings()
+      setGibInfo({ kullanici: settings.admin_gib_kullanici_kodu || '', parola: settings.admin_gib_parola || '' })
+      setGibEdit({ kullanici: settings.admin_gib_kullanici_kodu || '', parola: settings.admin_gib_parola || '' })
+    } catch (err) {
+      console.error('GIB bilgileri yuklenemedi:', err)
+    }
+  }
+
+  const handleGibSave = async () => {
+    setGibLoading(true)
+    setGibMsg('')
+    setGibErr('')
+    try {
+      await saveSettings({ admin_gib_kullanici_kodu: gibEdit.kullanici.trim(), admin_gib_parola: gibEdit.parola })
+      setGibInfo({ ...gibEdit, kullanici: gibEdit.kullanici.trim() })
+      setGibMsg('GİB bağlantı bilgileri kaydedildi. Beyan onay otomasyonu bu hesapla inecek.')
+    } catch (err) {
+      setGibErr('GİB bilgileri kaydedilemedi: ' + (err.message || 'Bilinmeyen hata'))
+    } finally {
+      setGibLoading(false)
+    }
+  }
+
+  // Kayit klasorleri yukle/kaydet — adminin belirledigi G: yollari
+  // (beyanname + fatura gelen/giden). Bos birakilirsa varsayilanlar kullanilir.
+  const loadKlasorleri = async () => {
+    try {
+      const settings = await getSettings()
+      const d = {
+        beyanname: settings.beyanname_klasoru || "G:\\Drive'ım\\BEYANNAME",
+        gelen: settings.fatura_gelen_klasoru || "G:\\Drive'ım\\EDEFTER",
+        giden: settings.fatura_giden_klasoru || "G:\\Drive'ım\\EDEFTER"
+      }
+      setKlasorInfo(d)
+      setKlasorEdit(d)
+    } catch (err) {
+      console.error('Klasor ayarlari yuklenemedi:', err)
+    }
+  }
+
+  const handleKlasorSave = async () => {
+    setKlasorLoading(true)
+    setKlasorMsg('')
+    setKlasorErr('')
+    try {
+      await saveSettings({
+        beyanname_klasoru: klasorEdit.beyanname.trim(),
+        fatura_gelen_klasoru: klasorEdit.gelen.trim(),
+        fatura_giden_klasoru: klasorEdit.giden.trim()
+      })
+      const d = { beyanname: klasorEdit.beyanname.trim(), gelen: klasorEdit.gelen.trim(), giden: klasorEdit.giden.trim() }
+      setKlasorInfo(d)
+      setKlasorMsg('Kayıt klasörleri kaydedildi. İndirilen beyanname ve faturalar bu klasörlere kaydedilecek.')
+    } catch (err) {
+      setKlasorErr('Klasör ayarları kaydedilemedi: ' + (err.message || 'Bilinmeyen hata'))
+    } finally {
+      setKlasorLoading(false)
+    }
+  }
+
+  const loadLucaInfo = async () => {
+    try {
+      const settings = await getSettings()
+      setLucaInfo({ member: settings.luca_member || '', username: settings.luca_username || '', password: settings.luca_password || '' })
+      setLucaEdit({ member: settings.luca_member || '', username: settings.luca_username || '', password: settings.luca_password || '' })
+    } catch (err) {
+      console.error('Luca bilgileri yuklenemedi:', err)
+    }
+  }
+
+  const handleLucaSave = async () => {
+    setLucaLoading(true)
+    setLucaMsg('')
+    setLucaErr('')
+    try {
+      await saveSettings({ luca_member: lucaEdit.member.trim(), luca_username: lucaEdit.username.trim(), luca_password: lucaEdit.password })
+      setLucaInfo({ ...lucaEdit, member: lucaEdit.member.trim(), username: lucaEdit.username.trim() })
+      setLucaMsg('Luca baglanti bilgileri kaydedildi.')
+    } catch (err) {
+      setLucaErr('Luca bilgileri kaydedilemedi: ' + (err.message || 'Bilinmeyen hata'))
+    } finally {
+      setLucaLoading(false)
+    }
+  }
+
+  // Bu bilgisayarda Luca entegrasyonunu ac: MUBiS yardimci programina
+  // (127.0.0.1:8765) uye/kullanici/parola gonderilir; yardimci adminMod'u acar,
+  // masaustune "Luca'ya Gir" kisayolunu atar. Boylece kullanici
+  // http://127.0.0.1:8765/admin-mod linkini elle ziyaret etmek zorunda kalmaz.
+  const handleAdminAc = async () => {
+    const uyeNo = lucaEdit.member.trim()
+    const kullanici = lucaEdit.username.trim()
+    const parola = lucaEdit.password
+    if (!uyeNo || !kullanici || !parola) {
+      setLucaErr("Bu bilgisayarda Luca'yi acmak icin Uye Numarasi, Kullanici Adi ve Parola dolu olmali.")
+      return
+    }
+    setLucaLoading(true)
+    setLucaMsg('')
+    setLucaErr('')
+    try {
+      const resp = await fetch('http://127.0.0.1:8765/ayar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uyeNo, kullanici, parola })
+      })
+      if (!resp.ok) throw new Error('Yardimci program ' + resp.status + ' yaniti verdi')
+      await resp.json()
+      setLucaMsg("Luca entegrasyonu BU bilgisayarda acildi. Masaustunde \"Luca'ya Gir\" kisayolu olusturuldu; sorgular artik bu bilgisayardan calisir.")
+    } catch (err) {
+      setLucaErr('Yardimci programa ulasilamadi. MUBiS yardimci programini (2.7.98+) bu bilgisayarda kurup calistirin. (' + (err.message || '') + ')')
+    } finally {
+      setLucaLoading(false)
+    }
+  }
 
   const loadBankInfoData = async () => {
     try {
-      const info = await getBankInfo()
-      setBankInfo(info)
-      setBankInfoEdit(info)
+      const [info, liste] = await Promise.all([
+        getBankInfo().catch(() => null),
+        getBankAccounts().catch(() => null)
+      ])
+      const hesaplar = (Array.isArray(liste) ? liste : []).filter(b => b && (b.banka || b.hesapSahibi || b.iban))
+      if (info) setBankInfo(info)
+      setBankalar(hesaplar.length ? hesaplar : [{ banka: info?.banka || '', hesapSahibi: info?.hesapSahibi || '', iban: info?.iban || '' }])
     } catch (err) {
       console.error('Banka bilgisi yukleme hatasi:', err)
+    }
+  }
+
+  const bankaGuncelle = (index, alan, deger) => {
+    setBankalar(prev => prev.map((b, i) => (i === index ? { ...b, [alan]: deger } : b)))
+  }
+
+  const bankaKopyala = async (index, metin) => {
+    if (!metin) return
+    try {
+      await navigator.clipboard.writeText(String(metin).replace(/\s/g, ''))
+      setIbanKopyalandi(index)
+      setTimeout(() => setIbanKopyalandi(-1), 1500)
+    } catch {
+      setBankInfoErr('Panoya kopyalanamadı.')
     }
   }
 
@@ -110,9 +365,13 @@ export default function Settings() {
     setBankInfoMsg('')
     setBankInfoErr('')
     try {
-      await saveBankInfo(bankInfoEdit)
-      setBankInfo(bankInfoEdit)
-      setBankInfoMsg('Banka bilgileri kaydedildi.')
+      await saveBankAccounts(bankalar)
+      const gecerli = bankalar.filter(b => b.banka || b.hesapSahibi || b.iban)
+      setBankalar(gecerli.length ? gecerli : bankalar)
+      if (gecerli[0]) setBankInfo(gecerli[0])
+      setBankInfoMsg(gecerli.length > 1
+        ? `${gecerli.length} banka hesabı kaydedildi. Müşteri portalinde hepsi görünür ve kopyalanabilir.`
+        : 'Banka bilgileri kaydedildi.')
     } catch (err) {
       setBankInfoErr('Banka bilgileri kaydedilemedi: ' + (err.message || 'Bilinmeyen hata'))
     } finally {
@@ -272,8 +531,12 @@ export default function Settings() {
     }
   }, [profile])
 
+  // admin VE super_admin ayni yetkileri gorur (banka, odeme, luca, kullanici yonetimi)
+  // 2.8.8: personel de tum ayarlari gorebilir — yalniz 'client' (musteri) kisitli
+  const adminMi = user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'personel'
+
   useEffect(() => {
-    if (user?.role === 'admin' && activeTab === 'users') {
+    if (adminMi && activeTab === 'users') {
       loadUsers()
     }
   }, [activeTab, user])
@@ -367,6 +630,18 @@ export default function Settings() {
     setAdminLoading(false)
   }
 
+  // manage-users Cloudflare fonksiyonu oturum dogrulamasi ister:
+  // Supabase access_token'i Authorization basligiyla gonderilmezse
+  // "Oturum bilgisi bulunamadi" hatasi doner.
+  const authBasliklari = async () => {
+    const { data } = await supabase.auth.getSession()
+    const token = data?.session?.access_token
+    return {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    }
+  }
+
   const handleCreateUser = async (e) => {
     e.preventDefault()
     setAdminMsg('')
@@ -376,7 +651,7 @@ export default function Settings() {
     try {
       const res = await fetch('/api/manage-users', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await authBasliklari(),
         body: JSON.stringify({
           ...newUserForm,
           office_id: user?.officeId || profile?.office_id || null
@@ -402,7 +677,10 @@ export default function Settings() {
     setAdminLoading(true)
 
     try {
-      const res = await fetch(`/api/manage-users?userId=${targetUser.id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/manage-users?userId=${targetUser.id}`, {
+        method: 'DELETE',
+        headers: await authBasliklari()
+      })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Kullanici silinemedi')
 
@@ -437,7 +715,10 @@ export default function Settings() {
     setAdminLoading(true)
 
     try {
-      const res = await fetch(`/api/manage-users?userIds=${[...selectedIds].join(',')}`, { method: 'DELETE' })
+      const res = await fetch(`/api/manage-users?userIds=${[...selectedIds].join(',')}`, {
+        method: 'DELETE',
+        headers: await authBasliklari()
+      })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Kullanicilar silinemedi')
 
@@ -453,7 +734,10 @@ export default function Settings() {
 
   const openEditUser = (u) => {
     setEditingUser(u)
-    setEditForm({ name: u.name || '', email: u.email || '', role: u.role || 'personel' })
+    // 2.7.622: musteri/client rolleri seçim listesinde "Müşteri" olarak
+    // gösterilir — liste eşleşmezse select ekranda ilk seçeneği gösterir ama
+    // formda eski rol kalır, Kaydet'te değişiklik sessizce geri alınır.
+    setEditForm({ name: u.name || '', email: u.email || '', role: (u.role === 'client' ? 'musteri' : u.role) || 'personel', mukellef: !!u.mukellef })
   }
 
   const handleUpdateUser = async (e) => {
@@ -465,7 +749,7 @@ export default function Settings() {
     try {
       const res = await fetch('/api/manage-users', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await authBasliklari(),
         body: JSON.stringify({ action: 'update', userId: editingUser.id, ...editForm })
       })
       const data = await res.json()
@@ -480,16 +764,315 @@ export default function Settings() {
     setAdminLoading(false)
   }
 
+  // ---- 2.8.47: Otomatik borc sorgulama — her tür için ayrı çoklu gün+saat ----
+  const BORC_CRON_TURLAR = [
+    { v: 'vergi', e: 'Vergi Borcu (GİB)' },
+    { v: 'sgk', e: 'SGK Borcu' }
+  ]
+  const [borcCronYukleniyor, setBorcCronYukleniyor] = useState(true)
+  const [borcCronPlan, setBorcCronPlan] = useState(null)
+  // Her tür kendi dilim listesini taşır: { vergi: { aktif, zamanlar:[{gunler_ay:[5],saat:'06:00'}] }, ... }
+  const [borcCronTurlarPlan, setBorcCronTurlarPlan] = useState({
+    vergi: { aktif: true, zamanlar: [{ gunler_ay: [5], saat: '06:00' }] },
+    sgk: { aktif: true, zamanlar: [{ gunler_ay: [5], saat: '06:30' }] }
+  })
+  const [borcCronAktif, setBorcCronAktif] = useState(true)
+  const [borcCronKaydediliyor, setBorcCronKaydediliyor] = useState(false)
+  const [borcCronMesaj, setBorcCronMesaj] = useState(null)
+
+  const borcCronDilimEkle = (tur) => setBorcCronTurlarPlan(prev => {
+    const p = prev[tur] || {}
+    const bugun = Math.min(31, Math.max(1, new Date().getDate()))
+    return {
+      ...prev,
+      [tur]: { ...p, aktif: true, zamanlar: [...(p.zamanlar || []), { gunler_ay: [bugun], saat: '06:00' }] }
+    }
+  })
+  const borcCronDilimSil = (tur, idx) => setBorcCronTurlarPlan(prev => {
+    const p = prev[tur] || {}
+    return { ...prev, [tur]: { ...p, zamanlar: (p.zamanlar || []).filter((_, i) => i !== idx) } }
+  })
+  const borcCronDilimGuncelle = (tur, idx, yeni) => setBorcCronTurlarPlan(prev => {
+    const p = prev[tur] || {}
+    return {
+      ...prev,
+      [tur]: { ...p, aktif: true, zamanlar: (p.zamanlar || []).map((z, i) => i === idx ? { ...z, ...yeni } : z) }
+    }
+  })
+
+  const borcCronYukle = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch('/api/borc-cron', {
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
+      })
+      const j = await r.json()
+      if (j.ok && j.plan) {
+        setBorcCronPlan(j.plan)
+        setBorcCronAktif(j.plan.aktif !== false)
+        // 2.8.47: turlar_zamanlar varsa çoklu dilimleri oku; yoksa eski tek
+        // gün/saat planından her aktif tür için bir dilim üret.
+        const tz = j.plan.turlar_zamanlar && typeof j.plan.turlar_zamanlar === 'object' ? j.plan.turlar_zamanlar : null
+        const eskiTurlar = Array.isArray(j.plan.turlar) ? j.plan.turlar : ['vergi', 'sgk']
+        const eskiGun = Array.isArray(j.plan.gunler_ay) ? j.plan.gunler_ay.map(Number).filter(n => n >= 1 && n <= 31) : []
+        const eskiSaat = /^\d{1,2}:\d{2}$/.test(String(j.plan.saat || '')) ? j.plan.saat : '06:00'
+        setBorcCronTurlarPlan(Object.fromEntries(BORC_CRON_TURLAR.map(t => {
+          let liste = Array.isArray(tz?.[t.v]) ? tz[t.v] : []
+          if (!liste.length && eskiTurlar.includes(t.v)) liste = [{ gunler_ay: eskiGun, saat: eskiSaat }]
+          return [t.v, {
+            aktif: liste.length > 0,
+            zamanlar: liste.length
+              ? liste.map(z => ({
+                  gunler_ay: Array.isArray(z?.gunler_ay) ? z.gunler_ay.map(Number).filter(n => n >= 1 && n <= 31) : [],
+                  saat: /^\d{1,2}:\d{2}$/.test(String(z?.saat || '')) ? z.saat : '06:00'
+                }))
+              : [{ gunler_ay: [], saat: '06:00' }]
+          }]
+        })))
+      } else setBorcCronPlan(null)
+    } catch { /* yoksay */ }
+    finally { setBorcCronYukleniyor(false) }
+  }
+
+  useEffect(() => { if (adminMi) borcCronYukle() }, [adminMi])
+
+  const borcCronKaydet = async () => {
+    // 2.8.47: her türün dilimlerini ayrı normalize et
+    const turlarZamanlar = {}
+    for (const t of BORC_CRON_TURLAR) {
+      const p = borcCronTurlarPlan[t.v] || {}
+      if (p.aktif !== true) continue
+      const liste = (p.zamanlar || [])
+        .map(z => ({
+          gunler_ay: [...new Set((z.gunler_ay || []).map(Number).filter(n => n >= 1 && n <= 31))].sort((a, b) => a - b),
+          saat: /^\d{1,2}:\d{2}$/.test(String(z.saat || '')) ? z.saat : '06:00'
+        }))
+        .filter(z => z.gunler_ay.length)
+      if (liste.length) turlarZamanlar[t.v] = liste
+    }
+    const turlar = Object.keys(turlarZamanlar)
+    if (!turlar.length) {
+      setBorcCronMesaj({ ok: false, t: 'Her borç türü için en az bir gün ve saat girin.' }); return
+    }
+    const ilk = turlarZamanlar[turlar[0]][0]
+    setBorcCronKaydediliyor(true)
+    setBorcCronMesaj(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch('/api/borc-cron', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
+        body: JSON.stringify({
+          // Geriye uyum için ilk dilimin özeti eski alanlara da yazılır
+          gunler_ay: ilk.gunler_ay,
+          saat: ilk.saat,
+          turlar,
+          turlar_zamanlar: turlarZamanlar,
+          aktif: borcCronAktif,
+          musteriler: Array.isArray(borcCronPlan?.musteriler) ? borcCronPlan.musteriler : []
+        })
+      })
+      const j = await r.json()
+      if (j.ok) {
+        setBorcCronPlan(j.plan)
+        setBorcCronMesaj({ ok: true, t: 'Otomatik borç sorgulama planı kaydedildi. İstanbul sunucusu belirlediğiniz gün/saatte tüm aktif müşterilerin vergi ve SGK borcunu sorgulayıp kaydeder.' })
+      } else setBorcCronMesaj({ ok: false, t: j.error === 'yetkisiz' ? 'Yönetici yetkisi gerekir.' : (j.error || 'Kaydedilemedi.') })
+    } catch { setBorcCronMesaj({ ok: false, t: 'Bağlantı hatası.' }) }
+    finally { setBorcCronKaydediliyor(false) }
+  }
+
+  const borcCronIptal = async () => {
+    if (!window.confirm('Otomatik borç sorgulama planı silinecek. Emin misiniz?')) return
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch('/api/borc-cron', {
+        method: 'DELETE',
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
+      })
+      const j = await r.json()
+      if (j.ok) { setBorcCronPlan(null); setBorcCronMesaj({ ok: true, t: 'Plan iptal edildi.' }) }
+      else setBorcCronMesaj({ ok: false, t: j.error || 'Silinemedi.' })
+    } catch { setBorcCronMesaj({ ok: false, t: 'Bağlantı hatası.' }) }
+  }
+
+  const borcCronSonucOzet = () => {
+    if (!borcCronPlan?.son_calisma) return 'Henüz çalışmadı'
+    try {
+      const d = new Date(borcCronPlan.son_calisma)
+      const zaman = d.toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+      return `${zaman} — ${borcCronPlan.son_sonuc?.ozet || 'tamamlandı'}`
+    } catch { return '' }
+  }
+
+  // ---- 2.8.47: Otomatik POS / KDV döküm — her tür için ayrı çoklu gün+saat ----
+  const DVS_CRON_TURLAR = [
+    { v: 'pos', e: 'Kredi Kartı / POS Hasılatı' },
+    { v: '109', e: 'KDV 109 Döküm' },
+    { v: '110', e: 'Gümrük İşlemleri KDV (KDV 110)' }
+  ]
+  const [dvsCronYukleniyor, setDvsCronYukleniyor] = useState(true)
+  const [dvsCronPlan, setDvsCronPlan] = useState(null)
+  // Her tür kendi dilim listesini taşır: { pos: { aktif, zamanlar:[{gunler_ay:[5],saat:'05:00'}] }, ... }
+  const [dvsCronTurlarPlan, setDvsCronTurlarPlan] = useState({
+    pos: { aktif: true, zamanlar: [{ gunler_ay: [5], saat: '05:00' }] },
+    '109': { aktif: false, zamanlar: [{ gunler_ay: [5], saat: '05:30' }] },
+    '110': { aktif: false, zamanlar: [{ gunler_ay: [5], saat: '06:00' }] }
+  })
+  const [dvsCronAktif, setDvsCronAktif] = useState(true)
+  const [dvsCronKaydediliyor, setDvsCronKaydediliyor] = useState(false)
+  const [dvsCronMesaj, setDvsCronMesaj] = useState(null)
+  // 2.8.44: daha önce okunmuş değerlerin üzerine yazılsın mı?
+  const [dvsYenidenOku, setDvsYenidenOku] = useState(false)
+
+  const dvsCronDilimEkle = (tur) => setDvsCronTurlarPlan(prev => {
+    const p = prev[tur] || {}
+    const bugun = Math.min(31, Math.max(1, new Date().getDate()))
+    return {
+      ...prev,
+      [tur]: { ...p, aktif: true, zamanlar: [...(p.zamanlar || []), { gunler_ay: [bugun], saat: '05:00' }] }
+    }
+  })
+  const dvsCronDilimSil = (tur, idx) => setDvsCronTurlarPlan(prev => {
+    const p = prev[tur] || {}
+    return { ...prev, [tur]: { ...p, zamanlar: (p.zamanlar || []).filter((_, i) => i !== idx) } }
+  })
+  const dvsCronDilimGuncelle = (tur, idx, yeni) => setDvsCronTurlarPlan(prev => {
+    const p = prev[tur] || {}
+    return {
+      ...prev,
+      [tur]: { ...p, aktif: true, zamanlar: (p.zamanlar || []).map((z, i) => i === idx ? { ...z, ...yeni } : z) }
+    }
+  })
+
+  const dvsCronYukle = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch('/api/dvs-cron', {
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
+      })
+      const j = await r.json()
+      if (j.ok && j.plan) {
+        setDvsCronPlan(j.plan)
+        setDvsCronAktif(j.plan.aktif !== false)
+        setDvsYenidenOku(j.plan.yenidenOku === true || j.plan.turlar_plan?.__ayar?.yenidenOku === true)
+        // 2.8.47: öncelik turlar_plan[t].zamanlar; yoksa paylaşılan eski
+        // zamanlar / tek gün-saat planından geriye uyumlu migrate et.
+        const tp = j.plan.turlar_plan && typeof j.plan.turlar_plan === 'object' ? j.plan.turlar_plan : null
+        const eskiTurlar = Array.isArray(j.plan.turlar) ? j.plan.turlar : ['pos']
+        const ortakZamanlar = Array.isArray(j.plan.zamanlar) ? j.plan.zamanlar : []
+        const eskiGun = Array.isArray(j.plan.gun_ay) ? [Number(j.plan.gun_ay) || 0].filter(n => n >= 1 && n <= 31) : []
+        const eskiSaat = /^\d{1,2}:\d{2}$/.test(String(j.plan.saat || '')) ? j.plan.saat : '05:00'
+        setDvsCronTurlarPlan(Object.fromEntries(DVS_CRON_TURLAR.map(t => {
+          const p = tp?.[t.v]
+          let liste = Array.isArray(p?.zamanlar) ? p.zamanlar : []
+          if (!liste.length && eskiTurlar.includes(t.v)) {
+            if (ortakZamanlar.length) liste = ortakZamanlar
+            else if (p) liste = [{ gunler_ay: Number(p.gun_ay) >= 1 ? [Number(p.gun_ay)] : [], saat: p.saat || '05:00' }]
+            else liste = [{ gunler_ay: eskiGun, saat: eskiSaat }]
+          }
+          return [t.v, {
+            aktif: liste.length > 0,
+            zamanlar: liste.length
+              ? liste.map(z => ({
+                  gunler_ay: Array.isArray(z?.gunler_ay) ? z.gunler_ay.map(Number).filter(n => n >= 1 && n <= 31) : [],
+                  saat: /^\d{1,2}:\d{2}$/.test(String(z?.saat || '')) ? z.saat : '05:00'
+                }))
+              : [{ gunler_ay: [], saat: '05:00' }]
+          }]
+        })))
+      } else setDvsCronPlan(null)
+    } catch { /* yoksay */ }
+    finally { setDvsCronYukleniyor(false) }
+  }
+
+  useEffect(() => { if (adminMi) dvsCronYukle() }, [adminMi])
+
+  const dvsCronKaydet = async () => {
+    // 2.8.47: her türün dilimlerini ayrı normalize et
+    const turlarPlan = {}
+    for (const t of DVS_CRON_TURLAR) {
+      const p = dvsCronTurlarPlan[t.v] || {}
+      if (p.aktif !== true) {
+        turlarPlan[t.v] = { aktif: false, gun_ay: 0, saat: '05:00', zamanlar: [] }
+        continue
+      }
+      const liste = (p.zamanlar || [])
+        .map(z => ({
+          gunler_ay: [...new Set((z.gunler_ay || []).map(Number).filter(n => n >= 1 && n <= 31))].sort((a, b) => a - b),
+          saat: /^\d{1,2}:\d{2}$/.test(String(z.saat || '')) ? z.saat : '05:00'
+        }))
+        .filter(z => z.gunler_ay.length)
+      const ilk = liste[0] || { gunler_ay: [], saat: '05:00' }
+      turlarPlan[t.v] = {
+        aktif: liste.length > 0,
+        gun_ay: ilk.gunler_ay[0] || 0,
+        saat: ilk.saat,
+        zamanlar: liste
+      }
+    }
+    if (!DVS_CRON_TURLAR.some(t => turlarPlan[t.v].aktif)) {
+      setDvsCronMesaj({ ok: false, t: 'Her sorgu türü için en az bir gün ve saat girin.' }); return
+    }
+    setDvsCronKaydediliyor(true)
+    setDvsCronMesaj(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch('/api/dvs-cron', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
+        body: JSON.stringify({
+          aktif: dvsCronAktif,
+          turlar_plan: turlarPlan,
+          yenidenOku: dvsYenidenOku
+        })
+      })
+      const j = await r.json()
+      if (j.ok) {
+        setDvsCronPlan(j.plan)
+        setDvsCronMesaj({ ok: true, t: 'Otomatik POS/KDV döküm planı kaydedildi. İstanbul sunucusu her sorgu türü için belirlediğiniz gün ve saatte tüm aktif müşterilerin Dijitaş DVS sorgusunu yapıp sonuçları sisteme kaydeder.' })
+      } else setDvsCronMesaj({ ok: false, t: j.error === 'yetkisiz' ? 'Yönetici yetkisi gerekir.' : (j.error || 'Kaydedilemedi.') })
+    } catch { setDvsCronMesaj({ ok: false, t: 'Bağlantı hatası.' }) }
+    finally { setDvsCronKaydediliyor(false) }
+  }
+
+  const dvsCronIptal = async () => {
+    if (!window.confirm('Otomatik POS/KDV döküm planı silinecek. Emin misiniz?')) return
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch('/api/dvs-cron', {
+        method: 'DELETE',
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
+      })
+      const j = await r.json()
+      if (j.ok) { setDvsCronPlan(null); setDvsCronMesaj({ ok: true, t: 'Plan iptal edildi.' }) }
+      else setDvsCronMesaj({ ok: false, t: j.error || 'Silinemedi.' })
+    } catch { setDvsCronMesaj({ ok: false, t: 'Bağlantı hatası.' }) }
+  }
+
+  const dvsCronSonucOzet = () => {
+    if (!dvsCronPlan?.son_calisma) return 'Henüz çalışmadı'
+    try {
+      const d = new Date(dvsCronPlan.son_calisma)
+      const zaman = d.toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+      return `${zaman} — ${dvsCronPlan.son_sonuc?.ozet || 'tamamlandı'}`
+    } catch { return '' }
+  }
+
   const tabs = [
-    { id: 'password', label: 'Sifre Degistir', icon: Lock },
-    { id: 'interval', label: 'Sifre Sikligi', icon: Clock },
+    { id: 'password', label: 'Sifre / Guvenlik', icon: Lock },
     { id: 'communication', label: 'Iletisim Ayarlari', icon: MessageCircle },
-    ...(user?.role === 'admin' ? [{ id: 'bank', label: 'Banka Bilgileri', icon: Building2 }] : []),
-    ...(user?.role === 'admin' ? [{ id: 'payments', label: 'Odeme Kurulusu', icon: CreditCard }] : []),
+    ...(adminMi ? [{ id: 'bank', label: 'Banka Bilgileri', icon: Building2 }] : []),
+    ...(adminMi ? [{ id: 'payments', label: 'Odeme Kurulusu', icon: CreditCard }] : []),
+    ...(adminMi ? [{ id: 'luca', label: 'Luca Baglanti', icon: Link2 }] : []),
+    ...(adminMi ? [{ id: 'gib', label: 'GIB Baglanti', icon: Landmark }] : []),
+    ...(adminMi ? [{ id: 'kayit-klasorleri', label: 'Kayit Klasorleri', icon: FolderTree }] : []),
+    ...(adminMi ? [{ id: 'borc-cron', label: 'Otomatik Borç Sorgu', icon: Clock }] : []),
+    ...(adminMi ? [{ id: 'dvs-cron', label: 'Otomatik POS / KDV Döküm', icon: CreditCard }] : []),
     { id: 'documents', label: 'Evrak Gorunurlugu', icon: FolderOpen },
     { id: 'folders', label: 'Evrak Klasor Yapisi', icon: FolderTree },
-    ...(user?.role === 'admin' ? [{ id: 'assistant', label: 'Asistan Sesi', icon: Volume2 }] : []),
-    ...(user?.role === 'admin' ? [{ id: 'users', label: 'Kullanici Yonetimi', icon: Users }] : [])
+    ...(adminMi ? [{ id: 'assistant', label: 'Asistan Sesi', icon: Volume2 }] : []),
+    ...(adminMi ? [{ id: 'masaustu-asistan', label: 'Ana Ekran Asistanı', icon: Bot }] : []),
+    ...(adminMi ? [{ id: 'users', label: 'Kullanici Yonetimi', icon: Users }] : [])
   ]
 
   return (
@@ -503,20 +1086,285 @@ export default function Settings() {
       </div>
 
       {/* Tabs */}
-      <div className="flex space-x-1 mb-6 bg-blue-950/50 p-1 rounded-xl border border-blue-800/30">
+      <div className="flex flex-wrap gap-1 mb-6 bg-blue-950/50 p-1 rounded-xl border border-blue-800/30">
         {tabs.map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all flex-1 justify-center ${
-              activeTab === tab.id ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' : 'text-gray-400 hover:text-white hover:bg-blue-800/30'
+            className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
+              activeTab === tab.id ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' : 'text-gray-400 hover:text-white hover:bg-blue-800/30 border border-transparent'
             }`}>
-            <tab.icon className="w-4 h-4" />
-            <span className="hidden sm:inline">{tab.label}</span>
+            <tab.icon className="w-4 h-4 shrink-0" />
+            <span>{tab.label}</span>
           </button>
         ))}
       </div>
 
       <div className="bg-blue-950/30 rounded-2xl p-6 border border-blue-800/30">
-        
+
+        {/* 2.8.5: OTOMATIK BORC SORGULAMA — VPS cron plani */}
+        {activeTab === 'borc-cron' && (
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Otomatik Borç Sorgulama</h2>
+                <p className="text-gray-400 text-sm">Seçilen gün ve saatte İstanbul sunucusu tüm aktif müşterilerin vergi (GİB) ve SGK borcunu otomatik sorgular. Müşteri portalına girdiğinde güncel borcunu anında görür; istediğinde kendisi de canlı sorgulayabilir.</p>
+              </div>
+              <button
+                onClick={() => setBorcCronAktif(p => !p)}
+                className={`relative w-11 h-6 rounded-full transition-colors ${borcCronAktif ? 'bg-cyan-500' : 'bg-blue-800/80'}`}
+                title={borcCronAktif ? 'Otomatik borç sorgulama açık' : 'Otomatik borç sorgulama kapalı'}
+              >
+                <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${borcCronAktif ? 'left-[22px]' : 'left-0.5'}`} />
+              </button>
+            </div>
+            {borcCronYukleniyor ? (
+              <p className="text-xs text-gray-500 mt-3">Yükleniyor…</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-4">
+                  {BORC_CRON_TURLAR.map(t => {
+                    const p = borcCronTurlarPlan[t.v] || { aktif: false, zamanlar: [] }
+                    const dilimler = p.zamanlar || []
+                    const renk = t.v === 'sgk' ? 'amber' : 'sky'
+                    return (
+                      <div key={t.v} className="rounded-xl border border-blue-700/40 bg-blue-950/40 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="inline-flex items-center gap-2 text-sm font-medium text-white">
+                            <span className={`w-2 h-2 rounded-full ${renk === 'amber' ? 'bg-amber-400' : 'bg-sky-400'}`} />
+                            {t.e}
+                            <span className="text-[10px] text-gray-500">({dilimler.filter(z => (z.gunler_ay || []).length).length} dilim)</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => borcCronDilimEkle(t.v)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-cyan-600/15 border border-cyan-500/40 text-cyan-300 text-[10px] font-medium hover:bg-cyan-600/25"
+                          >
+                            <Plus className="w-3 h-3" /> Ekle
+                          </button>
+                        </div>
+                        {dilimler.length === 0 && (
+                          <p className="text-[11px] text-gray-500 py-1">Dilim yok — otomatik sorgulanmaz.</p>
+                        )}
+                        {dilimler.map((z, idx) => (
+                          <div key={idx} className="flex items-center gap-1.5">
+                            <div className="relative">
+                              <input
+                                type="number" min={1} max={31}
+                                value={z.gunler_ay?.[0] || ''}
+                                onChange={e => {
+                                  const n = Math.min(31, Math.max(0, Number(e.target.value) || 0))
+                                  borcCronDilimGuncelle(t.v, idx, { gunler_ay: n >= 1 ? [n] : [] })
+                                }}
+                                placeholder="Gün"
+                                title="Ayın kaçıncı günü (1-31)"
+                                className="w-16 bg-blue-900/60 border border-blue-700/50 rounded-lg pl-2 pr-6 py-1.5 text-white text-xs tabular-nums"
+                              />
+                              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-gray-500 pointer-events-none">gün</span>
+                            </div>
+                            <input
+                              type="time"
+                              value={z.saat || '06:00'}
+                              onChange={e => borcCronDilimGuncelle(t.v, idx, { saat: e.target.value })}
+                              className="bg-blue-900/60 border border-blue-700/50 rounded-lg px-2 py-1.5 text-white text-xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => borcCronDilimSil(t.v, idx)}
+                              title="Bu dilimi sil"
+                              className="p-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 hover:bg-red-500/20"
+                            >
+                              <Minus className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })}
+                </div>
+                <p className="text-[11px] text-gray-500 leading-relaxed mt-3">
+                  Her tür için ayrı gün ve saat. <span className="text-cyan-300">+</span> ile aynı türe birden fazla dilim ekleyebilir, <span className="text-red-300">−</span> ile silebilirsiniz. Aynı plan Müşteri Borç Dökümü ekranındaki “Otomatik Borç Sorgulama” bölümüyle senkron çalışır.
+                </p>
+                <div className="flex flex-wrap items-center gap-2.5 mt-4">
+                  <button
+                    onClick={borcCronKaydet}
+                    disabled={borcCronKaydediliyor}
+                    className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium disabled:opacity-50"
+                  >
+                    {borcCronKaydediliyor ? 'Kaydediliyor…' : (borcCronPlan ? 'Planı Güncelle' : 'Kaydet')}
+                  </button>
+                  {borcCronPlan && (
+                    <button
+                      onClick={borcCronIptal}
+                      className="px-4 py-2 rounded-xl bg-blue-900/60 border border-blue-700/50 text-gray-300 hover:text-white text-sm"
+                    >
+                      İptal Et
+                    </button>
+                  )}
+                  <span className="text-xs text-gray-500 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5" />
+                    Son çalışma: {borcCronSonucOzet()}
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-600 mt-2.5">
+                  Not: Sorgu sonucu her müşterinin hesabına otomatik işlenir — müşteri portalını açtığında en güncel borcunu görür. Şifresi eksik müşteriler atlanır ve admin'e bildirilir.
+                </p>
+                {borcCronMesaj && (
+                  <div className={`mt-3 px-4 py-3 rounded-xl text-sm border ${borcCronMesaj.ok ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-200' : 'bg-red-500/10 border-red-500/40 text-red-300'}`}>
+                    {borcCronMesaj.t}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* 2.8.8: OTOMATIK POS / KDV DOKUM (DVS) — VPS cron plani */}
+        {activeTab === 'dvs-cron' && (
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Otomatik POS / KDV Döküm Sorgulama</h2>
+                <p className="text-gray-400 text-sm">Seçilen gün ve saatte İstanbul sunucusu tüm aktif müşterilerin Dijitaş DVS sorgusunu yapar: POS (Kredi Kartı Hasılatı) ve KDV 109/110 dökümleri. Sonuçlar sisteme otomatik işlenir — müşteri portalında ve raporlarda görünür.</p>
+              </div>
+              <button
+                onClick={() => setDvsCronAktif(p => !p)}
+                className={`relative w-11 h-6 rounded-full transition-colors ${dvsCronAktif ? 'bg-cyan-500' : 'bg-blue-800/80'}`}
+                title={dvsCronAktif ? 'Otomatik sorgulama açık' : 'Otomatik sorgulama kapalı'}
+              >
+                <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${dvsCronAktif ? 'left-[22px]' : 'left-0.5'}`} />
+              </button>
+            </div>
+            {dvsCronYukleniyor ? (
+              <p className="text-xs text-gray-500 mt-3">Yükleniyor…</p>
+            ) : (
+              <>
+                <div className="mt-4 space-y-3">
+                  {/* 2.8.47: tür bazlı çoklu gün+saat dilimleri */}
+                  <div className="rounded-xl border border-blue-800/50 bg-blue-950/40 p-3.5">
+                    <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-1.5">Sorgulama Gün ve Saatleri (tür başına)</p>
+                    <p className="text-[11px] text-gray-400 mb-3">
+                      Her tür için ayrı gün ve saat tanımlayın. <span className="text-cyan-300">+</span> ile aynı türe birden fazla dilim ekleyebilir, <span className="text-red-300">−</span> ile silebilirsiniz.
+                    </p>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-2.5">
+                      {DVS_CRON_TURLAR.map(t => {
+                        const p = dvsCronTurlarPlan[t.v] || { aktif: false, zamanlar: [] }
+                        const dilimler = p.zamanlar || []
+                        return (
+                          <div key={t.v} className={`rounded-xl border p-3 space-y-2 ${p.aktif ? 'border-cyan-500/40 bg-cyan-500/[0.04]' : 'border-blue-700/40 bg-blue-950/40'}`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setDvsCronTurlarPlan(prev => {
+                                  const mevcut = prev[t.v] || { aktif: false, zamanlar: [] }
+                                  const yeniAktif = !mevcut.aktif
+                                  let zamanlar = Array.isArray(mevcut.zamanlar) ? mevcut.zamanlar : []
+                                  if (yeniAktif && !zamanlar.length) {
+                                    const bugun = Math.min(31, Math.max(1, new Date().getDate()))
+                                    zamanlar = [{ gunler_ay: [bugun], saat: '05:00' }]
+                                  }
+                                  return { ...prev, [t.v]: { ...mevcut, aktif: yeniAktif, zamanlar } }
+                                })}
+                                className={`flex-1 flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-medium border text-left transition-colors ${p.aktif ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-200' : 'bg-blue-900/50 border-blue-700/50 text-gray-400 hover:text-gray-200'}`}
+                              >
+                                <span className={`w-2 h-2 rounded-full shrink-0 ${p.aktif ? 'bg-cyan-400' : 'bg-gray-600'}`} />
+                                <span className="truncate">{t.e}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => dvsCronDilimEkle(t.v)}
+                                title="Gün + saat ekle"
+                                className="inline-flex items-center gap-1 px-2 py-2 rounded-lg bg-cyan-600/15 border border-cyan-500/40 text-cyan-300 text-[10px] font-medium hover:bg-cyan-600/25 shrink-0"
+                              >
+                                <Plus className="w-3 h-3" /> Ekle
+                              </button>
+                            </div>
+                            {dilimler.length === 0 && (
+                              <p className="text-[11px] text-gray-500 py-1">Dilim yok — otomatik sorgulanmaz.</p>
+                            )}
+                            {dilimler.map((z, idx) => (
+                              <div key={idx} className="flex items-center gap-1.5">
+                                <div className="relative">
+                                  <input
+                                    type="number"
+                                    min={1} max={31}
+                                    value={z.gunler_ay?.[0] || ''}
+                                    onChange={e => {
+                                      const n = Math.min(31, Math.max(0, Number(e.target.value) || 0))
+                                      dvsCronDilimGuncelle(t.v, idx, { gunler_ay: n >= 1 ? [n] : [] })
+                                    }}
+                                    placeholder="Gün"
+                                    title="Ayın kaçıncı günü (1-31)"
+                                    className="w-16 bg-blue-900/60 border border-blue-700/50 rounded-lg pl-2 pr-6 py-1.5 text-white text-xs tabular-nums"
+                                  />
+                                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-gray-500 pointer-events-none">gün</span>
+                                </div>
+                                <input
+                                  type="time"
+                                  value={z.saat || '05:00'}
+                                  onChange={e => dvsCronDilimGuncelle(t.v, idx, { saat: e.target.value })}
+                                  className="bg-blue-900/60 border border-blue-700/50 rounded-lg px-2 py-1.5 text-white text-xs"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => dvsCronDilimSil(t.v, idx)}
+                                  title="Bu dilimi sil"
+                                  className="p-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 hover:bg-red-500/20"
+                                >
+                                  <Minus className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <label className="flex items-start gap-2 mt-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={dvsYenidenOku}
+                        onChange={e => setDvsYenidenOku(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 rounded border-blue-700/50 bg-blue-900/40 text-amber-500 focus:ring-amber-500"
+                      />
+                      <span className="text-[11px] text-gray-400 leading-relaxed">
+                        <strong className="text-gray-300">Zaten okunmuş değerleri yeniden oku</strong><br />
+                        Kapalıyken daha önce değer okunmuş müşteri/dönem/tür tekrar sorgulanmaz (atlanır). Açarsanız üzerine yazar.
+                      </span>
+                    </label>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2.5 mt-4">
+                  <button
+                    onClick={dvsCronKaydet}
+                    disabled={dvsCronKaydediliyor}
+                    className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium disabled:opacity-50"
+                  >
+                    {dvsCronKaydediliyor ? 'Kaydediliyor…' : (dvsCronPlan ? 'Planı Güncelle' : 'Kaydet')}
+                  </button>
+                  {dvsCronPlan && (
+                    <button
+                      onClick={dvsCronIptal}
+                      className="px-4 py-2 rounded-xl bg-blue-900/60 border border-blue-700/50 text-gray-300 hover:text-white text-sm"
+                    >
+                      İptal Et
+                    </button>
+                  )}
+                  <span className="text-xs text-gray-500 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5" />
+                    Son çalışma: {dvsCronSonucOzet()}
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-600 mt-2.5">
+                  Not: Sorgu bir önceki ayın dönemini kapsar (ör. 3 Aralık'ta çalışırsa Kasım ayının POS hasılatı). Her tür kendi gün ve saat dilimleriyle, her ay otomatik olarak çalışır; bir türe birden fazla dilim eklenebilir. DVS şifresi eksik müşteriler atlanır. Sonuçlar "kredi_karti_hasilat" ve "kdv_dökümleri" sayfalarında görünür.
+                </p>
+                {dvsCronMesaj && (
+                  <div className={`mt-3 px-4 py-3 rounded-xl text-sm border ${dvsCronMesaj.ok ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-200' : 'bg-red-500/10 border-red-500/40 text-red-300'}`}>
+                    {dvsCronMesaj.t}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
         {/* SIFRE DEGISTIR */}
         {activeTab === 'password' && (
           <div>
@@ -565,36 +1413,34 @@ export default function Settings() {
                 Sifreyi Degistir
               </button>
             </form>
-          </div>
-        )}
 
-        {/* SIFRE SIKLIGI */}
-        {activeTab === 'interval' && (
-          <div>
-            <h2 className="text-lg font-semibold text-white mb-4">Sifre Degistirme Sikligi</h2>
-            <p className="text-gray-400 text-sm mb-6">Belirli araliklarla sifre degistirme zorunlulugu ayarlayin.</p>
+            {/* SIFRE SIKLIGI */}
+            <div className="mt-8 pt-6 border-t border-blue-800/30">
+              <h2 className="text-lg font-semibold text-white mb-2">Sifre Degistirme Sikligi</h2>
+              <p className="text-gray-400 text-sm mb-4">Belirli araliklarla sifre degistirme zorunlulugu ayarlayin.</p>
 
-            {intervalMsg && (
-              <div className="bg-green-500/20 border border-green-500/50 rounded-xl p-3 mb-4 flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 text-green-400" />
-                <span className="text-green-300 text-sm">{intervalMsg}</span>
+              {intervalMsg && (
+                <div className="bg-green-500/20 border border-green-500/50 rounded-xl p-3 mb-4 flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-green-400" />
+                  <span className="text-green-300 text-sm">{intervalMsg}</span>
+                </div>
+              )}
+
+              <div className="max-w-md space-y-4">
+                <div>
+                  <label className="text-gray-400 text-sm block mb-1">Sifre Degistirme Periyodu</label>
+                  <select value={passwordInterval} onChange={e => setPasswordInterval(e.target.value)}
+                    className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-yellow-500">
+                    <option value="3ay">3 Ay</option>
+                    <option value="6ay">6 Ay</option>
+                    <option value="never">Hicbir Zaman</option>
+                  </select>
+                </div>
+                <button onClick={handleIntervalSave} disabled={intervalLoading} className="btn-gold px-6 py-2.5 flex items-center gap-2 disabled:opacity-50">
+                  {intervalLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Kaydet
+                </button>
               </div>
-            )}
-
-            <div className="max-w-md space-y-4">
-              <div>
-                <label className="text-gray-400 text-sm block mb-1">Sifre Degistirme Periyodu</label>
-                <select value={passwordInterval} onChange={e => setPasswordInterval(e.target.value)}
-                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-yellow-500">
-                  <option value="3ay">3 Ay</option>
-                  <option value="6ay">6 Ay</option>
-                  <option value="never">Hicbir Zaman</option>
-                </select>
-              </div>
-              <button onClick={handleIntervalSave} disabled={intervalLoading} className="btn-gold px-6 py-2.5 flex items-center gap-2 disabled:opacity-50">
-                {intervalLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                Kaydet
-              </button>
             </div>
           </div>
         )}
@@ -631,9 +1477,9 @@ export default function Settings() {
 
                 <div className="mb-5">
                   <label className="text-gray-400 text-sm block mb-2">WhatsApp Gonderim Kanali</label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <label className={`flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
-                      commSettings.whatsapp_channel !== 'web'
+                      commSettings.whatsapp_channel === 'api'
                         ? 'bg-green-500/10 border-green-500/40 text-green-300'
                         : 'bg-blue-900/20 border-blue-700/40 text-gray-400'
                     }`}>
@@ -641,7 +1487,7 @@ export default function Settings() {
                         type="radio"
                         name="whatsapp_channel"
                         value="api"
-                        checked={commSettings.whatsapp_channel !== 'web'}
+                        checked={commSettings.whatsapp_channel === 'api'}
                         onChange={e => setCommSettings({ ...commSettings, whatsapp_channel: e.target.value })}
                         className="mt-1 w-4 h-4 text-green-500 border-blue-700/50 bg-blue-900/30 focus:ring-green-500"
                       />
@@ -669,10 +1515,29 @@ export default function Settings() {
                         <p className="text-xs mt-1 opacity-80">Kullanici telefonundaki WhatsApp uzerinden gonderilir. Dosyalar link olarak gonderilir.</p>
                       </div>
                     </label>
+
+                    <label className={`flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
+                      commSettings.whatsapp_channel === 'masaustu'
+                        ? 'bg-green-500/10 border-green-500/40 text-green-300'
+                        : 'bg-blue-900/20 border-blue-700/40 text-gray-400'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="whatsapp_channel"
+                        value="masaustu"
+                        checked={commSettings.whatsapp_channel === 'masaustu'}
+                        onChange={e => setCommSettings({ ...commSettings, whatsapp_channel: e.target.value })}
+                        className="mt-1 w-4 h-4 text-green-500 border-blue-700/50 bg-blue-900/30 focus:ring-green-500"
+                      />
+                      <div>
+                        <span className="text-sm font-medium">Windows Uygulaması</span>
+                        <p className="text-xs mt-1 opacity-80">Bilgisayardaki WhatsApp masaüstü programından otomatik gonderilir (yardımcı program 2.7.172 ve üzeri). Dosyalar link olarak gider.</p>
+                      </div>
+                    </label>
                   </div>
                 </div>
 
-                {commSettings.whatsapp_channel !== 'web' && (
+                {commSettings.whatsapp_channel !== 'web' && commSettings.whatsapp_channel !== 'masaustu' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="text-gray-400 text-sm block mb-1">Phone Number ID</label>
@@ -717,8 +1582,127 @@ export default function Settings() {
                 )}
 
                 {commSettings.whatsapp_channel === 'web' && (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-gray-400 text-sm block mb-2">Gönderim Makinesi</label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <label className={`flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
+                          (commSettings.whatsapp_web_kaynak || 'vps') === 'vps'
+                            ? 'bg-green-500/10 border-green-500/40 text-green-300'
+                            : 'bg-blue-900/20 border-blue-700/40 text-gray-400'
+                        }`}>
+                          <input
+                            type="radio"
+                            name="whatsapp_web_kaynak"
+                            value="vps"
+                            checked={(commSettings.whatsapp_web_kaynak || 'vps') === 'vps'}
+                            onChange={e => setCommSettings({ ...commSettings, whatsapp_web_kaynak: e.target.value })}
+                            className="mt-1 w-4 h-4 text-green-500 border-blue-700/50 bg-blue-900/30 focus:ring-green-500"
+                          />
+                          <div>
+                            <span className="text-sm font-medium">Sunucu (VPS)</span>
+                            <p className="text-xs mt-1 opacity-80">İstanbul sunucusundaki yardımcı gönderir. Ofis bilgisayarı kapalı olsa da çalışır; otomatik gönderim için gerekli.</p>
+                          </div>
+                        </label>
+
+                        <label className={`flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
+                          commSettings.whatsapp_web_kaynak === 'yerel'
+                            ? 'bg-green-500/10 border-green-500/40 text-green-300'
+                            : 'bg-blue-900/20 border-blue-700/40 text-gray-400'
+                        }`}>
+                          <input
+                            type="radio"
+                            name="whatsapp_web_kaynak"
+                            value="yerel"
+                            checked={commSettings.whatsapp_web_kaynak === 'yerel'}
+                            onChange={e => setCommSettings({ ...commSettings, whatsapp_web_kaynak: e.target.value })}
+                            className="mt-1 w-4 h-4 text-green-500 border-blue-700/50 bg-blue-900/30 focus:ring-green-500"
+                          />
+                          <div>
+                            <span className="text-sm font-medium">Bu Bilgisayar (Yerel)</span>
+                            <p className="text-xs mt-1 opacity-80">Bu bilgisayardaki yardımcı program gönderir. Yardımcı programın açık olması gerekir.</p>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="bg-blue-950/40 border border-blue-700/30 rounded-xl p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                        <div>
+                          <p className="text-sm font-medium text-white">WhatsApp Bağlantısı</p>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {(commSettings.whatsapp_web_kaynak || 'vps') === 'vps'
+                              ? 'Sunucudaki WhatsApp oturumunu bir kez QR ile bağlayın.'
+                              : 'Bu bilgisayardaki WhatsApp oturumunu bir kez QR ile bağlayın.'}
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setWaQrDurum('kontrol')
+                              const { whatsappWebDurum } = await import('../services/whatsappService')
+                              const r = await whatsappWebDurum({ kaynak: commSettings.whatsapp_web_kaynak || 'vps' })
+                              setWaQrDurum(r.ok ? (r.girisVar ? 'bagli' : 'bagli-degil') : 'hata')
+                              setWaQrHata(r.ok ? (r.not || '') : (r.hata || ''))
+                            }}
+                            className="px-3 py-2 rounded-lg bg-blue-600/20 border border-blue-500/40 text-blue-300 text-xs font-medium hover:bg-blue-600/30"
+                          >
+                            Durum Kontrol
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setWaQrDurum('qr-yukleniyor')
+                              setWaQrGoruntu('')
+                              const { whatsappWebDurum } = await import('../services/whatsappService')
+                              const r = await whatsappWebDurum({ kaynak: commSettings.whatsapp_web_kaynak || 'vps', qr: true })
+                              if (!r.ok) { setWaQrDurum('hata'); setWaQrHata(r.hata || ''); return }
+                              if (r.girisVar) { setWaQrDurum('bagli'); setWaQrHata(r.not || ''); return }
+                              setWaQrGoruntu(r.goruntu || '')
+                              setWaQrDurum('qr-hazir')
+                              setWaQrHata(r.not || '')
+                            }}
+                            className="px-3 py-2 rounded-lg bg-emerald-600/20 border border-emerald-500/40 text-emerald-300 text-xs font-medium hover:bg-emerald-600/30"
+                          >
+                            QR Kodu Göster
+                          </button>
+                        </div>
+                      </div>
+
+                      {waQrDurum === 'kontrol' && <p className="text-xs text-gray-400">Kontrol ediliyor…</p>}
+                      {waQrDurum === 'qr-yukleniyor' && <p className="text-xs text-gray-400">QR hazırlanıyor, 30-60 sn sürebilir…</p>}
+                      {waQrDurum === 'bagli' && (
+                        <p className="text-xs text-emerald-400 flex items-center gap-1.5">
+                          <CheckCircle className="w-3.5 h-3.5" /> WhatsApp bağlı — gönderimler otomatik yapılacak.
+                        </p>
+                      )}
+                      {waQrDurum === 'bagli-degil' && (
+                        <p className="text-xs text-amber-400">WhatsApp bağlı değil. “QR Kodu Göster”e basıp telefondan okutun.</p>
+                      )}
+                      {waQrDurum === 'hata' && (
+                        <p className="text-xs text-red-400">Bağlantı kurulamadı: {waQrHata}</p>
+                      )}
+                      {waQrDurum === 'qr-hazir' && waQrGoruntu && (
+                        <div className="text-center">
+                          <img src={waQrGoruntu} alt="WhatsApp QR" className="mx-auto rounded-lg bg-white p-2" style={{ maxWidth: 260 }} />
+                          <p className="text-xs text-gray-400 mt-2">WhatsApp → Bağlı cihazlar → Cihaz bağla ile okutun.</p>
+                        </div>
+                      )}
+                      {waQrDurum === 'qr-hazir' && !waQrGoruntu && (
+                        <p className="text-xs text-amber-400">{waQrHata || 'QR henüz hazır değil, tekrar deneyin.'}</p>
+                      )}
+                    </div>
+
+                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-yellow-300 text-xs">
+                      Web.WhatsApp seciliyken telefon numarasi gerekmez; gonderim esnasinda yeni sekmede hazir mesaj acilir ve dosya linkleri mesaja eklenir.
+                    </div>
+                  </div>
+                )}
+
+                {commSettings.whatsapp_channel === 'masaustu' && (
                   <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-yellow-300 text-xs">
-                    Web.WhatsApp seciliyken telefon numarasi gerekmez; gonderim esnasinda yeni sekmede hazir mesaj acilir ve dosya linkleri mesaja eklenir.
+                    Windows Uygulaması seciliyken gonderim bilgisayardaki WhatsApp masaüstü programından otomatik yapılır: mesaj hazırlanır, uygulama açılır ve ENTER otomatik basılır (yardımcı program 2.7.172+ çalışmalı). Uygulama açılmazsa WhatsApp Web yedegi devreye girer.
                   </div>
                 )}
               </div>
@@ -826,7 +1810,7 @@ export default function Settings() {
         )}
 
         {/* BANKA BILGILERI */}
-        {activeTab === 'bank' && user?.role === 'admin' && (
+        {activeTab === 'bank' && adminMi && (
           <div>
             <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
               <Building2 className="w-5 h-5 text-yellow-400" />
@@ -854,48 +1838,509 @@ export default function Settings() {
                 <Building2 className="w-4 h-4 text-yellow-400" />
                 EFT / Havale Hesap Bilgileri
               </h3>
+              <p className="text-gray-400 text-xs mb-4">
+                Birden fazla hesap ekleyebilirsiniz. Müşteri portalında tüm hesaplar listelenir ve müşteri istediğini tek tuşla kopyalayabilir.
+              </p>
+
+              <div className="space-y-4 mb-4">
+                {bankalar.map((hesap, index) => (
+                  <div key={index} className="rounded-xl border border-blue-700/40 bg-blue-950/40 p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <span className="text-sm font-medium text-yellow-400">{index + 1}. Hesap</span>
+                      <button
+                        type="button"
+                        onClick={() => setBankalar(prev => prev.filter((_, i) => i !== index))}
+                        disabled={bankalar.length === 1}
+                        className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs text-red-300 hover:bg-red-500/20 disabled:opacity-40"
+                      >
+                        Hesabı Sil
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                      <div>
+                        <label className="text-gray-400 text-sm block mb-1">Banka Adı</label>
+                        <input
+                          type="text"
+                          value={hesap.banka || ''}
+                          onChange={e => bankaGuncelle(index, 'banka', e.target.value)}
+                          className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-2.5 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500"
+                          placeholder="Örn: Garanti Bankası"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-gray-400 text-sm block mb-1">Hesap Sahibi</label>
+                        <input
+                          type="text"
+                          value={hesap.hesapSahibi || ''}
+                          onChange={e => bankaGuncelle(index, 'hesapSahibi', e.target.value)}
+                          className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-2.5 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500"
+                          placeholder="Örn: Ad Soyad"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-gray-400 text-sm block mb-1">IBAN</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={hesap.iban || ''}
+                            onChange={e => bankaGuncelle(index, 'iban', e.target.value)}
+                            className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-2.5 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500"
+                            placeholder="TR00 0000 0000 0000 0000 0000 00"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => bankaKopyala(index, hesap.iban)}
+                            className={`flex-shrink-0 rounded-lg px-3 py-2.5 text-xs font-medium ${ibanKopyalandi === index ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-300 hover:bg-blue-500/30'}`}
+                            title="IBAN'ı kopyala"
+                          >
+                            {ibanKopyalandi === index ? 'Kopyalandı!' : 'Kopyala'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBankalar(prev => [...prev, { banka: '', hesapSahibi: '', iban: '' }])}
+                  className="rounded-xl border border-yellow-500/40 bg-yellow-500/10 px-4 py-2.5 text-sm font-medium text-yellow-300 hover:bg-yellow-500/20"
+                >
+                  + Hesap Ekle
+                </button>
+                <button onClick={handleBankInfoSave} disabled={bankInfoLoading} className="btn-gold px-6 py-2.5 flex items-center gap-2 disabled:opacity-50">
+                  {bankInfoLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Banka Bilgilerini Kaydet
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* LUCA BAGLANTI */}
+        {activeTab === 'luca' && adminMi && (
+          <div>
+            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <Link2 className="w-5 h-5 text-yellow-400" />
+              Luca Baglanti Merkezi
+            </h2>
+            <p className="text-gray-400 text-sm mb-6">
+              Musterilerin e-Fatura ve e-Arsiv faturalarini Luca uzerinden otomatik sorgulamak icin
+              mali musavir Luca kullanici kodu ve sifrenizi girin. Bilgiler sunucuda saklanir, sorgu
+              sirasında yardimci programa yalnizca islem aninda iletilir.
+            </p>
+
+            {lucaMsg && (
+              <div className="bg-green-500/20 border border-green-500/50 rounded-xl p-3 mb-4 flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-green-400" />
+                <span className="text-green-300 text-sm">{lucaMsg}</span>
+              </div>
+            )}
+            {lucaErr && (
+              <div className="bg-red-500/20 border border-red-500/50 rounded-xl p-3 mb-4 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400" />
+                <span className="text-red-300 text-sm">{lucaErr}</span>
+              </div>
+            )}
+
+            <div className="bg-blue-900/20 rounded-xl p-6 border border-blue-700/30">
+              <h3 className="text-white font-medium mb-4 flex items-center gap-2">
+                <Link2 className="w-4 h-4 text-yellow-400" />
+                Luca Giris Bilgileri
+              </h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                 <div>
-                  <label className="text-gray-400 text-sm block mb-1">Banka Adi</label>
+                  <label className="text-gray-400 text-sm block mb-1">Luca Uye Numarasi</label>
                   <input
                     type="text"
-                    value={bankInfoEdit.banka || ''}
-                    onChange={e => setBankInfoEdit(p => ({ ...p, banka: e.target.value }))}
+                    inputMode="numeric"
+                    value={lucaEdit.member || ''}
+                    onChange={e => setLucaEdit(p => ({ ...p, member: e.target.value }))}
                     className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-2.5 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500"
-                    placeholder="Orn: Garanti Bankasi"
+                    placeholder="Orn: 1309879"
                   />
                 </div>
                 <div>
-                  <label className="text-gray-400 text-sm block mb-1">Hesap Sahibi</label>
+                  <label className="text-gray-400 text-sm block mb-1">Luca Kullanici Adi</label>
                   <input
                     type="text"
-                    value={bankInfoEdit.hesapSahibi || ''}
-                    onChange={e => setBankInfoEdit(p => ({ ...p, hesapSahibi: e.target.value }))}
+                    value={lucaEdit.username || ''}
+                    onChange={e => setLucaEdit(p => ({ ...p, username: e.target.value }))}
                     className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-2.5 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500"
-                    placeholder="Orn: Ad Soyad"
+                    placeholder="Luca kullanici adi"
                   />
                 </div>
                 <div>
-                  <label className="text-gray-400 text-sm block mb-1">IBAN</label>
-                  <input
-                    type="text"
-                    value={bankInfoEdit.iban || ''}
-                    onChange={e => setBankInfoEdit(p => ({ ...p, iban: e.target.value }))}
-                    className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-2.5 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500"
-                    placeholder="TR00 0000 0000 0000 0000 0000 00"
-                  />
+                  <label className="text-gray-400 text-sm block mb-1">Luca Parola</label>
+                  <div className="relative">
+                    <input
+                      type={showLucaPass ? 'text' : 'password'}
+                      value={lucaEdit.password || ''}
+                      onChange={e => setLucaEdit(p => ({ ...p, password: e.target.value }))}
+                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-2.5 px-4 pr-10 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500"
+                      placeholder="Luca parolasi"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLucaPass(!showLucaPass)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
+                    >
+                      {showLucaPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
               </div>
-              <button onClick={handleBankInfoSave} disabled={bankInfoLoading} className="btn-gold px-6 py-2.5 flex items-center gap-2 disabled:opacity-50">
-                {bankInfoLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                Banka Bilgilerini Kaydet
+              {lucaInfo.username && (
+                <p className="text-gray-500 text-xs mb-2">Kayitli: Uye No {lucaInfo.member || '-'} / {lucaInfo.username}</p>
+              )}
+              <p className="text-gray-500 text-xs mb-4">
+                Uye Numarasi, Luca giris ekranindaki <strong>Musteri No</strong> ile aynidir.
+                Luca "Musteri No, Kullanici Adi veya Parola hatalidir" diyorsa bu uc bilgiyi
+                <a href="https://agiris.luca.com.tr/LUCASSO/giris.erp" target="_blank" rel="noreferrer" className="text-yellow-400 hover:underline"> Luca giris ekraninda </a>
+                elle deneyip dogrulugunu kontrol edin.
+              </p>
+              <button onClick={handleLucaSave} disabled={lucaLoading} className="btn-gold px-6 py-2.5 flex items-center gap-2 disabled:opacity-50">
+                {lucaLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Luca Bilgilerini Kaydet
+              </button>
+              <button onClick={handleAdminAc} disabled={lucaLoading} title="MUBiS yardimci programi bu bilgisayarda Luca entegrasyonunu (fatura sorgulama + masaustu kisayolu) acar" className="border border-yellow-400/40 text-yellow-300 px-6 py-2.5 rounded-xl flex items-center gap-2 hover:bg-yellow-400/10 disabled:opacity-50">
+                <Link2 className="w-4 h-4" />
+                Bu Bilgisayarda Luca'yi Ac
+              </button>
+              <p className="text-gray-500 text-xs mt-2">
+                "Bu Bilgisayarda Luca'yi Ac" duymesini kullanmak yerine elle
+                <a href="http://127.0.0.1:8765/admin-mod" target="_blank" rel="noreferrer" className="text-yellow-400 hover:underline"> http://127.0.0.1:8765/admin-mod </a>
+                adresini de ziyaret edebilirsiniz (yedek yol).
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* GIB BAGLANTI (admin vergi dairesi hesabi) */}
+        {/* KAYIT KLASORLERI — indirilen beyanname ve faturalarin G: yollari */}
+        {activeTab === 'kayit-klasorleri' && adminMi && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <FolderTree className="w-5 h-5 text-cyan-400" />
+              <h3 className="text-lg font-semibold text-white">Kayıt Klasörleri</h3>
+            </div>
+            <p className="text-sm text-gray-400">
+              Yardımcı programın indirdiği belgeler bu klasörlere kaydedilir. Her kullanıcı kendi bilgisayarındaki yol­lara göre ayarlayabilir. Klasör yoksa otomatik oluşturulur.
+            </p>
+
+            {klasorMsg && <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/30 text-green-300 text-sm">{klasorMsg}</div>}
+            {klasorErr && <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm">{klasorErr}</div>}
+
+            <div className="grid gap-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">Beyanname Klasörü</label>
+                <input
+                  type="text"
+                  value={klasorEdit.beyanname}
+                  onChange={(e) => setKlasorEdit(v => ({ ...v, beyanname: e.target.value }))}
+                  placeholder="G:\Drive'ım\BEYANNAME"
+                  className="w-full px-3 py-2 rounded-lg bg-gray-800/80 border border-gray-600 text-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                />
+                <p className="text-xs text-gray-500 mt-1">Onaylanan beyanname + tahakkuk PDF'leri buradaki müşteri/tür/yıl/ay klasörlerine kaydedilir.</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">Fatura — Gelen (Alış) Klasörü</label>
+                <input
+                  type="text"
+                  value={klasorEdit.gelen}
+                  onChange={(e) => setKlasorEdit(v => ({ ...v, gelen: e.target.value }))}
+                  placeholder="G:\Drive'ım\EDEFTER"
+                  className="w-full px-3 py-2 rounded-lg bg-gray-800/80 border border-gray-600 text-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                />
+                <p className="text-xs text-gray-500 mt-1">Luca'dan indirilen alış (gelen) faturaları buraya kaydedilir.</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">Fatura — Giden (Satış) Klasörü</label>
+                <input
+                  type="text"
+                  value={klasorEdit.giden}
+                  onChange={(e) => setKlasorEdit(v => ({ ...v, giden: e.target.value }))}
+                  placeholder="G:\Drive'ım\EDEFTER"
+                  className="w-full px-3 py-2 rounded-lg bg-gray-800/80 border border-gray-600 text-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                />
+                <p className="text-xs text-gray-500 mt-1">Luca'dan indirilen satış (giden) faturaları buraya kaydedilir.</p>
+              </div>
+            </div>
+
+            <button
+              onClick={handleKlasorSave}
+              disabled={klasorLoading}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white font-medium transition-colors"
+            >
+              {klasorLoading ? 'Kaydediliyor...' : 'Klasör Ayarlarını Kaydet'}
+            </button>
+          </div>
+        )}
+
+        {activeTab === 'gib' && adminMi && (
+          <div>
+            <h2 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+              <Landmark className="w-5 h-5 text-yellow-400" />
+              GİB Bağlantı Merkezi
+            </h2>
+            <p className="text-gray-400 text-sm mb-4">
+              Beyanname ve tahakkuklar, beyan onay otomasyonu ile <strong>bu admin vergi dairesi hesabıyla</strong> GİB'den
+              (dijital.gib.gov.tr) otomatik indirilir. Müşterilerin beyanları bu hesap üzerinden tek tek aranır
+              (VKN / TCKN ile). Bilgiler sunucuda saklanır.
+            </p>
+
+            {gibMsg && (
+              <div className="bg-green-500/20 border border-green-500/50 rounded-xl p-3 mb-4">
+                <span className="text-green-300 text-sm">{gibMsg}</span>
+              </div>
+            )}
+            {gibErr && (
+              <div className="bg-red-500/20 border border-red-500/50 rounded-xl p-3 mb-4">
+                <span className="text-red-300 text-sm">{gibErr}</span>
+              </div>
+            )}
+
+            <div className="bg-blue-900/20 border border-blue-700/30 rounded-xl p-5 mb-4 max-w-lg">
+              <h3 className="text-white font-medium mb-3">Admin Vergi Dairesi Giriş Bilgileri</h3>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-gray-400 text-sm block mb-1">VD Kullanıcı Kodu</label>
+                  <input
+                    type="text"
+                    value={gibEdit.kullanici || ''}
+                    onChange={e => setGibEdit(p => ({ ...p, kullanici: e.target.value }))}
+                    placeholder="İnternet vergi dairesi kullanıcı kodu"
+                    className="w-full px-4 py-2.5 bg-blue-900/40 border border-blue-700/40 rounded-xl text-white text-sm focus:outline-none focus:border-yellow-500/50"
+                  />
+                </div>
+                <div>
+                  <label className="text-gray-400 text-sm block mb-1">VD Şifresi</label>
+                  <div className="relative">
+                    <input
+                      type={showGibPass ? 'text' : 'password'}
+                      value={gibEdit.parola || ''}
+                      onChange={e => setGibEdit(p => ({ ...p, parola: e.target.value }))}
+                      placeholder="İnternet vergi dairesi şifresi"
+                      className="w-full px-4 py-2.5 pr-11 bg-blue-900/40 border border-blue-700/40 rounded-xl text-white text-sm focus:outline-none focus:border-yellow-500/50"
+                    />
+                    <button type="button" onClick={() => setShowGibPass(!showGibPass)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white">
+                      {showGibPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {gibInfo.kullanici && (
+                <p className="text-gray-500 text-xs mt-2">Kayıtlı kullanıcı kodu: {gibInfo.kullanici}</p>
+              )}
+              <p className="text-gray-500 text-xs mt-2">
+                Bu bilgiler <strong>admin</strong> hesabıdır: tüm müşteri beyanları tek bu hesap üzerinden indirilir.
+                Müşterilerin kendi VD bilgileri girilse bile otomasyonda admin hesabı kullanılır.
+              </p>
+              <button onClick={handleGibSave} disabled={gibLoading} className="btn-gold px-6 py-2.5 mt-4 flex items-center gap-2 disabled:opacity-50">
+                {gibLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                GİB Bilgilerini Kaydet
               </button>
             </div>
           </div>
         )}
 
+        {/* ANA EKRAN ASISTANI — admin cinsiyet secimi */}
+        {activeTab === 'masaustu-asistan' && adminMi && (
+          <div>
+            <h2 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+              <Bot className="w-5 h-5 text-yellow-400" />
+              Ana Ekran Asistanı
+            </h2>
+            <p className="text-gray-400 text-sm mb-4">
+              Admin ana ekranındaki asistan modelini seçin. Seçim anında uygulanır:
+              <strong> Erkek 1 / Erkek 2</strong> ya da <strong>Kadın 1 / Kadın 2 / Kadın 3</strong> asistan ana ekranda görünür.
+            </p>
+
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-2 max-w-4xl">
+              {[
+                { v: 'erkek', ad: 'Erkek 1', img: '/mascot-admin-erkek.png' },
+                { v: 'erkek2', ad: 'Erkek 2', img: '/mascot-admin-erkek2-v4.png' },
+                { v: 'kadin', ad: 'Kadın 1', img: '/mascot-admin-kadin.png' },
+                { v: 'kadin2', ad: 'Kadın 2', img: '/mascot-admin-kadin2-v2.png' },
+                { v: 'kadin3', ad: 'Kadın 3', img: '/mascot-admin-kadin3-v2.png' },
+              ].map(s => (
+                <button key={s.v} onClick={() => cinsiyetKaydet(s.v)}
+                  className={`rounded-xl border p-4 transition-all ${
+                    adminCinsiyet === s.v
+                      ? 'bg-yellow-500/10 border-yellow-500/50 text-yellow-300'
+                      : 'bg-blue-900/20 border-blue-700/30 text-gray-300 hover:border-blue-600/50'
+                  }`}>
+                  <img src={s.img} alt={s.ad + ' asistan'} className="h-28 mx-auto object-contain mb-2" />
+                  <div className="font-medium">{s.ad}</div>
+                  {adminCinsiyet === s.v && <div className="text-[11px] text-yellow-400 mt-0.5">Seçili</div>}
+                </button>
+              ))}
+            </div>
+            <p className="text-gray-500 text-xs">
+              Seçim bu bilgisayarda kayıtlı tutulur; ana ekranda hemen uygulanır.
+            </p>
+
+            {/* 2.7.543: Namaz vakitleri / imsakiye ac-kapa (varsayilan kapali) */}
+            <div className="mt-4 bg-blue-900/20 rounded-xl p-4 max-w-lg">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-start space-x-3">
+                  <span className="text-2xl leading-none" aria-hidden="true">🕌</span>
+                  <div>
+                    <span className="text-gray-300 text-sm font-medium">Namaz Vakitleri / İmsakiye</span>
+                    <p className="text-gray-500 text-xs mt-0.5">Açık olursa ana ekran üst bandında, saat ve hava durumunun altında yaklaşan namaz vakti gösterilir; üzerine gelince günlük tüm vakitler açılır.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={namazGoster}
+                  onClick={() => { const yeni = !namazGoster; setNamazGoster(yeni); localStorage.setItem('admin_namaz_v1', yeni ? '1' : '0') }}
+                  className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${namazGoster ? 'bg-emerald-500' : 'bg-blue-700/60'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${namazGoster ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* 2.7.546: Web radyo ac-kapa (varsayilan kapali) */}
+            <div className="mt-3 bg-blue-900/20 rounded-xl p-4 max-w-lg">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-start space-x-3">
+                  <span className="text-2xl leading-none" aria-hidden="true">📻</span>
+                  <div>
+                    <span className="text-gray-300 text-sm font-medium">Web Radyo</span>
+                    <p className="text-gray-500 text-xs mt-0.5">Açık olursa ana ekran üst bandında radyo rozeti gösterilir; tıklayınca açılır listeden yerli ve yabancı radyo istasyonları dinlenir. Favoriler ve ses ayarı kaydedilir.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={radyoGoster}
+                  onClick={() => { const yeni = !radyoGoster; setRadyoGoster(yeni); localStorage.setItem('admin_radio_v1', yeni ? '1' : '0') }}
+                  className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${radyoGoster ? 'bg-emerald-500' : 'bg-blue-700/60'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${radyoGoster ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* 2.7.546: YouTube Müzik ac-kapa (varsayilan kapali) */}
+            <div className="mt-3 bg-blue-900/20 rounded-xl p-4 max-w-lg">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-start space-x-3">
+                  <span className="text-2xl leading-none" aria-hidden="true">▶️</span>
+                  <div>
+                    <span className="text-gray-300 text-sm font-medium">YouTube Müzik</span>
+                    <p className="text-gray-500 text-xs mt-0.5">Açık olursa ana ekran üst bandında YouTube Müzik rozeti gösterilir; şarkı arama ve hazır listeler küçük ayrı pencerede dinlenir.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={ytMuzikGoster}
+                  onClick={() => { const yeni = !ytMuzikGoster; setYtMuzikGoster(yeni); localStorage.setItem('admin_ytmusic_v1', yeni ? '1' : '0') }}
+                  className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${ytMuzikGoster ? 'bg-emerald-500' : 'bg-blue-700/60'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${ytMuzikGoster ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* 2.7.546: Spotify ac-kapa (varsayilan kapali) */}
+            <div className="mt-3 bg-blue-900/20 rounded-xl p-4 max-w-lg">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-start space-x-3">
+                  <span className="text-2xl leading-none" aria-hidden="true">🎧</span>
+                  <div>
+                    <span className="text-gray-300 text-sm font-medium">Spotify</span>
+                    <p className="text-gray-500 text-xs mt-0.5">Açık olursa ana ekran üst bandında Spotify rozeti gösterilir; şarkı arama ve hazır listeler küçük ayrı pencerede dinlenir (Spotify üyeliği gerekir).</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={spotifyGoster}
+                  onClick={() => { const yeni = !spotifyGoster; setSpotifyGoster(yeni); localStorage.setItem('admin_spotify_v1', yeni ? '1' : '0') }}
+                  className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${spotifyGoster ? 'bg-emerald-500' : 'bg-blue-700/60'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${spotifyGoster ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* 2.8.0: Sunucu yardimcisi (VPS) — bilgisayarsiz sorgu */}
+            <div className="mt-6 pt-6 border-t border-blue-800/40">
+              <h3 className="text-base font-semibold text-white mb-1 flex items-center gap-2">
+                <Shield className="w-4 h-4 text-cyan-400" />
+                Sunucu Yardımcısı (VPS)
+              </h3>
+              <p className="text-gray-400 text-sm mb-3">
+                Sunucuda kurulu yardımcı servise bağlanın: bilgisayarınız kapalıyken de
+                e-Tebligat ve fatura sorguları sunucuda çalışır. Boş bırakırsanız yerel
+                yardımcı program kullanılır. Sunucu adresi ve anahtarı sistem yöneticisi tarafından yapılandırılır;
+                aşağıdaki alan yalnızca sunucu modunu açar.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-3xl">
+                <input
+                  value={sunucuUrl}
+                  onChange={e => setSunucuUrl(e.target.value)}
+                  placeholder="Sunucu modunu açmak için bir ad girin"
+                  className="bg-blue-950/60 border border-blue-800/60 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-blue-700"
+                />
+              </div>
+              {sunucuMsg && <div className="mt-2 text-sm text-cyan-300">{sunucuMsg}</div>}
+              <div className="flex items-center gap-3 mt-3">
+                <button onClick={sunucuAyarKaydet} className="btn-gold px-6 py-2.5 rounded-xl font-medium">Kaydet</button>
+                <button onClick={sunucuTestEt} className="border border-cyan-500/40 text-cyan-300 px-6 py-2.5 rounded-xl hover:bg-cyan-500/10">Bağlantıyı Test Et</button>
+                <span className="text-gray-400 text-sm">
+                  Durum: {sunucuAktif
+                    ? <strong className="text-green-400">SUNUCU MODU AKTİF</strong>
+                    : <strong className="text-gray-500">Yerel yardımcı kullanılıyor</strong>}
+                </span>
+              </div>
+            </div>
+
+            {/* Admin olarak calistir sabitleme */}
+            <div className="mt-6 pt-6 border-t border-blue-800/40">
+              <h3 className="text-base font-semibold text-white mb-1 flex items-center gap-2">
+                <Shield className="w-4 h-4 text-yellow-400" />
+                Yardımcı Programı Admin Olarak Ata
+              </h3>
+              <p className="text-gray-400 text-sm mb-3">
+                Aktifken yardımcı program her açılışta <strong>Yönetici olarak çalıştırılır</strong>; güncelleme sonrası
+                elle "yönetici olarak çalıştır" tanımlamanız gerekmez.
+              </p>
+              {adminAtaMsg && (
+                <div className="bg-blue-500/20 border border-blue-500/50 rounded-xl p-3 mb-3">
+                  <span className="text-blue-300 text-sm">{adminAtaMsg}</span>
+                </div>
+              )}
+              <div className="flex items-center gap-3 flex-wrap">
+                <button onClick={() => adminAtaKaydet(!adminAta)}
+                  disabled={adminAta === null}
+                  className={`px-6 py-2.5 rounded-xl font-medium disabled:opacity-50 ${
+                    adminAta
+                      ? 'bg-red-600/80 hover:bg-red-600 text-white'
+                      : 'btn-gold'
+                  }`}>
+                  {adminAta ? 'Admin Atamayı Kaldır' : 'Admin Olarak Ata'}
+                </button>
+                <span className="text-gray-400 text-sm">
+                  Durum: {adminAta === null
+                    ? <strong className="text-gray-500">Yardımcı program kapalı</strong>
+                    : adminAta
+                      ? <strong className="text-green-400">ADMIN AKTİF</strong>
+                      : <strong className="text-red-400">ADMIN KAPALI</strong>}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ODEME KURULUSU SECIMI */}
-        {activeTab === 'payments' && user?.role === 'admin' && (
+        {activeTab === 'payments' && adminMi && (
           <div>
             <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
               <CreditCard className="w-5 h-5 text-yellow-400" />
@@ -1172,7 +2617,7 @@ export default function Settings() {
         )}
 
         {/* MUBIS ASISTAN SESI (Admin) */}
-        {activeTab === 'assistant' && user?.role === 'admin' && (
+        {activeTab === 'assistant' && adminMi && (
           <div>
             <h2 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
               <Volume2 className="w-5 h-5 text-yellow-400" />
@@ -1299,7 +2744,7 @@ export default function Settings() {
         )}
 
         {/* KULLANICI YONETIMI (Admin) */}
-        {activeTab === 'users' && user?.role === 'admin' && (
+        {activeTab === 'users' && adminMi && (
           <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-white">Kullanici Yonetimi</h2>
@@ -1311,6 +2756,10 @@ export default function Settings() {
                     Secilenleri Sil ({selectedIds.size})
                   </button>
                 )}
+                <button onClick={() => { setNewUserForm({ name: '', email: '', password: '', role: 'personel' }); setShowNewUserForm(true) }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-sm rounded-xl flex items-center gap-2">
+                  <Plus className="w-4 h-4" />
+                  Personel Ekle
+                </button>
                 <button onClick={() => setShowNewUserForm(!showNewUserForm)} className="btn-gold px-4 py-2 text-sm flex items-center gap-2">
                   <Plus className="w-4 h-4" />
                   Yeni Kullanici Ekle
@@ -1458,9 +2907,25 @@ export default function Settings() {
                     className="bg-blue-900/30 border border-blue-700/50 rounded-xl py-2.5 px-4 text-white text-sm focus:outline-none focus:border-yellow-500">
                     <option value="personel">Personel</option>
                     <option value="admin">Admin</option>
-                    <option value="client">Client</option>
+                    <option value="musteri">Müşteri</option>
                   </select>
                 </div>
+                {editForm.role !== 'client' && editForm.role !== 'musteri' && (
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="text-gray-300 text-sm">Mükellef</span>
+                    <div className="flex rounded-xl overflow-hidden border border-blue-700/50">
+                      <button type="button" onClick={() => setEditForm({ ...editForm, mukellef: true })}
+                        className={`px-4 py-2 text-sm transition-colors ${editForm.mukellef ? 'bg-green-600/80 text-white font-medium' : 'bg-blue-900/30 text-gray-400 hover:bg-blue-800/40'}`}>
+                        Evet
+                      </button>
+                      <button type="button" onClick={() => setEditForm({ ...editForm, mukellef: false })}
+                        className={`px-4 py-2 text-sm transition-colors ${!editForm.mukellef ? 'bg-red-600/70 text-white font-medium' : 'bg-blue-900/30 text-gray-400 hover:bg-blue-800/40'}`}>
+                        Hayır
+                      </button>
+                    </div>
+                    <span className="text-gray-500 text-xs">Evet ise sol menüde kendi mükellef klasörü görünür</span>
+                  </div>
+                )}
                 <div className="flex items-center gap-3">
                   <button type="submit" disabled={adminLoading} className="btn-gold px-5 py-2 text-sm flex items-center gap-2 disabled:opacity-50">
                     {adminLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}

@@ -548,7 +548,9 @@ async function odemeHatirlatmaHandler(req, res) {
           `Sayın ${c.name || ''},`,
           `${yil} yılı ${ODEME_AY_ADLARI[ay]} dönemi ${etiket} tahakkukunuzun son ödeme tarihi ${ohTrTarih(sonOdeme)} (${kalanGun === 0 ? 'BUGÜN' : `${kalanGun} gün kaldı`}).`,
           tutar > 0 ? `Tahakkuk tutarı: ${tutar.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} TL.` : '',
-          `Ödemenizi https://www.mubiserp.com üzerinden veya vergi dairesine yapabilirsiniz.`,
+          tip === 'sgk'
+            ? `SGK prim ödemenizi e-Devlet üzerinden kredi kartıyla yapabilirsiniz: https://www.turkiye.gov.tr/sosyal-guvenlik-sosyal-guvenlik-kurumu-kart-ile-prim-odeme-uygulamasi (e-Devlet şifrenizle giriş yapılır).`
+            : `Ödemenizi https://www.mubiserp.com üzerinden veya vergi dairesine yapabilirsiniz.`,
           `Saygılarımızla, MUBiS ERP`
         ].filter(Boolean).join('\n')
 

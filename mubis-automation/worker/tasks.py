@@ -1,15 +1,28 @@
 from datetime import datetime
+import logging
 from typing import List
 
 from worker.celery_app import app
 from shared.config import get_settings
-from shared.db import update_job, get_clients_for_automation
+from shared.db import check_work_permit_expiry, update_job, get_clients_for_automation
 from shared.storage import save_automation_document, get_temporary_download_path
 from shared.crypto import decrypt_portal_credentials
 from worker.browsers.edevlet import ETebligatRobot
 from worker.browsers.sgk import SGKRobot
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+
+@app.task(name="worker.tasks.check_work_permit_expiry_task", queue="automation")
+def check_work_permit_expiry_task():
+    result = check_work_permit_expiry()
+    logger.info(
+        "Daily work-permit expiry check completed: checked=%s notified=%s",
+        result.get("checked", 0),
+        result.get("notified", 0),
+    )
+    return result
 
 
 @app.task(bind=True, name="worker.tasks.run_automation_job")

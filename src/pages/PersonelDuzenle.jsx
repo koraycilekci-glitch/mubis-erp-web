@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom'
 import { ArrowLeft, Save } from 'lucide-react'
 import { useClients } from '../hooks/useClients'
 import { addEmployee, getEmployees, updateEmployee } from '../services/clientService'
-import { formatTurkishInput, parseTurkishNumber } from '../utils/numberFormat'
+import { formatTurkishInput, parseTurkishNumber, hamTutarGirdisi } from '../utils/numberFormat'
 
 const currentYear = new Date().getFullYear()
 
@@ -248,12 +248,12 @@ export default function PersonelDuzenle() {
           {form.ucret_tipi === 'net' ? (
             <label className="space-y-1">
               <span className="text-sm font-medium text-slate-300">Net ücret (TL)</span>
-              <input name="net_ucret" type="text" inputMode="decimal" value={form.net_ucret} onChange={(event) => setForm((previous) => ({ ...previous, net_ucret: formatTurkishInput(event.target.value) }))} placeholder="Net ücret tutarı" className="w-full rounded-lg bg-slate-800 px-3 py-2" />
+              <input name="net_ucret" type="text" inputMode="decimal" value={form.net_ucret} onChange={(event) => setForm((previous) => ({ ...previous, net_ucret: hamTutarGirdisi(event.target.value) }))} onBlur={(event) => setForm((previous) => ({ ...previous, net_ucret: formatTurkishInput(event.target.value) }))} placeholder="Net ücret tutarı" className="w-full rounded-lg bg-slate-800 px-3 py-2" />
             </label>
           ) : (
             <label className="space-y-1">
               <span className="text-sm font-medium text-slate-300">Brüt ücret (TL)</span>
-              <input name="brut_ucret" type="text" inputMode="decimal" value={form.brut_ucret} onChange={(event) => setForm((previous) => ({ ...previous, brut_ucret: formatTurkishInput(event.target.value) }))} placeholder="Brüt ücret tutarı" className="w-full rounded-lg bg-slate-800 px-3 py-2" />
+              <input name="brut_ucret" type="text" inputMode="decimal" value={form.brut_ucret} onChange={(event) => setForm((previous) => ({ ...previous, brut_ucret: hamTutarGirdisi(event.target.value) }))} onBlur={(event) => setForm((previous) => ({ ...previous, brut_ucret: formatTurkishInput(event.target.value) }))} placeholder="Brüt ücret tutarı" className="w-full rounded-lg bg-slate-800 px-3 py-2" />
             </label>
           )}
           <div className="hidden md:block" />

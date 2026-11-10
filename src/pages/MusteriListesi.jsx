@@ -1,20 +1,44 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Fragment } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useClients } from '../hooks/useClients'
 import { supabase } from '../lib/supabase'
 import { Link, useNavigate } from 'react-router-dom'
 import * as XLSX from 'xlsx'
-import { bulkAddClients } from '../services/clientService'
-import { 
+import { bulkAddClients, addClient, updateClient } from '../services/clientService'
+import { lucaFirmalariGetir } from '../services/lucaFirmaService'
+import { naceSadeceKod, naceAciklama } from '../utils/naceCodes'
+import { gibLucaSorguDurdur } from '../utils/gibOdemeHelper'
+import {
   Plus, Search, Filter, MapPin,
   Trash2, X, Eye, ListChecks, FileText,
   Users, Building2, UserCheck, ChevronLeft,
-  Upload, Download
+  Upload, Download, RefreshCw, Loader2
 } from 'lucide-react'
 
 export default function MusteriListesi() {
   const { user, deleteClient } = useAuth()
   const { clients, refresh } = useClients()
+
+  // 2.7.522: Luca firmasi mevcut musterilerde zaten var mi?
+  // (VKN/TCKN birebir veya normalize unvan eslesmesi — lucaFirmaKaydet ile ayni mantik)
+  // 2.7.523: sirket unvanli Luca firmasi (LTD/A.Ş./ŞTİ) sahıs kartlarıyla eslesmez.
+  const lucaZatenVar = (f) => {
+    const normAd = (s) => String(s || '').toLocaleLowerCase('tr').replace(/[^a-z0-9çğıöşü ]/gi, '').replace(/\s+/g, ' ').trim()
+    const ozAd = (s) => normAd(s)
+      .replace(/\b(a\.?ş\.?|a\.?s\.?|ltd\.?|şti\.?|sti\.?|tic\.?|san\.?|ve|limited|anonim|sirket)\b/g, '')
+      .replace(/\s+/g, ' ').trim()
+    const kimlik = f.kimlik || f.vkn || f.tckn
+    const sirketUnvan = /\b(LTD|A\.Ş|A\.S|ŞTİ|STI|TİC|TIC|SAN|HOLDİNG)\b/i.test(f.ad || '')
+    const aday = (clients || []).find(c =>
+      (kimlik && (String(c.vkn || '') === String(kimlik) || String(c.tc || '') === String(kimlik))) ||
+      normAd(c.shortName) === normAd(f.ad) || normAd(c.name) === normAd(f.ad) ||
+      ozAd(c.shortName) === ozAd(f.ad) || ozAd(c.name) === ozAd(f.ad) ||
+      (() => { const a = ozAd(c.shortName || c.name), b = ozAd(f.ad); return a.length >= 6 && b.length >= 6 && (a.includes(b) || b.includes(a)) })()
+    )
+    if (!aday) return false
+    if (sirketUnvan && (aday.type === 'individual' || (aday.tc && !aday.vkn))) return false
+    return true
+  }
   const navigate = useNavigate()
   const [searchTerm, setSearchTerm] = useState('')
   const [filterType, setFilterType] = useState('all')
@@ -27,6 +51,303 @@ export default function MusteriListesi() {
   const [selectedIds, setSelectedIds] = useState([])
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const fileInputRef = useRef(null)
+
+  // 2.7.473: LUCA'DAN FIRMALARI GETIR — yardimci program Luca Musavir
+  // Paketi'ndeki firma listesini okur; ici aktarma penceresinde her firma
+  // icin ayni anda GİB (VD) ve SGK kimlik bilgileri girilir/kaydedilir
+  // (lisansli otomasyon yaziliminin firma+tam yetki akisi gibi).
+  const [lucaGetir, setLucaGetir] = useState({ acik: false, yukleniyor: false, hata: '', firmalar: [] })
+  const [lucaIlerleme, setLucaIlerleme] = useState(null)
+  const [lucaKaydediyor, setLucaKaydediyor] = useState(false)
+
+  const lucaSorguDurdur = async () => {
+    const gitti = await gibLucaSorguDurdur()
+    if (!gitti) {
+      setLucaGetir(g => ({ ...g, hata: 'Durdurma isteği gönderilemedi — yardımcı program yanıtsız.' }))
+      return
+    }
+    setLucaGetir(g => ({ ...g, durduruluyor: true }))
+  }
+
+  const lucaFirmalariAc = async () => {
+    setLucaGetir({ acik: true, yukleniyor: true, hata: '', firmalar: [], durduruluyor: false })
+    setLucaIlerleme(null)
+    try {
+      const res = await lucaFirmalariGetir(d => setLucaIlerleme(d))
+      if (!res.ok) {
+        const nedenler = {
+          'kurulu-degil': 'Yardımcı program bu bilgisayarda çalışmıyor.',
+          'erisim-engelli': 'Yardımcı programın eski sürümü çalışıyor — güncellemeyi bekleyin/başlatın.',
+          'servis-yanit-vermedi': 'Yardımcı program yanıt vermedi.'
+        }
+        setLucaGetir(g => ({ ...g, yukleniyor: false, hata: nedenler[res.reason] || ('Luca listesi alınamadı: ' + (res.reason || 'bilinmeyen')) }))
+        return
+      }
+      if (res.durduruldu && res.firmalar?.length) {
+        // Kullanıcı durdurdu: o ana kadar okunan firmalar tabloda gösterilir
+        setLucaGetir(g => ({
+          ...g, yukleniyor: false, detayli: true, durduruluyor: false,
+          uyari: `Sorgulama durduruldu — ${res.firmalar.length} firma okundu, ${res.durdurulan || 0} firma atlandı. İsterseniz kaydedebilir veya tekrar sorgulayabilirsiniz.`,
+          firmalar: res.firmalar.map(f => ({
+            secili: true, ad: f.ad, kisaAd: f.kisaAd || '', kimlik: f.kimlik || '',
+            vkn: f.vkn || '', tckn: f.tckn || '',
+            vergiDairesi: f.vergiDairesi || '', kullaniciAdi: f.kullaniciAdi || '',
+            adres: f.adres || '', telefon: f.telefon || '', ePosta: f.ePosta || '',
+            ticaretSicilNo: f.ticaretSicilNo || '', sirketTipi: f.sirketTipi || '',
+            iseBaslama: f.iseBaslama || '', kapanisTarihi: f.kapanisTarihi || '',
+            faaliyetKodu: f.faaliyetKodu || '', faaliyetAlani: f.faaliyetAlani || '',
+            kurulusTarihi: f.kurulusTarihi || '',
+            defterTipi: f.defterTipi || '', alanlar: f.alanlar || {},
+            sgkKayitlari: f.sgkKayitlari || [],
+            vdSifre: f.vdSifreOtomatik || '', sgkUser: f.sgkKullanici || '', sgkSifre: f.sgkSistemSifre || '',
+            gibKullanici: f.gibKullanici || '', gibParola: f.gibParola || '',
+            sgkIsyeriKodu: f.sgkIsyeriKodu || '', sgkIsyeriSifresi: f.sgkIsyeriSifresi || ''
+          })).map(f => { const z = lucaZatenVar(f); return { ...f, secili: !z, zatenVar: z } })
+        }))
+        return
+      }
+      if (!res.firmalar?.length) {
+        setLucaGetir(g => ({ ...g, yukleniyor: false, hata: 'Luca\'da firma bulunamadı.' }))
+        return
+      }
+      // 2.7.497: Luca'dan sifre okunamadiginda kullaniciyi uyaran tani mesaji
+      const sifreUyari = res.vdSifreli === 0 && res.sgkli === 0
+        ? 'GİB (VD) ve SGK şifreleri Luca\'dan okunamadı — Luca\'da aktif şirketin "Beyannameler → Toplu Beyanname → GİB ŞİRKET" tablosu ve E-Bildirge tanımları kontrol edilmeli. Diğer bilgiler yine de kaydedilebilir.'
+        : (res.vdSifreli === 0 ? 'GİB (VD) şifreleri Luca\'dan okunamadı (GİB ŞİRKET tablosu boş/bulunamadı).' : '')
+      setLucaGetir(g => ({
+        ...g, yukleniyor: false, detayli: res.detayli !== false,
+        uyari: sifreUyari || g.uyari || '',
+        firmalar: res.firmalar.map(f => ({
+          secili: true, ad: f.ad, kisaAd: f.kisaAd || '', kimlik: f.kimlik || '',
+          vkn: f.vkn || '', tckn: f.tckn || '',
+          vergiDairesi: f.vergiDairesi || '', kullaniciAdi: f.kullaniciAdi || '',
+          adres: f.adres || '', telefon: f.telefon || '', ePosta: f.ePosta || '',
+          ticaretSicilNo: f.ticaretSicilNo || '', sirketTipi: f.sirketTipi || '',
+          iseBaslama: f.iseBaslama || '', kapanisTarihi: f.kapanisTarihi || '',
+          faaliyetKodu: f.faaliyetKodu || '', faaliyetAlani: f.faaliyetAlani || '',
+          kurulusTarihi: f.kurulusTarihi || '',
+          defterTipi: f.defterTipi || '', alanlar: f.alanlar || {},
+          sgkKayitlari: f.sgkKayitlari || [],
+          // 2.7.482: Luca'daki TOPLU BEYANNAME ve E-Bildirge tablolarindan okunan
+          // sifreler alanlara on-doldurulur (kullanici degistirebilir)
+          vdSifre: f.vdSifreOtomatik || '', sgkUser: f.sgkKullanici || '', sgkSifre: f.sgkSistemSifre || '',
+          gibKullanici: f.gibKullanici || '', gibParola: f.gibParola || '',
+          sgkIsyeriKodu: f.sgkIsyeriKodu || '', sgkIsyeriSifresi: f.sgkIsyeriSifresi || ''
+        })).map(f => { const z = lucaZatenVar(f); return { ...f, secili: !z, zatenVar: z } })
+      }))
+    } catch (e) {
+      setLucaGetir(g => ({ ...g, yukleniyor: false, hata: 'Hata: ' + (e?.message || e) }))
+    }
+  }
+
+  const lucaFirmaKaydet = async () => {
+    const normAd = (s) => String(s || '').toLocaleLowerCase('tr').replace(/[^a-z0-9çğıöşü ]/gi, '').replace(/\s+/g, ' ').trim()
+    // 2.7.498: tabloya girmis olabilecek mükerrer satirlar kayitta tek cumlenir
+    // (ayni VKN/TCKN, kimlik yoksa ayni normalize unvan)
+    const mAnahtar = (f) => {
+      const k = f.tckn || f.vkn || f.kimlik
+      if (k && /^\d{10,11}$/.test(k)) return 'k' + k
+      return 'a' + normAd(f.ad)
+    }
+    const gorulen = new Set()
+    const secilen = lucaGetir.firmalar.filter(f => {
+      if (!f.secili) return false
+      const k = mAnahtar(f)
+      if (gorulen.has(k)) return false
+      gorulen.add(k)
+      return true
+    })
+    if (!secilen.length) return
+    // 2.7.498: Luca tarihleri GG/AA/YYYY gelir — Supabase tarih kolonlari ISO ister
+    const isoTarih = (s) => {
+      const m = /^(\d{1,2})[/.](\d{1,2})[/.](\d{4})$/.exec(String(s || '').trim())
+      return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : ''
+    }
+    // 2.7.498: vergi türü saptamasi — eskiden herkese "Kurumlar Vergisi"
+    // yaziliyordu. TCKN'li / işletme-serbest meslek-basit usul defterli /
+    // hukuki mahiyeti şahıs / unvanında şirket eki olmayan → Gelir Vergisi;
+    // unvaninda LTD/A.Ş/ŞTİ vb. olan → Kurumlar Vergisi.
+    const vergiTuru = (f) => {
+      const kimlik = f.tckn || f.kimlik || ''
+      if (String(kimlik).length === 11) return 'Gelir Vergisi'
+      const dt = String(f.defterTipi || '').toLocaleLowerCase('tr')
+      if (dt.includes('işletme') || dt.includes('isletme') || dt.includes('serbest') || dt.includes('basit')) return 'Gelir Vergisi'
+      if (f.sirketTipi && /şahıs|sahis/i.test(f.sirketTipi)) return 'Gelir Vergisi'
+      const sirketMi = /\b(LTD|A\.Ş|A\.S|ŞTİ|STI|TİC|TIC|SAN|HOLDİNG|KOOP|KOLL)\b/i.test(f.ad || '')
+      return sirketMi ? 'Kurumlar Vergisi' : 'Gelir Vergisi'
+    }
+    setLucaKaydediyor(true)
+    try {
+      // Unvan kiyaslarken sirket eklerini kis (A.Ş., LTD. ŞTİ. vb. farklari
+      // ayni firmayi iki musteri yapmasin)
+      const ozAd = (s) => normAd(s)
+        .replace(/\b(a\.?ş\.?|a\.?s\.?|ltd\.?|şti\.?|sti\.?|tic\.?|san\.?|ve|limited|anonim|sirket)\b/g, '')
+        .replace(/\s+/g, ' ').trim()
+      const mevcut = clients || []
+      let eklendi = 0, guncellendi = 0
+      for (const f of secilen) {
+        // 2.7.523: şirket unvanlı Luca firması şahıs kartına yazılmaz —
+        // yanlış VKN bir kere şahıs kartına yazıldıysa her Luca aktarımı aynı
+        // kartı tekrar "güncelliyordu"; bu koruma o zinciri kırar.
+        const sirketUnvanli = /\b(LTD|A\.Ş|A\.S|ŞTİ|STI|TİC|TIC|SAN|HOLDİNG)\b/i.test(f.ad || '')
+        // 2.7.474: mukerrer yukleme korumasi — eslesen bul:
+        // 1) VKN/TCKN birebir, 2) normalize unvan birebir,
+        // 3) oz unvan birebir, 4) karsilikli icerme (uzunluk >= 6)
+        const eslesenHam =
+          (f.kimlik && mevcut.find(c => String(c.vkn || '') === f.kimlik || String(c.tc || '') === f.kimlik)) ||
+          mevcut.find(c => normAd(c.shortName) === normAd(f.ad) || normAd(c.name) === normAd(f.ad)) ||
+          mevcut.find(c => ozAd(c.shortName) === ozAd(f.ad) || ozAd(c.name) === ozAd(f.ad)) ||
+          mevcut.find(c => {
+            const a = ozAd(c.shortName || c.name), b = ozAd(f.ad)
+            return a.length >= 6 && b.length >= 6 && (a.includes(b) || b.includes(a))
+          })
+        const eslesen = (eslesenHam && sirketUnvanli && (eslesenHam.type === 'individual' || (eslesenHam.tc && !eslesenHam.vkn))) ? null : eslesenHam
+        // Sadece kullanici girilen alanlari yaz; bos birakilanlar mevcut degeri KORUR
+        // 2.7.476: Luca'dan okunan vergi dairesi, defter turu ve tum musteri
+        // bilgileri alanlari da ilgili yerlere yazilir (admin onayindan sonra).
+        const yamalar = {}
+        // 2.7.498: VKN ve TCKN AYRI ayrı yazilir — şahıs mükellefin ikisi de dolabilir
+        const yeniVkn = f.vkn || (f.kimlik && f.kimlik.length === 10 ? f.kimlik : '')
+        const yeniTc = f.tckn || (f.kimlik && f.kimlik.length === 11 ? f.kimlik : '')
+        if (yeniTc) yamalar.tc = yeniTc
+        if (yeniVkn) yamalar.vkn = yeniVkn
+        // 2.7.498: vergi türü düzeltmesi — mevcut kayitta yanlışsa güncellenir
+        const dogruVergiTuru = vergiTuru(f)
+        if (dogruVergiTuru && eslesen?.taxType !== dogruVergiTuru) yamalar.taxType = dogruVergiTuru
+        if (f.vergiDairesi) yamalar.taxOffice = f.vergiDairesi
+        if (f.defterTipi) {
+          yamalar.defterTipi = f.defterTipi
+          if (f.defterTipi === 'Serbest Meslek') yamalar.serbestMeslek = true
+        }
+        // 2.7.482: Luca kimlik tablolarindan gelen ek bilgiler lucaBilgileri'nde saklanir
+        const lb = { ...(f.alanlar || {}) }
+        if (f.gibKullanici) lb['GİB Kullanıcı Adı'] = f.gibKullanici
+        if (f.gibParola) lb['GİB Parola'] = f.gibParola
+        if (f.sgkIsyeriKodu) lb['SGK İşyeri Kodu'] = f.sgkIsyeriKodu
+        if (f.sgkIsyeriSifresi) lb['SGK İşyeri Şifresi'] = f.sgkIsyeriSifresi
+        // 2.7.503: birden fazla SGK numarasi (isyeri) — tüm hesaplar listeye yazilir;
+        // birinci hesap yamalardaki sgk* kart alanlarina (mevcut davranis) gider.
+        if (Array.isArray(f.sgkKayitlari) && f.sgkKayitlari.length > 1) {
+          lb.sgkHesaplar = f.sgkKayitlari.map((s, j) => ({
+            isyeri: s.isyeri || '',
+            kullanici: (j === 0 ? (f.sgkUser || s.kadi || '') : (s.kadi || '')),
+            isyeriKodu: (j === 0 ? (f.sgkIsyeriKodu || s.isyeriKodu || '') : (s.isyeriKodu || '')),
+            sistemSifresi: (j === 0 ? (f.sgkSifre || s.sistemSifresi || '') : (s.sistemSifresi || '')),
+            isyeriSifresi: (j === 0 ? (f.sgkIsyeriSifresi || s.isyeriSifresi || '') : (s.isyeriSifresi || ''))
+          }))
+        }
+        if (Object.keys(lb).length) yamalar.lucaBilgileri = lb
+        // 2.7.479: Luca'dan okunan adres, telefon ve e-posta musteri kartina yazilir
+        if (f.adres) yamalar.address = f.adres
+        if (f.telefon) yamalar.phone = f.telefon
+        if (f.ePosta) yamalar.email = f.ePosta
+        // 2.7.498: işe başlama / kapanış / NACE müşteri kartina yazilir
+        const isoBas = isoTarih(f.iseBaslama)
+        const isoKapanis = isoTarih(f.kapanisTarihi)
+        if (isoBas) yamalar.openDate = isoBas
+        if (isoKapanis) yamalar.closeDate = isoKapanis
+        // Luca "711101 - ACIKLAMA" birleşik gönderebilir: kod ve açıklama ayrı alanlara
+        const naceKod = naceSadeceKod(f.faaliyetKodu)
+        const naceAck = naceAciklama(f.faaliyetKodu)
+        if (f.faaliyetKodu) yamalar.naceCode = naceKod
+        if (f.faaliyetAlani) yamalar.naceDesc = f.faaliyetAlani
+        else if (naceAck && naceAck !== naceKod) yamalar.naceDesc = naceAck
+        // 2.7.480: ticaret sicil no dogrudan musteri kartina, kurulus tarihi /
+        // faaliyet kodu / MERSIS / sirket tipi lucaBilgileri icinde saklanir
+        if (f.ticaretSicilNo) yamalar.ticaretSicilNo = f.ticaretSicilNo
+        // 2.7.496: KURUM ERISIMI alanlarina yaz — kart "Kurum Erisimi >
+        // Portal Sifreleri" bolumunde bu alanlari gosterir (dvs*, sgk*).
+        if (f.vdSifre || f.gibKullanici) yamalar.dvsUsername = f.gibKullanici || f.kimlik || eslesen?.dvsUsername || ''
+        if (f.vdSifre) yamalar.dvsPassword = f.vdSifre
+        if (f.sgkUser) yamalar.sgkUser = f.sgkUser
+        if (f.sgkIsyeriKodu) yamalar.sgkIsyeriKodu = f.sgkIsyeriKodu
+        if (f.sgkSifre) yamalar.sgkSistemSifre = f.sgkSifre
+        // Luca verisi "sgkIsyeriSifresi" (son harf i); kart alani "sgkIsyeriSifre"
+        if (f.sgkIsyeriSifresi) yamalar.sgkIsyeriSifre = f.sgkIsyeriSifresi
+        if (eslesen) {
+          if (Object.keys(yamalar).length) await updateClient(eslesen.id, yamalar)
+          guncellendi++
+        } else {
+          const ad = f.ad
+          await addClient({
+            name: ad,
+            shortName: f.kisaAd || (ad.length > 24 ? ad.split(' ').slice(0, 2).join(' ') : ad),
+            vkn: yeniVkn,
+            tc: yeniTc,
+            type: yeniTc && !yeniVkn ? 'individual' : (yeniVkn ? 'company' : (vergiTuru(f) === 'Gelir Vergisi' ? 'individual' : 'company')),
+            taxType: vergiTuru(f),
+            taxOffice: f.vergiDairesi || '',
+            defterTipi: f.defterTipi || '',
+            lucaBilgileri: {
+              ...(f.alanlar || {}),
+              ...(f.gibKullanici ? { 'GİB Kullanıcı Adı': f.gibKullanici } : {}),
+              ...(f.gibParola ? { 'GİB Parola': f.gibParola } : {}),
+              ...(f.sgkIsyeriKodu ? { 'SGK İşyeri Kodu': f.sgkIsyeriKodu } : {}),
+              ...(f.sgkIsyeriSifresi ? { 'SGK İşyeri Şifresi': f.sgkIsyeriSifresi } : {}),
+              ...(Array.isArray(f.sgkKayitlari) && f.sgkKayitlari.length > 1 ? {
+                sgkHesaplar: f.sgkKayitlari.map((s, j) => ({
+                  isyeri: s.isyeri || '',
+                  kullanici: (j === 0 ? (f.sgkUser || s.kadi || '') : (s.kadi || '')),
+                  isyeriKodu: (j === 0 ? (f.sgkIsyeriKodu || s.isyeriKodu || '') : (s.isyeriKodu || '')),
+                  sistemSifresi: (j === 0 ? (f.sgkSifre || s.sistemSifresi || '') : (s.sistemSifresi || '')),
+                  isyeriSifresi: (j === 0 ? (f.sgkIsyeriSifresi || s.isyeriSifresi || '') : (s.isyeriSifresi || ''))
+                }))
+              } : {})
+            },
+            address: f.adres || '',
+            phone: f.telefon || '',
+            email: f.ePosta || '',
+            ticaretSicilNo: f.ticaretSicilNo || '',
+            openDate: isoTarih(f.iseBaslama) || null,
+            closeDate: isoTarih(f.kapanisTarihi) || null,
+            naceCode: f.faaliyetKodu ? naceSadeceKod(f.faaliyetKodu) : '',
+            naceDesc: f.faaliyetAlani || (f.faaliyetKodu ? naceAciklama(f.faaliyetKodu) : ''),
+            dvsUsername: f.gibKullanici || f.kimlik || '',
+            dvsPassword: f.vdSifre || '',
+            sgkUser: f.sgkUser || '',
+            sgkIsyeriKodu: f.sgkIsyeriKodu || '',
+            sgkSistemSifre: f.sgkSifre || '',
+            sgkIsyeriSifre: f.sgkIsyeriSifresi || '',
+            efatura: false, earsiv: false, esmm: false, edefter: false,
+            edefterPeriod: 'aylik',
+            serbestMeslek: f.defterTipi === 'Serbest Meslek',
+            password: '123456'
+          })
+          eklendi++
+        }
+      }
+      await refresh()
+      setLucaGetir({ acik: false, yukleniyor: false, hata: '', firmalar: [] })
+      alert(`Luca aktarımı tamam: ${eklendi} yeni müşteri eklendi, ${guncellendi} müşteri güncellendi.`)
+    } catch (e) {
+      alert('Luca aktarım hatası: ' + (e?.message || e))
+    }
+    setLucaKaydediyor(false)
+  }
+
+  const lucaSatirDuzelt = (i, alan, deger) => {
+    setLucaGetir(g => ({
+      ...g,
+      firmalar: g.firmalar.map((f, k) => k === i ? { ...f, [alan]: deger } : f)
+    }))
+  }
+
+  // 2.7.522: tum secim kutularini temizler (kayit yapmaz, musteri silmez)
+  const lucaSecimiSil = () => {
+    setLucaGetir(g => ({ ...g, firmalar: g.firmalar.map(f => ({ ...f, secili: false })) }))
+  }
+
+  // 2.7.503: çoklu SGK işyeri alt satırı düzenleme
+  const lucaSgkDuzelt = (i, j, alan, deger) => {
+    setLucaGetir(g => ({
+      ...g,
+      firmalar: g.firmalar.map((f, k) => {
+        if (k !== i) return f
+        const kayitlar = (f.sgkKayitlari || []).map((s, m) => m === j ? { ...s, [alan]: deger } : s)
+        return { ...f, sgkKayitlari: kayitlar }
+      })
+    }))
+  }
 
   const handleDelete = async (id, name) => {
     if (window.confirm(`"${name}" musterisini silmek istediginize emin misiniz?`)) {
@@ -86,9 +407,11 @@ export default function MusteriListesi() {
       if (filterType === 'company') matchType = client.type === 'company'
       else if (filterType === 'individual') matchType = client.type === 'individual'
 
+      // Kapanış tarihi olan şirketler pasif sayılır (status alanından bağımsız)
+      const pasif = client.status === 'inactive' || !!(client.closeDate && String(client.closeDate).trim())
       let matchStatus = true
-      if (filterStatus === 'active') matchStatus = client.status === 'active'
-      else if (filterStatus === 'inactive') matchStatus = client.status === 'inactive'
+      if (filterStatus === 'active') matchStatus = !pasif
+      else if (filterStatus === 'inactive') matchStatus = pasif
 
       let matchTax = true
       if (filterTax === 'kurumlar') {
@@ -127,7 +450,7 @@ export default function MusteriListesi() {
 
   const stats = {
     total: clients.length,
-    active: clients.filter(c => c.status === 'active').length,
+    active: clients.filter(c => !(c.status === 'inactive' || (c.closeDate && String(c.closeDate).trim()))).length,
     companies: clients.filter(c => c.type === 'company').length,
     individuals: clients.filter(c => c.type === 'individual').length,
     kurumlar: clients.filter(c => c.taxType === 'Kurumlar Vergisi').length,
@@ -178,7 +501,24 @@ export default function MusteriListesi() {
       const ext = file.name.split('.').pop().toLowerCase()
 
       if (ext === 'csv') {
-        const text = await file.text()
+        // 2.7.504: CSV'ler çoğulukla cp1254 (Türkçe Excel) ile kaydedilir —
+        // UTF-8 çözümünde bozuk karakter varsa windows-1254 ile tekrar çöz
+        const buf = await file.arrayBuffer()
+        let text = new TextDecoder('utf-8').decode(buf)
+        if (text.includes('\uFFFD')) {
+          try { text = new TextDecoder('windows-1254').decode(buf) } catch { /* tarayici desteklemiyorsa utf-8 ile devam */ }
+        }
+        // 2.7.504: Muhasebe ofisi listesi (LİSTE21A biçimi) — ad/soyad, tc/vkn,
+        // telefon, adres, vergi dairesi, açılış/kapanış, ücretler, beyan durumları
+        const buyuk = text.toLocaleUpperCase('tr')
+        if (buyuk.includes('AYLIK MUHASEBE') && buyuk.includes('ADI SOYADI')) {
+          const sonuc = await importListe21(text)
+          alert(sonuc.mesaj)
+          await refresh()
+          setUploading(false)
+          if (fileInputRef.current) fileInputRef.current.value = ''
+          return
+        }
         data = parseCSV(text)
       } else {
         data = await new Promise((resolve, reject) => {
@@ -222,6 +562,86 @@ export default function MusteriListesi() {
     }
     setUploading(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  // 2.7.504: Muhasebe ofisi liste biçimi (LİSTE21A) — mevcut müşteri kartlarını
+  // TC/VKN ile eşleştirip ad-soyad, telefon, adres, vergi dairesi, açılış/kapanış
+  // tarihleri, aylık muhasebe/defter tasdik ücretleri ve beyan durumlarını yazar.
+  // Yalnızca dolu hücreler yazılır; boşlar mevcut değeri korur.
+  const importListe21 = async (text) => {
+    const lines = text.split(/\r?\n/)
+    const basIdx = lines.findIndex(l =>
+      l.toLocaleUpperCase('tr').includes('ADI SOYADI') && l.toLocaleUpperCase('tr').includes('VERG'))
+    if (basIdx < 0) return { mesaj: 'Liste biçimi tanınamadı — "ADI SOYADI" başlıklı satır bulunamadı.', guncellenen: 0, eslesmeyen: [] }
+    const headers = lines[basIdx].split(';').map(h => h.replace(/^"|"$/g, '').trim().toLocaleUpperCase('tr'))
+    const kolonIdx = (ad) => {
+      const tam = headers.indexOf(ad)
+      if (tam >= 0) return tam
+      return headers.findIndex(h => h.includes(ad))
+    }
+    // Birden fazla yazım adayı (dosyadaki başlık hatalarına dayanıklı)
+    const kolonIdxCok = (adlar) => {
+      for (const a of adlar) { const i = headers.indexOf(a); if (i >= 0) return i }
+      for (const a of adlar) { const i = headers.findIndex(h => h.includes(a)); if (i >= 0) return i }
+      return -1
+    }
+    const hucre = (vals, ...adlar) => {
+      for (const a of adlar) {
+        const i = kolonIdx(a)
+        if (i >= 0 && vals[i] != null) return String(vals[i]).trim()
+      }
+      return ''
+    }
+    const iso = (s) => {
+      const m = /^(\d{1,2})[/.](\d{1,2})[/.](\d{4})$/.exec(String(s || '').trim())
+      return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : ''
+    }
+    const dogruMu = (s) => /^(DOĞRU|DOGRU|EVET|TRUE|X)$/i.test(String(s || '').trim())
+    const bayraklar = [
+      [['KDV'], 'kdv'], [['AYLIK MUHTASAR'], 'aylikMuhtasar'], [['MUHTASAR'], 'muhtasar'],
+      [['SİGORTA'], 'sigorta'], [['GEÇİCİ VERGİ'], 'geciciVergi'], [['GELİR VERGİSİ'], 'gelirVergisi'],
+      [['KURUMLAR VERGİSİ'], 'kurumlarVergisi'], [['POŞET'], 'poset'], [['EDEFTER'], 'edefter'],
+      [['MALİ MÜHÜR', 'MALİ MÜHİR'], 'maliMuhur']
+    ]
+    let guncellenen = 0
+    const eslesmeyen = []
+    for (const line of lines.slice(basIdx + 1)) {
+      if (!line.trim()) continue
+      const vals = line.split(';').map(v => v.replace(/^"|"$/g, '').trim())
+      const ad = hucre(vals, 'ADI SOYADI')
+      const tc = hucre(vals, 'TC KİMLİK', 'TC KIMLIK').replace(/\D/g, '')
+      const vkn = hucre(vals, 'VERGİ NO', 'VERGI NO').replace(/\D/g, '')
+      if (!ad || (!tc && !vkn)) continue
+      const eslesen = (clients || []).find(c =>
+        (tc && String(c.tc || '') === tc) ||
+        (vkn && (String(c.vkn || '') === vkn ||
+          (c.vkn && parseInt(c.vkn, 10) === parseInt(vkn, 10)))))
+      if (!eslesen) { eslesmeyen.push(ad); continue }
+      const yama = {}
+      if (ad) yama.name = ad
+      const tel = hucre(vals, 'TELEFON'); if (tel) yama.phone = tel
+      const adr = hucre(vals, 'ADRES'); if (adr) yama.address = adr
+      const vd = hucre(vals, 'VERGİ DAİRESİ', 'VERGI DAIRESI'); if (vd) yama.taxOffice = vd
+      const acilis = iso(hucre(vals, 'AÇILIŞ TARİHİ', 'İŞE BAŞLAMA', 'ACILIS')); if (acilis) yama.openDate = acilis
+      const kapanis = iso(hucre(vals, 'KAPANIŞ TARİHİ', 'KAPANIS')); if (kapanis) yama.closeDate = kapanis
+      const lb = { ...(eslesen.lucaBilgileri || {}) }
+      const ucret = hucre(vals, 'AYLIK MUHASEBE ÜCRETİ', 'AYLIK MUHASEBE UCRETI'); if (ucret) lb.muhasebeUcreti = ucret
+      const tasdik = hucre(vals, 'DEFTER TASDİK ÜCRETİ', 'DEFTER TASDIK'); if (tasdik) lb.defterTasdikUcreti = tasdik
+      const kalan = hucre(vals, 'ÖNCEDEN KALAN', 'NCEDEN KALAN', 'ONCEDEN KALAN'); if (kalan) lb.oncekiKalan = kalan
+      const bd = {}
+      for (const [basliklar, anahtar] of bayraklar) {
+        const i = kolonIdxCok(basliklar)
+        if (i >= 0 && vals[i] != null && String(vals[i]).trim()) bd[anahtar] = dogruMu(vals[i])
+      }
+      if (Object.keys(bd).length) lb.beyanDurumlari = { ...(lb.beyanDurumlari || {}), ...bd }
+      if (Object.keys(lb).length) yama.lucaBilgileri = lb
+      const { error } = await supabase.from('clients').update(yama).eq('id', eslesen.id)
+      if (!error) guncellenen++
+      else eslesmeyen.push(`${ad} (yazım hatası: ${error.message})`)
+    }
+    let mesaj = `${guncellenen} müşteri kartı güncellendi.`
+    if (eslesmeyen.length) mesaj += ` Eşleşmeyen (${eslesmeyen.length}): ${eslesmeyen.slice(0, 8).join(', ')}${eslesmeyen.length > 8 ? '…' : ''}`
+    return { mesaj, guncellenen, eslesmeyen }
   }
 
   const parseCSV = (text) => {
@@ -477,6 +897,15 @@ export default function MusteriListesi() {
           </div>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 mt-4 md:mt-0">
+          <button
+            onClick={lucaFirmalariAc}
+            disabled={lucaGetir.yukleniyor}
+            className="bg-cyan-500/20 text-cyan-400 px-4 py-2 rounded-lg font-semibold hover:bg-cyan-500/30 transition-all duration-300 flex items-center justify-center space-x-2 disabled:opacity-50"
+            title="Luca Müşavir Paketi'ndeki firmaları getir; GİB ve SGK bilgileriyle birlikte kaydet"
+          >
+            <RefreshCw className={`w-5 h-5 ${lucaGetir.yukleniyor ? 'animate-spin' : ''}`} />
+            <span>Luca'dan Getir</span>
+          </button>
           <button
             onClick={downloadTemplate}
             className="bg-blue-500/20 text-blue-400 px-4 py-2 rounded-lg font-semibold hover:bg-blue-500/30 transition-all duration-300 flex items-center justify-center space-x-2"
@@ -749,11 +1178,16 @@ export default function MusteriListesi() {
                       </span>
                     </td>
                     <td className="px-6 py-4 cursor-pointer" onClick={() => navigate(`/admin/client/${client.id}`)}>
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${
-                        client.status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                      }`}>
-                        {client.status === 'active' ? 'Aktif' : 'Pasif'}
-                      </span>
+                      {(() => {
+                        const pasif = client.status === 'inactive' || !!(client.closeDate && String(client.closeDate).trim())
+                        return (
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${
+                            pasif ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'
+                          }`} title={client.closeDate ? `İşyeri Kapanış: ${client.closeDate}` : undefined}>
+                            {pasif ? 'Pasif' : 'Aktif'}
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex space-x-2">
@@ -794,6 +1228,207 @@ export default function MusteriListesi() {
           </table>
         </div>
       </div>
+
+      {/* LUCA'DAN FIRMALARI GETIR penceresi */}
+      {lucaGetir.acik && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-blue-950 border border-blue-700/50 rounded-2xl w-full max-w-6xl max-h-[85vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-blue-800/50 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <RefreshCw className="w-5 h-5 text-cyan-400" /> Luca&apos;dan Firmaları Getir
+                </h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Firma bilgileri (vergi dairesi, defter türü, VKN/TCKN, kullanıcı adı) Luca&apos;dan otomatik okunur; kaydettiğinizde müşteri kartına yazılır. VD ve SGK şifrelerini aynı satırda girin — boş bırakılanlar mevcut değeri korur.
+                </p>
+              </div>
+              <button onClick={() => setLucaGetir(g => ({ ...g, acik: false }))} title="Kapat"><X className="w-5 h-5 text-gray-400 hover:text-white" /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              {lucaGetir.yukleniyor && (
+                <div className="text-center py-10">
+                  <Loader2 className="w-8 h-8 text-cyan-400 animate-spin mx-auto mb-3" />
+                  <p className="text-gray-300 text-sm">Luca&apos;ya bağlanılıyor; firma listesi ve her firmanın bilgileri (vergi dairesi, defter türü vb.) tek tek okunuyor...</p>
+                  {lucaIlerleme && lucaIlerleme.asama === 'detay' && lucaIlerleme.toplam ? (
+                    <>
+                      <div className="w-72 h-2.5 bg-blue-900/80 rounded-full mx-auto mt-4 overflow-hidden">
+                        <div className="h-full bg-gradient-to-r from-cyan-500 to-teal-400 rounded-full transition-all duration-500" style={{ width: `${Math.max(2, lucaIlerleme.yuzde || 0)}%` }} />
+                      </div>
+                      <p className="text-cyan-300 text-sm font-medium mt-2">
+                        {lucaIlerleme.mevcut}/{lucaIlerleme.toplam} firma · %{lucaIlerleme.yuzde || 0}
+                      </p>
+                      <p className="text-gray-400 text-xs mt-0.5">
+                        {lucaIlerleme.firma ? `${lucaIlerleme.firma} okunuyor · ` : ''}kalan ≈ {Math.max(0, lucaIlerleme.toplam - (lucaIlerleme.mevcut || 0))} firma
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-cyan-300 text-sm mt-3">
+                      {lucaIlerleme?.asama === 'kimlik' ? 'GİB / SGK kimlik tabloları okunuyor (şifreler Luca\u2019dan alınacak)...' : 'Firma listesi okunuyor...'}
+                    </p>
+                  )}
+                  <p className="text-gray-500 text-xs mt-1">Firma sayısına göre birkaç dakika sürebilir — tarayıcı penceresini kapatmayın.</p>
+                  <button
+                    onClick={lucaSorguDurdur}
+                    disabled={lucaGetir.durduruluyor}
+                    className="mt-4 inline-flex items-center gap-2 bg-red-600/80 hover:bg-red-600 disabled:opacity-60 disabled:cursor-wait text-white text-sm font-medium px-5 py-2 rounded-xl transition-colors"
+                  >
+                    <X className="w-4 h-4" /> {lucaGetir.durduruluyor ? 'Durduruluyor…' : 'Sorgulamayı Durdur'}
+                  </button>
+                </div>
+              )}
+              {lucaGetir.hata && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-red-300 text-sm">{lucaGetir.hata}</div>
+              )}
+              {lucaGetir.uyari && (
+                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-4 py-3 text-yellow-300 text-sm">{lucaGetir.uyari}</div>
+              )}
+              {!lucaGetir.yukleniyor && lucaGetir.firmalar.length > 0 && (
+                <>
+                  {!lucaGetir.detayli && (
+                    <div className="mb-3 bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-4 py-2 text-yellow-300 text-xs">
+                      Detaylı okuma yapılamadı; yalnızca ad/VKN listesi alındı. Yardımcı programı güncelleyip tekrar deneyin.
+                    </div>
+                  )}
+                  <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-400 text-xs border-b border-blue-800/50">
+                      <th className="py-2 pr-2"></th>
+                      <th className="py-2 pr-3 font-medium">Firma (Luca)</th>
+                      <th className="py-2 pr-3 font-medium">VKN / TCKN</th>
+                      <th className="py-2 pr-3 font-medium">Vergi Dairesi</th>
+                      <th className="py-2 pr-3 font-medium">Defter Türü</th>
+                      <th className="py-2 pr-3 font-medium">VD Şifresi</th>
+                      <th className="py-2 pr-3 font-medium">SGK Kullanıcı</th>
+                      <th className="py-2 font-medium">SGK Şifresi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lucaGetir.firmalar.map((f, i) => (
+                      <Fragment key={i}>
+                      <tr className="border-b border-blue-900/30">
+                        <td className="py-2 pr-2">
+                          <input
+                            type="checkbox"
+                            checked={f.secili}
+                            onChange={(e) => lucaSatirDuzelt(i, 'secili', e.target.checked)}
+                            className="w-4 h-4 accent-yellow-500 cursor-pointer"
+                          />
+                        </td>
+                        <td className="py-2 pr-3 text-gray-200 max-w-56">
+                          <div className="flex items-center gap-2">
+                            <div className="truncate" title={f.ad}>{f.ad}</div>
+                            {f.zatenVar && (
+                              <span className="shrink-0 px-1.5 py-0.5 rounded bg-gray-500/20 text-gray-400 text-[10px] font-medium border border-gray-500/30" title="Bu firma müşteri listenizde zaten kayıtlı — kaydetmek isterseniz elle işaretleyin">Zaten yüklü</span>
+                            )}
+                          </div>
+                          {(f.kisaAd || f.kullaniciAdi) && (
+                            <div className="text-[10px] text-gray-500 truncate">{[f.kisaAd, f.kullaniciAdi].filter(Boolean).join(' · ')}</div>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <input
+                            value={f.kimlik}
+                            onChange={(e) => lucaSatirDuzelt(i, 'kimlik', e.target.value.replace(/\D/g, '').slice(0, 11))}
+                            placeholder="VKN / TCKN"
+                            className="w-28 bg-blue-900/40 border border-blue-700/40 rounded-lg px-2 py-1.5 text-white text-xs"
+                          />
+                        </td>
+                        <td className="py-2 pr-3 text-xs text-gray-300 max-w-32 truncate" title={f.vergiDairesi}>{f.vergiDairesi || '—'}</td>
+                        <td className="py-2 pr-3 text-xs text-gray-300">{f.defterTipi || '—'}</td>
+                        <td className="py-2 pr-3">
+                          <input
+                            value={f.vdSifre}
+                            onChange={(e) => lucaSatirDuzelt(i, 'vdSifre', e.target.value)}
+                            type="password"
+                            placeholder="VD şifresi"
+                            className="w-28 bg-blue-900/40 border border-blue-700/40 rounded-lg px-2 py-1.5 text-white text-xs"
+                          />
+                        </td>
+                        <td className="py-2 pr-3">
+                          <input
+                            value={f.sgkUser}
+                            onChange={(e) => lucaSatirDuzelt(i, 'sgkUser', e.target.value)}
+                            placeholder="SGK kullanıcı"
+                            className="w-28 bg-blue-900/40 border border-blue-700/40 rounded-lg px-2 py-1.5 text-white text-xs"
+                          />
+                        </td>
+                        <td className="py-2">
+                          <input
+                            value={f.sgkSifre}
+                            onChange={(e) => lucaSatirDuzelt(i, 'sgkSifre', e.target.value)}
+                            type="password"
+                            placeholder="SGK şifresi"
+                            className="w-28 bg-blue-900/40 border border-blue-700/40 rounded-lg px-2 py-1.5 text-white text-xs"
+                          />
+                        </td>
+                      </tr>
+                      {/* 2.7.503: birden fazla SGK numarasi (isyeri) — her isyeri icin ayri bölüm */}
+                      {Array.isArray(f.sgkKayitlari) && f.sgkKayitlari.length > 1 && f.sgkKayitlari.map((sg, j) => (
+                        <tr key={`${i}-sgk-${j}`} className="border-b border-blue-900/30 bg-cyan-950/20">
+                          <td className="py-1.5 pr-2"></td>
+                          <td className="py-1.5 pr-3 text-[11px] text-cyan-300" colSpan={5} title={sg.isyeri}>
+                            <span className="inline-flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 inline-block"></span>
+                              SGK İşyeri #{j + 1}: {sg.isyeri || '—'}
+                            </span>
+                          </td>
+                          <td className="py-1.5 pr-3">
+                            <input
+                              value={sg.kadi || ''}
+                              onChange={(e) => lucaSgkDuzelt(i, j, 'kadi', e.target.value)}
+                              placeholder="SGK kullanıcı"
+                              className="w-28 bg-blue-900/40 border border-cyan-700/40 rounded-lg px-2 py-1.5 text-white text-xs"
+                            />
+                          </td>
+                          <td className="py-1.5">
+                            <input
+                              value={sg.sistemSifresi || ''}
+                              onChange={(e) => lucaSgkDuzelt(i, j, 'sistemSifresi', e.target.value)}
+                              type="password"
+                              placeholder="SGK şifresi"
+                              className="w-28 bg-blue-900/40 border border-cyan-700/40 rounded-lg px-2 py-1.5 text-white text-xs"
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                      </Fragment>
+                    ))}
+                  </tbody>
+                </table>
+                </>
+              )}
+            </div>
+            {!lucaGetir.yukleniyor && !lucaGetir.hata && lucaGetir.firmalar.length > 0 && (
+              <div className="px-6 py-4 border-t border-blue-800/50 flex items-center justify-between gap-3">
+                <span className="text-xs text-gray-400">
+                  {lucaGetir.firmalar.filter(f => f.secili).length}/{lucaGetir.firmalar.length} firma seçili
+                  {lucaGetir.firmalar.some(f => f.zatenVar) && (
+                    <span className="text-gray-500"> · {lucaGetir.firmalar.filter(f => f.zatenVar).length} firma zaten yüklü (işaretsiz)</span>
+                  )}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={lucaSecimiSil}
+                    disabled={!lucaGetir.firmalar.some(f => f.secili)}
+                    title="Tüm seçim kutularını temizler (kayıt yapmaz)"
+                    className="px-4 py-2.5 rounded-xl bg-red-500/15 border border-red-500/40 text-red-400 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:bg-red-500/25"
+                  >
+                    Seçimi Sil
+                  </button>
+                  <button
+                    onClick={lucaFirmaKaydet}
+                    disabled={lucaKaydediyor || !lucaGetir.firmalar.some(f => f.secili)}
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-yellow-400 to-yellow-600 text-blue-950 font-semibold disabled:opacity-40 flex items-center gap-2"
+                  >
+                    {lucaKaydediyor && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {lucaKaydediyor ? 'Kaydediliyor...' : 'Seçilenleri Kaydet'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

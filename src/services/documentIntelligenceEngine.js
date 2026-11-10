@@ -63,7 +63,12 @@ async function postAnalyze(payload) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   })
-  const result = await response.json()
+  // Yanit her zaman JSON olmayabilir (404 HTML, ag kesilmesi vb.) —
+  // json() dogrudan cagirilirsa "Unexpected end of JSON input" olurdu.
+  const metin = await response.text()
+  let result
+  try { result = JSON.parse(metin) }
+  catch { result = { success: false, error: `Analiz servisi yanıtı okunamadı (HTTP ${response.status})` } }
   return { ok: response.ok, result }
 }
 

@@ -35,7 +35,7 @@ export function toStoragePath(urlOrPath) {
 
   // .../object/public/<bucket>/<yol>  veya  .../object/sign/<bucket>/<yol>
   const m = s.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+)$/)
-  if (!m) return null
+  if (!m || m[1] !== BUCKET) return null
 
   const yol = m[2].split('?')[0]
   try {
@@ -48,9 +48,16 @@ export function toStoragePath(urlOrPath) {
 /** Verilen deger bizim bucket'imiza mi ait? */
 export function isOwnStorageUrl(urlOrPath) {
   if (!urlOrPath) return false
-  const s = String(urlOrPath)
-  if (!s.startsWith('http')) return true
-  return s.includes(`/storage/v1/object/`) && s.includes(`/${BUCKET}/`)
+  const s = String(urlOrPath).trim()
+  if (!s || s.startsWith('//')) return false
+  if (!/^[a-z][a-z\d+.-]*:/i.test(s)) return true
+  try {
+    const url = new URL(s)
+    const origin = new URL(supabase.supabaseUrl).origin
+    return url.origin === origin && !!url.pathname.match(new RegExp(`^/storage/v1/object/(?:public|sign|authenticated)/${BUCKET}/.+`))
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -72,6 +79,18 @@ export async function getViewUrl(urlOrPath, sure = VARSAYILAN_SURE) {
     return null
   }
   return data.signedUrl
+}
+
+export async function fetchDocument(urlOrPath) {
+  const source = String(urlOrPath || '')
+  if (!source) throw new Error('Belge adresi bulunamadı')
+  let response = await fetch(source)
+  if (!response.ok && [401, 403, 404].includes(response.status) && isOwnStorageUrl(source)) {
+    const signedUrl = await getViewUrl(source)
+    if (signedUrl) response = await fetch(signedUrl)
+  }
+  if (!response.ok) throw new Error(`Belgeye erişilemedi (HTTP ${response.status})`)
+  return response
 }
 
 /** Birden fazla baglantiyi tek seferde imzalar */

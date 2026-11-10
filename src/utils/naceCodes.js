@@ -2161,10 +2161,29 @@ const NACE_CODES_6 = NACE_CODES;
 
 export default NACE_CODES_6;
 
+// Kayit "711101 - MIMARLIK FAALIYETLERI..." (Luca ice aktarimi) seklinde
+// birlesik gelmis olabilir — sadece kod kismini dondurur.
+export function naceSadeceKod(code) {
+  if (!code) return ''
+  const s = String(code).trim()
+  const m = s.match(/^(\d{4,6})\b/)
+  return m ? m[1] : s
+}
+
+// "711101 - ACIKLAMA" seklindeki kayittan aciklamayi ayiklar; aciklama yoksa
+// kodu NACE listesinde arar.
+export function naceAciklama(code) {
+  if (!code) return ''
+  const s = String(code).trim()
+  const m = s.match(/^\d{4,6}\s*[-–—]\s*(.+)$/)
+  if (m) return m[1].trim()
+  return getNaceDesc(s)
+}
+
 // 6 haneli kodu XX.XX.XX formatinda gosterir
 export function formatNaceCode(code) {
   if (!code) return '';
-  const c = String(code).replace(/\./g, '').replace(/\s/g, '');
+  const c = naceSadeceKod(code).replace(/\./g, '').replace(/\s/g, '');
   if (c.length === 6) return c.slice(0,2) + '.' + c.slice(2,4) + '.' + c.slice(4,6);
   if (c.length === 4) return c.slice(0,2) + '.' + c.slice(2,4);
   return code;
@@ -2173,7 +2192,7 @@ export function formatNaceCode(code) {
 // Kod ile faaliyet konusunu bul
 export function getNaceDesc(code) {
   if (!code) return '';
-  const c = String(code).replace(/\./g, '').replace(/\s/g, '');
+  const c = naceSadeceKod(code).replace(/\./g, '').replace(/\s/g, '');
   const found = NACE_CODES_6.find(n => n.code === c);
   return found ? found.desc : '';
 }

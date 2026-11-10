@@ -1,13 +1,16 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Mail, Phone, MapPin, Send, Building, ExternalLink } from 'lucide-react'
 import { OFIS, HARITA_URL, HARITA_EMBED_URL } from '../data/ofisBilgi'
 
 export default function Contact() {
   const [formData, setFormData] = useState({ name: '', email: '', message: '' })
+  const [kvkkOnay, setKvkkOnay] = useState(false)
   const [submitted, setSubmitted] = useState(false)
 
   const handleSubmit = (e) => {
     e.preventDefault()
+    if (!kvkkOnay) return
     setSubmitted(true)
   }
 
@@ -115,7 +118,21 @@ export default function Contact() {
                   className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-3 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500 transition-colors resize-none"
                   placeholder="Mesajınızı yazın..." required />
               </div>
-              <button type="submit" className="btn-gold w-full py-3 text-lg flex items-center justify-center space-x-2">
+              <label className="flex items-start gap-2.5 text-xs text-gray-400 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={kvkkOnay}
+                  onChange={(e) => setKvkkOnay(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 accent-yellow-500 shrink-0"
+                  required
+                />
+                <span>
+                  <Link to="/kvkk-aydinlatma" target="_blank" className="text-yellow-400 hover:underline">KVKK Aydınlatma Metni</Link>'ni okudum;
+                  iletişim talebime yanıt verilmesi amacıyla kişisel verilerimin işlenmesine{' '}
+                  <strong className="text-gray-300">açık rıza</strong> veriyorum.
+                </span>
+              </label>
+              <button type="submit" disabled={!kvkkOnay} className="btn-gold w-full py-3 text-lg flex items-center justify-center space-x-2 disabled:opacity-40 disabled:cursor-not-allowed">
                 <Send className="w-5 h-5" />
                 <span>Gönder</span>
               </button>

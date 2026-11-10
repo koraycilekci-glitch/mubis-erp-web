@@ -5,6 +5,7 @@
 import { getClients } from '../services/clientService'
 import { getBeyanStorageKey, getFormattedBeyanDeadline, getMonthName } from './dateUtils'
 import { getTahakkukList, getHizmetListesi } from './tahakkukUtils'
+import { buildCariAiContext } from './cariAiContext'
 
 const AY_MAP = {
   ocak: 0, şubat: 1, subat: 1, mart: 2, nisan: 3, mayıs: 4, mayis: 4,
@@ -81,8 +82,15 @@ function musteriBul(clients, q) {
   return scored[0]?.client || null
 }
 
+/** Soru cari hesap/cek-senet ile ilgili mi? */
+function cariSoruMu(soru) {
+  const nq = normalize(soru)
+  const anahtarlar = ['cari', 'cek', 'senet', 'tahsilat', 'tahsil', 'bakiye', 'ekstre', 'alacak', 'borcu', 'borc', 'portfoy', 'virman']
+  return anahtarlar.some(k => nq.includes(k))
+}
+
 /**
- * Admin/personel sorusu musteri+evrak iceriyorsa baglam metni uretir.
+ * Admin/personel sorusu musteri/evrak/cari iceriyorsa baglam metni uretir.
  * @param {object} user - auth user
  * @param {string} soru
  * @returns {Promise<string>}
@@ -92,7 +100,8 @@ export async function buildAdminAiContext(user, soru) {
   if (!soru || soru.length < 3) return ''
 
   const tip = vergiTipiCoz(soru)
-  if (!tip) return ''
+  const cariModu = cariSoruMu(soru)
+  if (!tip && !cariModu) return ''
 
   let clients = []
   try {
@@ -106,8 +115,36 @@ export async function buildAdminAiContext(user, soru) {
   }
 
   const client = musteriBul(clients, soru)
-  if (!client) return ''
 
+  const parcalar = []
+
+  // --- Vergi/evrak sorgusu ---
+  if (tip) {
+    const vergiCtx = vergiBaglami(client, clients, tip, soru)
+    if (vergiCtx) parcalar.push(vergiCtx)
+  }
+
+  // --- Cari hesap sorgusu ---
+  if (cariModu) {
+    try {
+      const cariMetni = await buildCariAiContext(client ? client.id : null)
+      if (cariMetni) {
+        const kapsam = client
+          ? `Aşağıdaki cari veriler "${client.company || client.name}" müşterisinindir.`
+          : 'Aşağıdaki cari veriler erişebildiğin TÜM müşterilerin carilerinin birleşimidir; birden fazla müşterinin kaydı olabilir.'
+        parcalar.push(`${kapsam}\n\n${cariMetni}`)
+      }
+    } catch (e) {
+      console.warn('Admin AI cari baglami olusturulamadi:', e)
+    }
+  }
+
+  return parcalar.join('\n\n')
+}
+
+/** Vergi tipi sorgusu icin musteri baglamini uretir. */
+function vergiBaglami(client, clients, tip, soru) {
+  if (!client) return ''
   const yil = yilCoz(soru)
   const ay = ayCoz(soru)
   const donem = `${getMonthName(ay)} ${yil}`

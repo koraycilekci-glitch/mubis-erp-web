@@ -1,0 +1,17 @@
+[Unit]
+Description=MUBiS GIB Yardimci (sunucu modu)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mubis-yardimci
+Environment=MUBIS_PORT=8765
+EnvironmentFile=/etc/mubis-yardimci/secrets.env
+Environment=TZ=Europe/Istanbul
+ExecStart=/usr/bin/node /opt/mubis-yardimci/index.js
+Restart=always
+RestartSec=5
+MemoryMax=1500M
+
+[Install]
+WantedBy=multi-user.target

@@ -85,7 +85,7 @@ export default async function handler(req, res) {
 
     // --- Kullanici guncelle ---
     if (action === 'update') {
-      const { userId, name, email, role } = req.body
+      const { userId, name, email, role, mukellef } = req.body
       if (!userId) return res.status(400).json({ error: 'userId zorunlu' })
 
       try {
@@ -93,11 +93,21 @@ export default async function handler(req, res) {
         if (name) updates.name = name
         if (role) updates.role = role
         if (email) updates.email = email
+        // Mukellef: admin/personel icin sol menudeki kendi mukellef klasoru
+        if (typeof mukellef === 'boolean') updates.mukellef = mukellef
 
-        const { error: pErr } = await supabaseAdmin
-          .from('profiles')
-          .update(updates)
-          .eq('id', userId)
+        // Yeni eklenen kolonlar icin PostgREST sema-ozbellegi gec guncellenebilir —
+        // gecici hatada 3 kez (1.2 sn arayla) yeniden dene
+        let pErr = null
+        for (let deneme = 0; deneme < 3; deneme++) {
+          const r = await supabaseAdmin
+            .from('profiles')
+            .update(updates)
+            .eq('id', userId)
+          pErr = r.error
+          if (!pErr) break
+          await new Promise((c) => setTimeout(c, 1200))
+        }
         if (pErr) throw pErr
 
         const authUpd = { user_metadata: { name, role } }

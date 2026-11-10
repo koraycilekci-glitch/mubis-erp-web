@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react'
+import { createContext, useContext, useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import * as clientService from '../services/clientService'
 import { getMyOffice, clearOfficeCache, buildClientLoginEmail } from '../services/officeService'
@@ -12,6 +12,11 @@ export function AuthProvider({ children }) {
   const [office, setOffice] = useState(null)
   const [loading, setLoading] = useState(true)
   const [needsPasswordChange, setNeedsPasswordChange] = useState(false)
+  // Sifre guncellemesi sirasinda USER_UPDATED olayi profili yeniden okur;
+  // profiles.temp_password=false DB'ye yazilana kadar BAYAT true okuyabilir
+  // ve flag geri true'ya donup kullaniciyi /sifre-degistir'e geri seker
+  // (sonsuz dongu). Bu ref acikken bayat okuma yok sayilir.
+  const sifreGuncelleniyorRef = useRef(false)
 
   // Profil bilgisini cek
   const fetchProfile = async (authUser) => {
@@ -66,18 +71,8 @@ export function AuthProvider({ children }) {
 
   // Oturum takibi
   useEffect(() => {
-    // Beni hatirla secili degilse ve yeni session ise cikis yap
-    const noRemember = sessionStorage.getItem('mubis_no_remember')
-    
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
-        // Eger daha once "hatirla" secilmemisse ve bu yeni bir tab/pencere ise
-        if (noRemember === null && localStorage.getItem('mubis_no_persist') === '1') {
-          supabase.auth.signOut()
-          localStorage.removeItem('mubis_no_persist')
-          setLoading(false)
-          return
-        }
         setUser(session.user)
         fetchProfile(session.user).then((prof) => {
           setUser(prev => ({
@@ -102,7 +97,7 @@ export function AuthProvider({ children }) {
               tax_office: prof.tax_office
             }))
           }
-          if (prof?.temp_password) setNeedsPasswordChange(true)
+          if (!sifreGuncelleniyorRef.current && prof?.temp_password) setNeedsPasswordChange(true)
           setLoading(false)
         })
       } else {
@@ -111,43 +106,64 @@ export function AuthProvider({ children }) {
     })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      (event, session) => {
+        // DIKKAT: Bu callback supabase-js auth kilidi tutulurken cagirilir.
+        // Icinde bekleyen bir supabase sorgusu (fetchProfile -> profiles
+        // select'i auth lock'unu bekler) kilitlenir ve uygulama sonsuza
+        // kadar "loading" kalir (bembeyaz sayfa, hata da yok). Bu yuzden
+        // async isleri setTimeout(0) ile kilidin disina planliyoruz.
         if (session?.user) {
           setUser(session.user)
-          const prof = await fetchProfile(session.user)
-          setUser(prev => ({
-            ...session.user,
-            ...(prev || {}),
-            role: prof?.role || prev?.role,
-            name: prof?.name || prev?.name || session.user.email,
-            shortName: prof?.shortName || prof?.short_name || prev?.shortName || prev?.short_name,
-            short_name: prof?.short_name || prev?.short_name,
-            tax_office: prof?.tax_office || prev?.tax_office,
-            clientId: prof?.clientId || prev?.clientId || null,
-            officeId: prof?.officeId || prev?.officeId || null
-          }))
-          if (prof?.clientId) {
-            setUser(prev => ({
-              ...prev,
-              clientId: prof.clientId,
-              role: prof.role,
-              name: prof.name,
-              shortName: prof.shortName || prof.short_name,
-              short_name: prof.short_name,
-              tax_office: prof.tax_office
-            }))
-          }
-          if (prof?.temp_password) setNeedsPasswordChange(true)
+          setTimeout(() => {
+            (async () => {
+              try {
+                const prof = await fetchProfile(session.user)
+                setUser(prev => ({
+                  ...session.user,
+                  ...(prev || {}),
+                  role: prof?.role || prev?.role,
+                  name: prof?.name || prev?.name || session.user.email,
+                  shortName: prof?.shortName || prof?.short_name || prev?.shortName || prev?.short_name,
+                  short_name: prof?.short_name || prev?.short_name,
+                  tax_office: prof?.tax_office || prev?.tax_office,
+                  clientId: prof?.clientId || prev?.clientId || null,
+                  officeId: prof?.officeId || prev?.officeId || null
+                }))
+                if (prof?.clientId) {
+                  setUser(prev => ({
+                    ...prev,
+                    clientId: prof.clientId,
+                    role: prof.role,
+                    name: prof.name,
+                    shortName: prof.shortName || prof.short_name,
+                    short_name: prof.short_name,
+                    tax_office: prof.tax_office
+                  }))
+                }
+                if (!sifreGuncelleniyorRef.current && prof?.temp_password) setNeedsPasswordChange(true)
+              } finally {
+                setLoading(false)
+              }
+            })()
+          }, 0)
         } else {
           setUser(null)
           setProfile(null)
           setNeedsPasswordChange(false)
+          setLoading(false)
         }
-        setLoading(false)
       }
     )
 
-    return () => subscription.unsubscribe()
+    // Guvenlik agi: herhangi bir sebeple loading takilirsan 10 sn sonra ac
+    const guvenlik = setTimeout(() => {
+      setLoading(l => {
+        if (l) console.warn('Auth yukleme guvenlik agiyla acildi')
+        return false
+      })
+    }, 10000)
+
+    return () => { subscription.unsubscribe(); clearTimeout(guvenlik) }
   }, [])
 
   // Giris yap (email veya TC/VKN destekli)
@@ -165,6 +181,8 @@ export function AuthProvider({ children }) {
         sessionStorage.setItem('mubis_no_remember', '1')
       } else {
         sessionStorage.removeItem('mubis_no_remember')
+        // Eski surumden kalan bayrak varsa temizle (yenilemede oturum dusmesin)
+        localStorage.removeItem('mubis_no_persist')
       }
 
       const { data, error } = await supabase.auth.signInWithPassword({ email, password })
@@ -243,15 +261,17 @@ export function AuthProvider({ children }) {
   // Sifre guncelle (gecici sifre degistirme veya normal degistirme)
   const updatePassword = async (newPassword) => {
     try {
+      sifreGuncelleniyorRef.current = true
       const { error } = await supabase.auth.updateUser({ password: newPassword })
       if (error) return { success: false, error: error.message }
-      
+
       // Gecici sifre flagini kaldir
       if (profile?.id) {
-        await supabase
+        const { error: profErr } = await supabase
           .from('profiles')
           .update({ temp_password: false })
           .eq('id', profile.id)
+        if (profErr) console.error('temp_password kaldirilamadi:', profErr.message)
       }
 
       setNeedsPasswordChange(false)
@@ -259,6 +279,10 @@ export function AuthProvider({ children }) {
       return { success: true }
     } catch (err) {
       return { success: false, error: err.message }
+    } finally {
+      // USER_UPDATED ile tetiklenen profil okumasi DB guncellemesinden sonra
+      // bitene kadar guard acik kalsin; bayat true okuma yok sayilir.
+      setTimeout(() => { sifreGuncelleniyorRef.current = false }, 5000)
     }
   }
 

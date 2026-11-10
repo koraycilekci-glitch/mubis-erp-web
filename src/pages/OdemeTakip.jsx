@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useClients } from '../hooks/useClients'
 import { getAllAccountingFees, getAllPayments, addPayment, deletePayment, hesaplaBorcOzeti, getActivePaymentProvider, getBankInfo, buildBorcMesaji } from '../services/paymentService'
 import {
@@ -8,7 +8,7 @@ import {
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { parseTurkishNumber, formatTurkishInput } from '../utils/numberFormat'
+import { parseTurkishNumber, formatTurkishInput, hamTutarGirdisi } from '../utils/numberFormat'
 import { sendEmail, sendShareDocumentsViaWhatsApp, logWhatsAppWebSend, getWhatsAppChannel, openWhatsAppWeb } from '../services/whatsappService'
 import { getSettings } from '../services/settingsService'
 import { sendBulkDebtNotifications, buildDebtPayload } from '../services/debtNotificationService'
@@ -60,6 +60,44 @@ const ODEME_TURLERI = [
 export default function OdemeTakip() {
   const { clients } = useClients()
   const [fees, setFees] = useState([])
+
+  // Fareyle tutup sürükleyerek ayları kaydırma (drag-to-scroll)
+  const tabloRef = useRef(null)
+  const surukleRef = useRef({ aktif: false, startX: 0, baslangicScroll: 0, tasinan: false })
+  const [surukleModu, setSurukleModu] = useState(false)
+
+  const tabloMouseDown = useCallback((e) => {
+    const el = tabloRef.current
+    if (!el || e.button !== 0) return
+    // Metin kutusu / buton / onay kutusu üstünde sürüklemeyi başlatma
+    if (e.target.closest('input, button, select, textarea, a')) return
+    surukleRef.current = { aktif: true, startX: e.pageX, baslangicScroll: el.scrollLeft, tasinan: false }
+    setSurukleModu(true)
+  }, [])
+
+  const tabloMouseMove = useCallback((e) => {
+    const s = surukleRef.current
+    const el = tabloRef.current
+    if (!s.aktif || !el) return
+    const dx = e.pageX - s.startX
+    if (!s.tasinan && Math.abs(dx) > 6) s.tasinan = true
+    if (s.tasinan) el.scrollLeft = s.baslangicScroll - dx
+  }, [])
+
+  const tabloMouseUp = useCallback(() => {
+    surukleRef.current.aktif = false
+    setSurukleModu(false)
+  }, [])
+
+  // Sürükleme sonrası yanlış tıklamayı engelle (ödeme hücresi açılmasın)
+  const tabloClickKontrol = useCallback((e) => {
+    if (surukleRef.current.tasinan) {
+      e.stopPropagation()
+      e.preventDefault()
+      surukleRef.current.tasinan = false
+    }
+  }, [])
+
   const [payments, setPayments] = useState([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
@@ -144,15 +182,42 @@ export default function OdemeTakip() {
       return Math.max(0, sonAy - basA + 1)
     })()
 
-    const toplamBorc = aylikUcret * faturalananAy + defterTasdik + oncekiDonem
+    // Onceki yillarin odenmemis aylik ucretleri: secili yildan onceki her yil icin
+    // faturalanan ay borcu - o yila ait tahsilatlar. Yil degisince (orn. 2027'ye girince)
+    // gecen yilin kalan borcu "Önceki Dönem"e otomatik eklenir.
+    const gecmisKalan = (() => {
+      if (aylikUcret <= 0) return 0
+      // Baslangic yili: fee kaydindan; yoksa ilk ödemenin yilindan; o da yoksa önceki yıl yok
+      const odemeYillari = clientPayments
+        .filter(p => /^\d{4}-/.test(p.donem || ''))
+        .map(p => Number(p.donem.slice(0, 4)))
+      const basY = Number(fee?.baslangic_yil) || (odemeYillari.length ? Math.min(...odemeYillari) : yil)
+      if (yil <= basY) return 0
+      let toplam = 0
+      for (let Y = basY; Y <= yil - 1; Y++) {
+        if (Y > nowY) break
+        const sonAy = Y === nowY ? nowM : 12
+        let odendiTutar = 0
+        for (let m = 1; m <= sonAy; m++) {
+          odendiTutar += Math.min(tahsilEden(`${Y}-${String(m).padStart(2, '0')}`), aylikUcret)
+        }
+        toplam += Math.max(0, aylikUcret * sonAy - odendiTutar)
+      }
+      return toplam
+    })()
+
+    // Gostermekte oldugumuz önceki dönem: kayitli borç + önceki yillarin kalanı
+    const oncekiDonemToplam = oncekiDonem + gecmisKalan
+
+    const toplamBorc = aylikUcret * faturalananAy + defterTasdik + oncekiDonemToplam
 
     const odenen =
-      Math.min(tahsilEden('Onceki Donem'), oncekiDonem) +
+      Math.min(tahsilEden('Onceki Donem'), oncekiDonemToplam) +
       Math.min(tahsilEden('Defter Tasdik'), defterTasdik) +
       odenenAyListesi
         .reduce((s, m) => s + Math.min(tahsilEden(`${yil}-${String(m).padStart(2, '0')}`), aylikUcret), 0)
 
-    return { ...c, fee, clientPayments, aylikUcret, defterTasdik, oncekiDonem, faturalananAy, toplamBorc, odenen, kalan: toplamBorc - odenen }
+    return { ...c, fee, clientPayments, aylikUcret, defterTasdik, oncekiDonem, oncekiDonemToplam, faturalananAy, toplamBorc, odenen, kalan: toplamBorc - odenen }
   })
 
   const rows = tumSatirlar
@@ -162,8 +227,13 @@ export default function OdemeTakip() {
         const name = (c.name || c.company || '').toLowerCase()
         if (!name.includes(s)) return false
       }
+      // 2.7.574: Borc durumu filtresi KALAN borca gore.
+      // - Borçlu: kalan borcu > 0 olanlar.
+      // - Borcu Yok: borcu tamamen kapanmis olanlar — kalan <= 0 VE (ödeme
+      //   yapmis VEYA borcu olmus). Ücret kaydı hiç girilmemiş (borcu da,
+      //   ödemesi de olmayan) müşteriler iki listede de görünmez; yalnız "Tümü"de.
       if (filter === 'borcu_var') return c.kalan > 0
-      if (filter === 'borcu_yok') return c.kalan <= 0
+      if (filter === 'borcu_yok') return c.kalan <= 0 && (c.odenen > 0 || c.toplamBorc > 0)
       return true
     })
     .sort((a, b) => (a.name || a.company || '').localeCompare(b.name || b.company || '', 'tr'))
@@ -219,7 +289,7 @@ export default function OdemeTakip() {
   // ============ ODEME KAYDI MODAL ============
   // kalem: 1-12 (ay) veya 'Onceki Donem' / 'Defter Tasdik'
   const openOdemeModal = (row, kalem) => {
-    const varsayilanTutar = kalem === 'Onceki Donem' ? row.oncekiDonem
+    const varsayilanTutar = kalem === 'Onceki Donem' ? row.oncekiDonemToplam
       : kalem === 'Defter Tasdik' ? row.defterTasdik
       : row.aylikUcret
     setOdemeForm({
@@ -410,7 +480,7 @@ export default function OdemeTakip() {
         r.name || r.company || '-',
         r.aylikUcret,
         r.defterTasdik,
-        r.oncekiDonem,
+        r.oncekiDonemToplam,
         r.toplamBorc,
         ...AYLER.map((_, m) => durumText[monthStatus(r, m + 1)] || '-'),
         r.odenen,
@@ -419,7 +489,7 @@ export default function OdemeTakip() {
     })
     aoa.push(['', 'Aylık Tahsilat', '', '', '', '', ...aylikTahsilatlar, aylikTahsilatToplam, ''])
     aoa.push([])
-    aoa.push(['', 'GENEL TOPLAM', tumSatirlar.reduce((s, r) => s + r.aylikUcret, 0), tumSatirlar.reduce((s, r) => s + r.defterTasdik, 0), tumSatirlar.reduce((s, r) => s + r.oncekiDonem, 0), yillikTahsilat, ...AYLER.map(() => ''), odenenToplam, yillikTahsilat - odenenToplam])
+    aoa.push(['', 'GENEL TOPLAM', tumSatirlar.reduce((s, r) => s + r.aylikUcret, 0), tumSatirlar.reduce((s, r) => s + r.defterTasdik, 0), tumSatirlar.reduce((s, r) => s + r.oncekiDonemToplam, 0), yillikTahsilat, ...AYLER.map(() => ''), odenenToplam, yillikTahsilat - odenenToplam])
     const ws = XLSX.utils.aoa_to_sheet(aoa)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Odeme Takip')
@@ -454,7 +524,7 @@ export default function OdemeTakip() {
       kisaAd(r.name || r.company || '-'),
       r.aylikUcret > 0 ? fmt(r.aylikUcret) : '-',
       r.defterTasdik > 0 ? fmt(r.defterTasdik) : '-',
-      r.oncekiDonem > 0 ? fmt(r.oncekiDonem) : '-',
+      r.oncekiDonemToplam > 0 ? fmt(r.oncekiDonemToplam) : '-',
       fmt(r.toplamBorc),
       ...AYLER.map((_, mi) => durumText[monthStatus(r, mi + 1)] || '-'),
       r.odenen > 0 ? fmt(r.odenen) : '-',
@@ -466,7 +536,7 @@ export default function OdemeTakip() {
       ['', 'GENEL TOPLAM',
         fmt(tumSatirlar.reduce((s, r) => s + r.aylikUcret, 0)),
         fmt(tumSatirlar.reduce((s, r) => s + r.defterTasdik, 0)),
-        fmt(tumSatirlar.reduce((s, r) => s + r.oncekiDonem, 0)),
+        fmt(tumSatirlar.reduce((s, r) => s + r.oncekiDonemToplam, 0)),
         fmt(yillikTahsilat),
         ...AYLER.map(() => ''),
         fmt(odenenToplam),
@@ -693,24 +763,26 @@ export default function OdemeTakip() {
           className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 pl-9 pr-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
       </div>
 
-      {/* Matris tablo */}
+      {/* Matris tablo — fareyle tutup sürükleyerek kaydırılabilir */}
       <div className="bg-blue-800/20 rounded-2xl border border-blue-700/30 overflow-hidden">
-        <div className="overflow-x-auto">
+        <div ref={tabloRef} className="overflow-x-auto cursor-grab active:cursor-grabbing select-none"
+          onMouseDown={tabloMouseDown} onMouseMove={tabloMouseMove} onMouseUp={tabloMouseUp} onMouseLeave={tabloMouseUp}
+          onClickCapture={tabloClickKontrol}>
           <table className="w-full text-sm">
             <thead className="bg-blue-900/30">
               <tr className="text-gray-400 text-xs whitespace-nowrap">
-                <th className="px-3 py-3 text-left">#</th>
-                <th className="px-3 py-3 text-left min-w-[180px]">
+                <th className="sticky left-0 z-20 bg-[#274a8f] px-3 py-3 text-left w-12">#</th>
+                <th className="sticky z-20 bg-[#274a8f] px-3 py-3 text-left min-w-[180px]" style={{ left: 48 }}>
                   <span className="flex items-center gap-2">
                     <input type="checkbox" checked={rows.length > 0 && selectedIds.length === rows.length} onChange={tumunuSec}
                       className="accent-yellow-400 w-3.5 h-3.5 cursor-pointer" title="Tümünü seç / kaldır" />
                     Adı Soyadı
                   </span>
                 </th>
-                <th className="px-3 py-3 text-right">Aylık Ücret</th>
-                <th className="px-3 py-3 text-right">Defter Tasdik</th>
-                <th className="px-3 py-3 text-right">Önceki Dönem</th>
-                <th className="px-3 py-3 text-right">Toplam Borç</th>
+                <th className="sticky z-10 bg-[#274a8f] px-3 py-3 text-right min-w-[110px]" style={{ left: 228 }}>Aylık Ücret</th>
+                <th className="sticky z-10 bg-[#274a8f] px-3 py-3 text-right min-w-[110px]" style={{ left: 338 }}>Defter Tasdik</th>
+                <th className="sticky z-10 bg-[#274a8f] px-3 py-3 text-right min-w-[110px]" style={{ left: 448 }}>Önceki Dönem</th>
+                <th className="sticky z-10 bg-[#274a8f] px-3 py-3 text-right min-w-[110px] shadow-[6px_0_10px_-4px_rgba(0,0,0,0.45)]" style={{ left: 558 }}>Toplam Borç</th>
                 {AYLER.map((ay, i) => (
                   <th key={ay} className={`px-2 py-3 text-center ${buAyVurgu && yil === nowY && i + 1 === nowM ? 'bg-yellow-500/10 text-yellow-400 ring-1 ring-inset ring-yellow-500/30' : ''}`}>{ay}</th>
                 ))}
@@ -726,8 +798,8 @@ export default function OdemeTakip() {
               ) : (
                 rows.map((r, i) => (
                   <tr key={r.id} className="border-t border-blue-700/20 hover:bg-blue-800/10 transition-colors">
-                    <td className="px-3 py-2 text-gray-500">{i + 1}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">
+                    <td className="sticky left-0 z-10 bg-[#1f3d78] px-3 py-2 text-gray-500 w-12">{i + 1}</td>
+                    <td className="sticky z-10 bg-[#1f3d78] px-3 py-2 whitespace-nowrap min-w-[180px]" style={{ left: 48 }}>
                       <div className="flex items-center gap-2">
                         <input type="checkbox" checked={selectedIds.includes(r.id)} onChange={() => toggleSecim(r.id)}
                           className="accent-yellow-400 w-3.5 h-3.5 cursor-pointer shrink-0" />
@@ -740,8 +812,8 @@ export default function OdemeTakip() {
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-right text-gray-300 whitespace-nowrap">{r.aylikUcret > 0 ? `₺ ${fmt(r.aylikUcret)}` : '-'}</td>
-                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                    <td className="sticky z-10 bg-[#1f3d78] px-3 py-2 text-right text-gray-300 whitespace-nowrap min-w-[110px]" style={{ left: 228 }}>{r.aylikUcret > 0 ? `₺ ${fmt(r.aylikUcret)}` : '-'}</td>
+                    <td className="sticky z-10 bg-[#1f3d78] px-3 py-2 text-right whitespace-nowrap min-w-[110px]" style={{ left: 338 }}>
                       {(() => {
                         const durum = kalemDurum(r, 'Defter Tasdik')
                         if (durum !== 'yok') {
@@ -765,7 +837,7 @@ export default function OdemeTakip() {
                         return <span className="text-gray-600">-</span>
                       })()}
                     </td>
-                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                    <td className="sticky z-10 bg-[#1f3d78] px-3 py-2 text-right whitespace-nowrap min-w-[110px]" style={{ left: 448 }}>
                       {(() => {
                         const durum = kalemDurum(r, 'Onceki Donem')
                         if (durum !== 'yok') {
@@ -777,19 +849,19 @@ export default function OdemeTakip() {
                             </button>
                           )
                         }
-                        if (r.oncekiDonem > 0) {
+                        if (r.oncekiDonemToplam > 0) {
                           return (
                             <button onClick={() => openOdemeModal(r, 'Onceki Donem')}
                               title="Önceki Dönem Borcu - ödeme kaydı ekle"
                               className="inline-flex items-center gap-1 text-red-400 hover:text-red-300 hover:bg-blue-700/40 rounded px-1.5 py-0.5 transition-colors">
-                              ₺ {fmt(r.oncekiDonem)} <Plus className="w-3 h-3 text-green-400" />
+                              ₺ {fmt(r.oncekiDonemToplam)} <Plus className="w-3 h-3 text-green-400" />
                             </button>
                           )
                         }
                         return <span className="text-gray-600">-</span>
                       })()}
                     </td>
-                    <td className="px-3 py-2 text-right text-yellow-400 font-medium whitespace-nowrap">₺ {fmt(r.toplamBorc)}</td>
+                    <td className="sticky z-10 bg-[#1f3d78] px-3 py-2 text-right text-yellow-400 font-medium whitespace-nowrap min-w-[110px] shadow-[6px_0_10px_-4px_rgba(0,0,0,0.45)]" style={{ left: 558 }}>₺ {fmt(r.toplamBorc)}</td>
                     {AYLER.map((_, mi) => {
                       const m = mi + 1
                       const durum = monthStatus(r, m)
@@ -896,7 +968,8 @@ export default function OdemeTakip() {
               <label className="block space-y-1">
                 <span className="text-xs text-gray-400">Tutar (TL)</span>
                 <input type="text" inputMode="decimal" value={odemeForm.tutar} required
-                  onChange={(e) => setOdemeForm(f => ({ ...f, tutar: formatTurkishInput(e.target.value) }))}
+                  onChange={(e) => setOdemeForm(f => ({ ...f, tutar: hamTutarGirdisi(e.target.value) }))}
+                  onBlur={(e) => { const h = hamTutarGirdisi(e.target.value); if (h && h !== ',') setOdemeForm(f => ({ ...f, tutar: formatTurkishInput(h) })) }}
                   placeholder="8.000,00"
                   className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400" />
               </label>
@@ -957,7 +1030,8 @@ export default function OdemeTakip() {
                 <label className="space-y-1">
                   <span className="text-xs text-gray-400">Ödeme Tutarı (TL)</span>
                   <input type="text" inputMode="decimal" value={linkAmount} required
-                    onChange={(e) => setLinkAmount(formatTurkishInput(e.target.value))}
+                    onChange={(e) => setLinkAmount(hamTutarGirdisi(e.target.value))}
+                    onBlur={(e) => { const h = hamTutarGirdisi(e.target.value); if (h && h !== ',') setLinkAmount(formatTurkishInput(h)) }}
                     placeholder="5.000,00"
                     className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm" />
                 </label>

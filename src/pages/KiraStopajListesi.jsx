@@ -313,7 +313,7 @@ export default function KiraStopajListesi() {
           <span className="flex items-center gap-1 text-sm text-slate-300"><Building2 size={15} /> Müşteri</span>
           <select value={clientId} onChange={(event) => setClientId(event.target.value)} className="w-full rounded-lg bg-slate-800 px-3 py-2">
             <option value="">Müşteri seçin</option>
-            {clients.filter((client) => client?.id).map((client) => (
+            {clients.filter((client) => client?.id).slice().sort((a, b) => tenantLabel(a).localeCompare(tenantLabel(b), 'tr')).map((client) => (
               <option key={client.id} value={client.id}>{tenantLabel(client)}</option>
             ))}
           </select>

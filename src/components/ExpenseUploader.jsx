@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Camera, Upload, Trash2, Save, X, Eye, CheckCircle, AlertTriangle, FileText, Download, Receipt } from 'lucide-react'
+import { Camera, Upload, Trash2, Save, X, Eye, CheckCircle, AlertTriangle, FileText, Download, Receipt, FileSpreadsheet } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { processExpenseImage, convertToAccountingEntry } from '../services/expenseOCRService'
+import { pdfIlkSayfaResmi } from '../services/zReportOCRService'
 
 export default function ExpenseUploader({ clientId, clientName }) {
   const [expenses, setExpenses] = useState([])
@@ -68,7 +69,7 @@ export default function ExpenseUploader({ clientId, clientName }) {
     }
   }
 
-  const handleFileSelect = (e) => {
+  const handleFileSelect = async (e) => {
     if (!clientId) {
       setMsg('Musteri ID bulunamadi. Lutfen tekrar giris yapin.')
       setTimeout(() => setMsg(''), 3000)
@@ -76,31 +77,168 @@ export default function ExpenseUploader({ clientId, clientName }) {
     }
     const files = Array.from(e.target.files)
     if (!files.length) return
-    
-    const imageFiles = files.filter(file => file.type.startsWith('image/'))
-    if (imageFiles.length === 0) {
-      setMsg('Lutfen sadece resim dosyalari secin (JPG, PNG)')
+
+    // Resim + PDF kabul edilir; PDF'ler OCR icin ilk sayfadan resme cevrilir
+    const uygun = files.filter(f => f.type.startsWith('image/') || /\.pdf$/i.test(f.name) || f.type === 'application/pdf')
+    if (uygun.length === 0) {
+      setMsg('Lutfen resim (JPG, PNG) veya PDF dosyalari secin')
       setTimeout(() => setMsg(''), 3000)
       return
     }
-    
-    if (imageFiles.length > 10) {
-      setMsg('En fazla 10 resim yukleyebilirsiniz')
+
+    if (uygun.length > 10) {
+      setMsg('En fazla 10 dosya yukleyebilirsiniz')
       setTimeout(() => setMsg(''), 3000)
       return
     }
-    
-    // Mevcut resimlere ekle (batch modu icin)
-    const allFiles = [...selectedFiles, ...imageFiles]
+
+    // Mevcut dosyalara ekle (batch modu icin)
+    const allFiles = [...selectedFiles, ...uygun]
     if (allFiles.length > 10) {
-      setMsg('Toplam en fazla 10 resim yukleyebilirsiniz')
+      setMsg('Toplam en fazla 10 dosya yukleyebilirsiniz')
       setTimeout(() => setMsg(''), 3000)
       return
     }
-    
+
+    setMsg('PDF hazirlaniyor...')
+    const yeniUrler = []
+    for (const f of uygun) {
+      if (/\.pdf$/i.test(f.name) || f.type === 'application/pdf') {
+        try {
+          yeniUrler.push(await pdfIlkSayfaResmi(f))
+        } catch (err) {
+          console.error('PDF resme cevrilemedi:', err)
+          setMsg('PDF okunamadi: ' + (err.message || err))
+          setTimeout(() => setMsg(''), 4000)
+          return
+        }
+      } else {
+        yeniUrler.push(URL.createObjectURL(f))
+      }
+    }
+
     setSelectedFiles(allFiles)
-    const urls = imageFiles.map(file => URL.createObjectURL(file))
-    setPreviewUrls(prev => [...prev, ...urls])
+    setPreviewUrls(prev => [...prev, ...yeniUrler])
+    setMsg('')
+  }
+
+  const pdfMi = (f) => f && (/\.pdf$/i.test(f.name) || f.type === 'application/pdf')
+
+  // Excel ile yukleme: her satir bir gider fisi
+  const giderExcelYukle = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!clientId) {
+      setMsg('Musteri ID bulunamadi. Lutfen tekrar giris yapin.')
+      setTimeout(() => setMsg(''), 3000)
+      return
+    }
+    setUploading(true)
+    setMsg('Excel okunuyor...')
+    try {
+      const XLSX = await import('xlsx')
+      const buffer = await file.arrayBuffer()
+      const wb = XLSX.read(buffer, { cellDates: true })
+      const sheet = wb.Sheets[wb.SheetNames[0]]
+      const satirlar = XLSX.utils.sheet_to_json(sheet, { defval: '' })
+      if (!satirlar.length) throw new Error('Excel dosyasi bos.')
+
+      const anahtar = (s) => String(s || '').toLocaleLowerCase('tr')
+        .replace(/ı/g, 'i').replace(/İ/g, 'i').replace(/ş/g, 's').replace(/ğ/g, 'g')
+        .replace(/ü/g, 'u').replace(/ö/g, 'o').replace(/ç/g, 'c')
+        .replace(/[^a-z0-9]/g, '')
+      const sayi = (v) => {
+        if (typeof v === 'number') return isFinite(v) ? v : 0
+        const t = String(v || '').replace(/[^\d.,-]/g, '').trim()
+        if (!t) return 0
+        if (t.includes(',')) return parseFloat(t.replace(/\./g, '').replace(',', '.')) || 0
+        return parseFloat(t) || 0
+      }
+      const hucreTarih = (v) => {
+        if (v instanceof Date && !isNaN(v)) return v.toISOString().split('T')[0]
+        const m = String(v || '').match(/(\d{1,4})[.\/-](\d{1,2})[.\/-](\d{2,4})/)
+        if (!m) return new Date().toISOString().split('T')[0]
+        let [, a, b, c] = m
+        if (c.length === 2) c = '20' + c
+        if (a.length === 4) return `${a}-${b.padStart(2, '0')}-${c.padStart(2, '0')}`
+        return `${c}-${b.padStart(2, '0')}-${a.padStart(2, '0')}`
+      }
+      // Kategori esleme: excel degeri -> categories id
+      const kategoriBul = (v) => {
+        const n = anahtar(v)
+        if (!n) return 'diger'
+        const bul = categories.find(c => anahtar(c.name) === n || anahtar(c.id) === n)
+        return bul ? bul.id : 'diger'
+      }
+
+      let kaydedilen = 0
+      for (let i = 0; i < satirlar.length; i++) {
+        const r = satirlar[i]
+        const anahtarlar = Object.keys(r)
+        const bul = (hedefler) => {
+          for (const k of anahtarlar) if (hedefler.some(h => anahtar(k).startsWith(h))) return k
+          return null
+        }
+        const toplam = sayi(r[bul(['toplam', 'tutar', 'tutar'])] ?? 0)
+        const kdv = sayi(r[bul(['kdv'])] ?? 0)
+        const aciklama = r[bul(['aciklama', 'satici', 'unvan'])] || ''
+        const kategori = kategoriBul(r[bul(['kategori', 'giderturu', 'tur'])])
+        if (!toplam) continue // tamamen bos / gecersiz satir
+        setMsg(`Excel satiri kaydediliyor (${kaydedilen + 1})...`)
+        const parsed = {
+          tarih: hucreTarih(r[bul(['tarih'])]),
+          fisNo: String(r[bul(['fisno', 'evrakno', 'belgeno'])] || ''),
+          toplam,
+          kdv,
+          kdvOran: toplam > 0 && kdv > 0 ? Math.round((kdv / (toplam - kdv)) * 100) : 0,
+          kategori,
+          satici: String(r[bul(['satici', 'unvan'])] || ''),
+          aciklama: String(aciklama || '')
+        }
+        const { data: expense, error: expenseError } = await supabase
+          .from('expense_documents')
+          .insert({
+            client_id: clientId,
+            year: selectedYear,
+            month: selectedMonth,
+            document_date: parsed.tarih,
+            document_no: parsed.fisNo,
+            image_url: '',
+            file_name: `${file.name} (satir ${i + 2})`,
+            status: 'parsed',
+            total_amount: parsed.toplam,
+            kdv_amount: parsed.kdv,
+            kdv_rate: parsed.kdvOran,
+            category: parsed.kategori,
+            raw_text: `Excel yukleme: ${file.name}`,
+            ocr_data: parsed
+          })
+          .select()
+          .single()
+        if (expenseError) throw expenseError
+        const entries = convertToAccountingEntry('individual', parsed)
+        for (const entry of entries) {
+          await supabase.from('expense_lines').insert({
+            expense_document_id: expense.id,
+            description: entry.aciklama,
+            account_code: entry.hesap_kodu,
+            amount: entry.borc,
+            kdv_amount: 0,
+            kdv_rate: 0
+          })
+        }
+        kaydedilen++
+      }
+      if (!kaydedilen) throw new Error('Excel icinde gecerli gider satiri bulunamadi (Toplam/Tutar kolonu bos).')
+      setMsg(`${kaydedilen} gider fisi Excel'den kaydedildi!`)
+      loadExpenses()
+    } catch (err) {
+      setMsg('Excel yukleme hatasi: ' + (err.message || err))
+    } finally {
+      setUploading(false)
+      setTimeout(() => setMsg(''), 4000)
+    }
   }
 
   const handleSave = async () => {
@@ -129,9 +267,10 @@ export default function ExpenseUploader({ clientId, clientName }) {
           .from('client-expenses')
           .getPublicUrl(fileName)
 
-        // OCR islemi
+        // OCR islemi — PDF'ler tesseract ile okunamaz, resme cevrilmis
+        // onizlemeyi (dataURL) kullan; resimlerde depolanan URL okunur.
         setMsg(`${i + 1}/${selectedFiles.length} OCR isleniyor...`)
-        const ocrResult = await processExpenseImage(urlData.publicUrl)
+        const ocrResult = await processExpenseImage(pdfMi(file) ? previewUrls[i] : urlData.publicUrl)
         
         // Gider kaydi olustur
         const { data: expense, error: expenseError } = await supabase
@@ -274,14 +413,26 @@ export default function ExpenseUploader({ clientId, clientName }) {
               <input type="file" className="hidden" accept="image/*" capture="environment" onChange={handleFileSelect} />
             </label>
             
-            {/* Galeriden Sec */}
+            {/* Galeriden Sec (Resim / PDF) */}
             <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-blue-700/50 rounded-xl cursor-pointer hover:border-blue-500/50 hover:bg-blue-900/20 transition-colors">
               <div className="flex flex-col items-center justify-center pt-5 pb-6">
                 <Upload className="w-8 h-8 text-gray-400 mb-2" />
-                <p className="text-sm text-gray-400">Galeriden Sec</p>
-                <p className="text-xs text-gray-500">JPG, PNG (En fazla 10 resim)</p>
+                <p className="text-sm text-gray-400">Resim / PDF Sec</p>
+                <p className="text-xs text-gray-500">JPG, PNG, PDF (En fazla 10 dosya)</p>
               </div>
-              <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileSelect} />
+              <input type="file" className="hidden" accept="image/*,.pdf,application/pdf" multiple onChange={handleFileSelect} />
+            </label>
+
+            {/* Excel ile Yukle */}
+            <label className="flex flex-col items-center justify-center w-full h-20 border-2 border-dashed border-green-700/50 rounded-xl cursor-pointer hover:border-green-500/50 hover:bg-green-900/10 transition-colors">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="w-6 h-6 text-green-400" />
+                <div className="text-left">
+                  <p className="text-sm text-gray-400">Excel ile Yukle</p>
+                  <p className="text-xs text-gray-500">Her satir bir gider fisi (Tarih, Fis No, Tutar, KDV...)</p>
+                </div>
+              </div>
+              <input type="file" className="hidden" accept=".xlsx,.xls" onChange={giderExcelYukle} />
             </label>
 
             {/* Onizleme Grid */}

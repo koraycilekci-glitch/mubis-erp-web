@@ -10,9 +10,17 @@ import {
   Zap, Star, CircleDot, Timer, CalendarDays, BookOpen, Receipt,
   ShieldCheck, FileSearch, Briefcase, Settings, Activity, Send,
   Megaphone, DollarSign, Menu as MenuIcon, ChevronLeft, LayoutDashboard,
-  Calculator, MessageSquareText
+  Calculator, MessageSquareText, Inbox
 } from 'lucide-react'
-import { getMonthName, getFormattedBeyanDeadline, formatDateTR } from '../utils/dateUtils'
+import { getMonthName, getFormattedBeyanDeadline, getBeyanDeadline, getFormattedSgkOdemeGunu, getSgkOdemeGunu, formatDateTR } from '../utils/dateUtils'
+import { gibYardimciIs } from '../utils/gibOdemeHelper'
+import { getNotifications, markNotificationRead, subscribeToNotifications } from '../services/notificationService'
+import { supabase } from '../lib/supabase'
+import HavaSaatKarti from '../components/HavaSaatKarti'
+import NamazVakitleri from '../components/NamazVakitleri'
+import RadioUstBant from '../components/RadioUstBant'
+import YouTubeMuzik from '../components/YouTubeMuzik'
+import SpotifyUstBant from '../components/SpotifyUstBant'
 
 // ── Beyan tipleri ve son tarih gunleri ──
 const BEYAN_TYPES = [
@@ -31,9 +39,9 @@ const BEYAN_TYPES = [
 function getGreeting() {
   const hour = new Date().getHours()
   if (hour < 6) return 'Iyi geceler'
-  if (hour < 12) return 'Gunaydin'
-  if (hour < 18) return 'Iyi gunler'
-  return 'Iyi aksamlar'
+  if (hour < 12) return 'Günaydın'
+  if (hour < 18) return 'İyi günler'
+  return 'İyi akşamlar'
 }
 
 function getTurkishDate() {
@@ -64,13 +72,19 @@ function getUrgencyColor(daysLeft) {
 // month: 0-based. SGK odemesi ayin son gunu, gecici vergi 17'si (Sub/May/Agu/Kas)
 function getAyinSonTarihleri(yil, ay) {
   const ayinSonGunu = new Date(yil, ay + 1, 0).getDate()
-
+  // 2.7.266: SGK prim odemesi ayin son gunudur; hafta sonu/resmi tatile denk
+  // gelirse TAKIP EDEN ilk is gunune ILERI ertelenir (Ekim 2026: 31 Cumartesi
+  // -> 2 Kasim Pazartesi). Erteleme sonraki aya tasarsa ayin son gununde,
+  // yanina tasinan tarih yazilarak gosterilir.
+  const sgkOdeme = getSgkOdemeGunu(yil, ay)
   const kalemler = [
     { gun: 25, ad: 'KDV2 (tevkifat)' },
     { gun: 26, ad: 'Muhtasar ve Prim Hizmet' },
     { gun: 26, ad: 'Damga Vergisi' },
     { gun: 28, ad: 'KDV' },
-    { gun: ayinSonGunu, ad: 'SGK Prim Ödemesi' }
+    sgkOdeme.getMonth() === ay
+      ? { gun: sgkOdeme.getDate(), ad: 'SGK Prim Ödemesi' }
+      : { gun: ayinSonGunu, ad: `SGK Prim Ödemesi (${formatDateTR(getFormattedSgkOdemeGunu(yil, ay))})` }
   ]
 
   const geciciDonem = { 1: '4. Dönem', 4: '1. Dönem', 7: '2. Dönem', 10: '3. Dönem' }[ay]
@@ -208,19 +222,236 @@ function MiniTakvim({ isaretliGunler = [] }) {
   )
 }
 
+// ── 2.7.522: Son 2 günde gelen e-Tebligatlar — müşteri başına adet listesi.
+// Uyarı bandındaki "Kimlere Geldi?" düğmesi bu bölüme kaydırır; satırdaki
+// düğme ilgili müşterinin e-Tebligat sayfasını açar. ──
+export function SonIkiGunTebligatlar() {
+  const { clients } = useClients()
+  const navigate = useNavigate()
+  const [gruplar, setGruplar] = useState([])
+  const [yukleniyor, setYukleniyor] = useState(true)
+
+  useEffect(() => {
+    let canli = true
+    const yukle = async () => {
+      try {
+        const ikiGunOnce = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString()
+        const { data, error } = await supabase
+          .from('etebligatlar')
+          .select('client_id, belge_no, teblig_tarihi, gonderme_tarihi, kurum, file_url, created_at')
+          .gte('created_at', ikiGunOnce)
+          .order('created_at', { ascending: false })
+        if (error) throw error
+        if (!canli) return
+        const harita = new Map()
+        for (const s of data || []) {
+          const k = String(s.client_id)
+          if (!harita.has(k)) harita.set(k, { clientId: s.client_id, adet: 0, tebligatlar: [] })
+          const g = harita.get(k)
+          g.adet++
+          g.tebligatlar.push(s)
+        }
+        setGruplar([...harita.values()].sort((a, b) => b.adet - a.adet))
+      } catch { /* tablo yoksa sessiz gec */ }
+      if (canli) setYukleniyor(false)
+    }
+    yukle()
+    const abonelik = subscribeToNotifications(() => yukle())
+    return () => { canli = false; try { abonelik?.() } catch { /* yoksay */ } }
+  }, [])
+
+  const isim = (cid) => {
+    const c = (clients || []).find(x => String(x.id) === String(cid))
+    return c ? (c.company_name || c.name || `Müşteri #${cid}`) : `Müşteri #${cid}`
+  }
+
+  if (yukleniyor) return null // 2.7.542: yukleme bandi cizmiyoruz — bolum sonradan buyuyup alttaki kartlari kaydiriyor (yanlis tiklanmaya yol aciyor)
+
+  if (!gruplar.length) return null
+
+  const toplam = gruplar.reduce((t, g) => t + g.adet, 0)
+
+  return (
+    // 2.7.542: tam genislik bant kaldirildi — e-Tebligat simgesi (rozetli)
+    // uzerine gelince asagiya acilan profesyonel panel haline getirildi.
+    <div id="son-iki-gun-tebligatlar" className="relative inline-block group scroll-mt-24 mb-6 align-top">
+      <button
+        type="button"
+        onClick={() => navigate('/admin/etebligatlar')}
+        className="relative block w-14 h-14 md:w-16 md:h-16 rounded-2xl overflow-hidden shadow-lg shadow-black/40 ring-2 ring-amber-400/50 hover:ring-amber-400 transition-all duration-300 hover:scale-105 cursor-pointer"
+        title="Son 2 günde gelen tebligatlar — üstünde bekleyin"
+      >
+        <img src="/etebligat-simge.png" alt="e-Tebligat" className="w-full h-full object-cover" draggable="false" />
+        <span className="absolute -top-1.5 -right-1.5 min-w-[22px] h-[22px] px-1 rounded-full bg-red-500 text-white text-[11px] font-bold flex items-center justify-center ring-2 ring-blue-950 shadow-lg">
+          {toplam > 99 ? '99+' : toplam}
+        </span>
+      </button>
+      {/* Uzerine gelince acilan panel */}
+      <div className="absolute left-0 top-full z-50 pt-2 opacity-0 translate-y-1 invisible transition-all duration-200 group-hover:opacity-100 group-hover:translate-y-0 group-hover:visible">
+        <div className="w-[430px] max-w-[calc(100vw-3rem)] bg-blue-950/95 backdrop-blur-md border border-amber-500/40 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden">
+          <div className="flex items-center gap-2.5 px-4 py-3 border-b border-blue-800/50 bg-amber-500/5">
+            <img src="/etebligat-simge.png" alt="" className="w-9 h-9 rounded-xl object-cover ring-1 ring-amber-400/40" draggable="false" />
+            <div className="flex-1 min-w-0">
+              <h2 className="text-white font-semibold text-sm leading-tight">Son 2 Günde Gelen Tebligatlar</h2>
+              <p className="text-amber-300/80 text-xs">{gruplar.length} müşteri · {toplam} tebligat</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/admin/etebligatlar')}
+              className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-500/90 hover:bg-amber-400 text-blue-950 text-xs font-bold transition"
+            >
+              Tümü
+            </button>
+          </div>
+          <div className="divide-y divide-blue-800/40 max-h-72 overflow-y-auto">
+            {gruplar.map((g, gi) => (
+              <div key={String(g.clientId)}>
+                <div className="px-4 py-2.5 flex flex-wrap items-center gap-2.5">
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-bold shrink-0">{g.adet} yeni</span>
+                  <span className="text-white text-sm font-medium flex-1 min-w-[140px] truncate" title={isim(g.clientId)}>{isim(g.clientId)}</span>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/admin/etebligatlar?musteri=${g.clientId}&yeni=1`)}
+                    className="shrink-0 px-2.5 py-1 rounded-md bg-amber-500/90 hover:bg-amber-400 text-blue-950 text-[11px] font-bold transition"
+                  >
+                    e-Tebligat'a Git
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGruplar(list => list.map((x, i) => i === gi ? { ...x, acik: !x.acik } : x))}
+                    className="shrink-0 px-2 py-1 rounded-md bg-blue-900/40 border border-blue-700/40 text-gray-300 text-[11px] hover:bg-blue-900/60 transition"
+                  >
+                    {g.acik ? 'Gizle' : 'Detay'}
+                  </button>
+                </div>
+                {g.acik && (
+                  <div className="px-4 pb-2.5">
+                    {g.tebligatlar.slice(0, 12).map((s, si) => (
+                      <div key={(s.belge_no || '') + si} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 py-1 text-xs pl-2">
+                        <span className="text-gray-400 min-w-[86px]">{s.teblig_tarihi || s.gonderme_tarihi || '—'}</span>
+                        <span className="text-gray-200 flex-1 min-w-[140px] truncate">{s.kurum || '—'}</span>
+                        {s.file_url
+                          ? <span className="text-green-400">PDF hazır</span>
+                          : <span className="text-gray-500">PDF indirilmedi</span>}
+                      </div>
+                    ))}
+                    {g.tebligatlar.length > 12 && (
+                      <div className="text-gray-500 text-xs pl-2 pt-1">+ {g.tebligatlar.length - 12} tebligat daha</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── e-Tebligat uyarisi: okunmamis "etebligat" bildirimlerini sari bantla goster ──
+function EtebligatUyari() {
+  const [uyarilar, setUyarilar] = useState([])
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    let canli = true
+    const yukle = async () => {
+      try {
+        const liste = await getNotifications({ limit: 30, audience: 'admin' })
+        if (canli) setUyarilar(liste.filter(n => n.type === 'etebligat' && !n.read))
+      } catch { /* bildirim tablosu yoksa sessiz gec */ }
+    }
+    yukle()
+    const abonelik = subscribeToNotifications(() => yukle())
+    return () => { canli = false; try { abonelik?.() } catch { /* yoksay */ } }
+  }, [])
+
+  if (!uyarilar.length) return null
+
+  const kapat = async (id) => {
+    setUyarilar(u => u.filter(x => x.id !== id))
+    try { await markNotificationRead(id) } catch { /* yoksay */ }
+  }
+
+  return (
+    <div className="mb-6 space-y-2">
+      {uyarilar.map(u => (
+        <div key={u.id} className="flex items-center gap-3 bg-amber-500/10 border border-amber-500/40 rounded-xl px-4 py-3">
+          <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <span className="text-amber-300 font-semibold text-sm">{u.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/admin/etebligatlar')}
+            className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-blue-950 text-xs font-bold transition"
+          >
+            Kimlere Geldi?
+          </button>
+          <button
+            type="button"
+            onClick={() => kapat(u.id)}
+            aria-label="Uyarıyı kapat"
+            title="Uyarıyı kapat"
+            className="shrink-0 p-1.5 rounded-lg text-amber-300/70 hover:text-white hover:bg-amber-500/20 transition"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ── Ana Dashboard Bileşeni ──
 export default function AdminDashboard() {
   const { user, logout } = useAuth()
   const { clients } = useClients()
   const navigate = useNavigate()
-  const [currentTime, setCurrentTime] = useState(new Date())
+  // 2.7.542: ana ekran asistani cinsiyeti (Ayarlar > Ana Ekran Asistani'ndan)
+  const [adminCinsiyet, setAdminCinsiyet] = useState(() => localStorage.getItem('admin_cinsiyet_v1') || 'erkek')
+  useEffect(() => {
+    const yenile = () => setAdminCinsiyet(localStorage.getItem('admin_cinsiyet_v1') || 'erkek')
+    window.addEventListener('storage', yenile)
+    const iv = setInterval(yenile, 1500)
+    return () => { window.removeEventListener('storage', yenile); clearInterval(iv) }
+  }, [])
+  // 2.7.543: namaz vakitleri gostergesi — Ayarlar > Ana Ekran Asistani'ndan acilir (varsayilan kapali)
+  const [namazGoster, setNamazGoster] = useState(() => localStorage.getItem('admin_namaz_v1') === '1')
+  useEffect(() => {
+    const yenile = () => setNamazGoster(localStorage.getItem('admin_namaz_v1') === '1')
+    window.addEventListener('storage', yenile)
+    const iv = setInterval(yenile, 1500)
+    return () => { window.removeEventListener('storage', yenile); clearInterval(iv) }
+  }, [])
+  // 2.7.546: web radyo rozeti — Ayarlar > Ana Ekran Asistani'ndan acilir (varsayilan kapali)
+  const [radyoGoster, setRadyoGoster] = useState(() => localStorage.getItem('admin_radio_v1') === '1')
+  useEffect(() => {
+    const yenile = () => setRadyoGoster(localStorage.getItem('admin_radio_v1') === '1')
+    window.addEventListener('storage', yenile)
+    const iv = setInterval(yenile, 1500)
+    return () => { window.removeEventListener('storage', yenile); clearInterval(iv) }
+  }, [])
+  // 2.7.546: YouTube Müzik rozeti — Ayarlar > Ana Ekran Asistani'ndan acilir (varsayilan kapali)
+  const [ytMuzikGoster, setYtMuzikGoster] = useState(() => localStorage.getItem('admin_ytmusic_v1') === '1')
+  useEffect(() => {
+    const yenile = () => setYtMuzikGoster(localStorage.getItem('admin_ytmusic_v1') === '1')
+    window.addEventListener('storage', yenile)
+    const iv = setInterval(yenile, 1500)
+    return () => { window.removeEventListener('storage', yenile); clearInterval(iv) }
+  }, [])
+  // 2.7.546: Spotify rozeti — Ayarlar > Ana Ekran Asistani'ndan acilir (varsayilan kapali)
+  const [spotifyGoster, setSpotifyGoster] = useState(() => localStorage.getItem('admin_spotify_v1') === '1')
+  useEffect(() => {
+    const yenile = () => setSpotifyGoster(localStorage.getItem('admin_spotify_v1') === '1')
+    window.addEventListener('storage', yenile)
+    const iv = setInterval(yenile, 1500)
+    return () => { window.removeEventListener('storage', yenile); clearInterval(iv) }
+  }, [])
+  // 2.7.543: saat + tarih + hava durumu ortak HavaSaatKarti komponentinde
   const [showAllDeadlines, setShowAllDeadlines] = useState(false)
   const [showAllTasks, setShowAllTasks] = useState(false)
-
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 60000)
-    return () => clearInterval(timer)
-  }, [])
 
   // ── Beyan istatistikleri hesapla ──
   const dashboardData = useMemo(() => {
@@ -289,9 +520,17 @@ export default function AdminDashboard() {
         const statusKey = `${currentYear}_${currentMonth}_${beyanType.id}`
         const status = durumlari[statusKey] || 'yapilmadi'
 
-        // Son tarih hesapla
-        const deadlineDate = new Date(currentYear, currentMonth, beyanType.day)
+        // Son tarih hesapla — hafta sonu / resmi tatile denk gelirse takip eden
+        // ilk iş gününe ertelenir (örn. 26 Eylül 2026 Cumartesi → 28 Pazartesi).
+        // SGK: BEYAN son günü muhtasarla birlikte 26 (ertelenmiş),
+        // ÖDENEcek prim son günü ayin son gunudur; hafta sonu/tatile denk
+        // gelirse TAKIP EDEN ilk is gunune ertelenir — ayrı gösterilir.
+        const deadlineDate = getBeyanDeadline(currentYear, currentMonth, beyanType.day)
         const daysLeft = getDaysUntil(deadlineDate)
+        // SGK odeme tarihi (son gunden ILERI ertelenmis is gunu) — kartta "Odeme:" olarak yazilir
+        const odemeTarihi = beyanType.id === 'sgk'
+          ? getFormattedSgkOdemeGunu(currentYear, currentMonth)
+          : null
 
         if (status === 'yapilmadi' || status === 'yapilamadi') {
           bekleyenBeyanlar++
@@ -312,6 +551,7 @@ export default function AdminDashboard() {
             deadline: deadlineDate,
             daysLeft,
             color: beyanType.color,
+            odemeTarihi,
             status
           })
         }
@@ -351,11 +591,13 @@ export default function AdminDashboard() {
           count: 0,
           deadline: d.deadline,
           daysLeft: d.daysLeft,
+          odemeTarihi: d.odemeTarihi || null,
           clients: []
         }
       }
       groupedDeadlines[d.typeId].count++
       groupedDeadlines[d.typeId].clients.push(d.client)
+      if (d.odemeTarihi) groupedDeadlines[d.typeId].odemeTarihi = d.odemeTarihi
       // En yakin son tarihi al
       if (d.daysLeft < groupedDeadlines[d.typeId].daysLeft) {
         groupedDeadlines[d.typeId].daysLeft = d.daysLeft
@@ -391,6 +633,20 @@ export default function AdminDashboard() {
 
   const totalTasks = dashboardData.bekleyenBeyanlar + dashboardData.maliMuhurUyari
 
+  // Yardimci program admin bayragi (yesil ADMIN AKTIF / kirmizi KAPALI):
+  // yardimci programin /admin-durum isinden okunur; yardimci kapaliysa null.
+  const [yardimciAdmin, setYardimciAdmin] = useState(null)
+  useEffect(() => {
+    let canli = true
+    ;(async () => {
+      try {
+        const s = await gibYardimciIs('admin-durum', {}, 8000)
+        if (canli) setYardimciAdmin(s?.ok ? !!s.ata : null)
+      } catch { if (canli) setYardimciAdmin(null) }
+    })()
+    return () => { canli = false }
+  }, [])
+
   if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -405,173 +661,171 @@ export default function AdminDashboard() {
       <div className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 py-6 pt-16 lg:pt-6">
 
       {/* ═══════════════════════════════════════════ */}
-      {/* MUBİS AI KARŞILAMA */}
+      {/* KARSILAMA SERIDI + ASISTAN (2.7.542) */}
       {/* ═══════════════════════════════════════════ */}
-      <div className="relative overflow-hidden bg-gradient-to-r from-blue-900/60 via-blue-800/40 to-indigo-900/60 rounded-2xl border border-blue-700/30 p-6 md:p-8 mb-6">
-        {/* Dekoratif arka plan */}
-        <div className="absolute top-0 right-0 w-64 h-64 bg-yellow-400/5 rounded-full -translate-y-1/2 translate-x-1/2" />
-        <div className="absolute bottom-0 left-0 w-48 h-48 bg-blue-400/5 rounded-full translate-y-1/2 -translate-x-1/2" />
-        
-        <div className="relative flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex-1">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-yellow-400 to-yellow-600 rounded-xl flex items-center justify-center shadow-lg shadow-yellow-500/20">
-                <Brain className="w-5 h-5 text-blue-950" />
-              </div>
-              <div>
-                <div className="text-gray-400 text-xs font-medium tracking-wider uppercase">MUBİS AI</div>
-                <div className="text-gray-500 text-[11px]">{getTurkishDate()}</div>
-              </div>
-            </div>
-            
-            <h1 className="text-2xl md:text-3xl font-bold text-white mb-2">
-              {getGreeting()}, {user?.name || user?.username || 'Admin'}
+      <div className="relative bg-gradient-to-r from-blue-950 via-blue-900 to-indigo-950 rounded-2xl border border-blue-700/30 px-6 md:px-8 pt-6 pb-8 mb-6">
+        {/* Filigran + dekorlar kendi kivrilma katmaninda — ustbandin kendisi acik
+            (overflow-hidden) degil, cunku namaz/imsakiye acilir paneli banda tasmaali */}
+        <div className="absolute inset-0 overflow-hidden rounded-2xl pointer-events-none">
+          <img
+            src="/ustbar-ataturk.png"
+            alt=""
+            aria-hidden="true"
+            draggable="false"
+            className="hidden md:block absolute top-1/2 left-[27%] -translate-y-1/2 w-[30%] max-w-[440px] h-[150%] object-cover select-none opacity-30"
+            style={{
+              mixBlendMode: 'luminosity',
+              WebkitMaskImage: 'radial-gradient(ellipse 75% 65% at 50% 50%, black 40%, transparent 98%)',
+              maskImage: 'radial-gradient(ellipse 75% 65% at 50% 50%, black 40%, transparent 98%)'
+            }}
+          />
+          <div className="absolute top-0 right-0 w-64 h-64 bg-yellow-400/5 rounded-full -translate-y-1/2 translate-x-1/2" />
+          <div className="absolute bottom-0 left-0 w-48 h-48 bg-blue-400/5 rounded-full translate-y-1/2 -translate-x-1/2" />
+        </div>
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center gap-4">
+          {/* Sol: karsilama */}
+          <div className="flex-1 min-w-0">
+            <div className="text-gray-300 text-lg md:text-xl">{getGreeting()},</div>
+            <h1 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-3 flex-wrap">
+              <span>{user?.name || user?.username || 'Admin'}</span>
+              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                yardimciAdmin === null ? 'bg-gray-500/20 text-gray-400' : yardimciAdmin ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+              }`} title={yardimciAdmin === null ? 'MUBiS yardımcı programı bu bilgisayarda çalışmıyor' : yardimciAdmin ? 'Yardımcı program Yönetici olarak çalıştırılacak' : 'Yardımcı program yönetici olarak atanmadı — Ayarlar > Ana Ekran Asistanı'}>
+                <span className={`w-2 h-2 rounded-full ${yardimciAdmin ? 'bg-green-400' : 'bg-red-400'}`}></span>
+                {yardimciAdmin === null ? 'YARDIMCI KAPALI' : yardimciAdmin ? 'ADMIN AKTİF' : 'ADMIN KAPALI'}
+              </span>
+              <span aria-hidden="true">👋</span>
             </h1>
-            
             {totalTasks > 0 ? (
-              <p className="text-gray-300 text-sm md:text-base leading-relaxed">
-                Bugun yapmaniz gereken <span className="text-yellow-400 font-semibold">{totalTasks} is</span> var.
-                {dashboardData.gecmisBeyanlar > 0 && (
-                  <span className="text-red-400 font-semibold"> {dashboardData.gecmisBeyanlar} beyanin suresi gecmis!</span>
-                )}
-                {dashboardData.todaysTasks.length > 0 && dashboardData.gecmisBeyanlar === 0 && (
-                  <span> Oncelik sirasina gore birlikte tamamlayalim.</span>
-                )}
+              <p className="text-gray-300 text-sm md:text-base leading-relaxed mt-1.5">
+                Bugün yapmanız gereken <span className="text-yellow-400 font-semibold">{totalTasks} iş</span> var. Öncelik sırasına göre birlikte tamamlayalım.
               </p>
             ) : (
-              <p className="text-gray-300 text-sm md:text-base">
-                {clients.length > 0 
-                  ? 'Tum isler guncel gorunuyor. Harika bir gun olacak!'
-                  : 'Hendi musteri eklenmemis. Yeni musteri ekleyerek baslayabilirsiniz.'
-                }
+              <p className="text-gray-300 text-sm md:text-base mt-1.5">
+                {clients.length > 0 ? 'Tüm işler güncel görünüyor. Harika bir gün olacak!' : 'Henüz müşteri eklenmemiş. Yeni müşteri ekleyerek başlayabilirsiniz.'}
               </p>
             )}
           </div>
-          
-          <div className="flex items-center gap-4">
-            <div className="text-right hidden md:block">
-              <div className="text-3xl font-bold text-white tabular-nums">
-                {currentTime.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
-              </div>
-              <div className="text-gray-500 text-xs">
-                {getMonthName(currentTime.getMonth())} {currentTime.getFullYear()}
+          {/* Orta: tarih + saat + hava, altinda yan yana radyo + namaz vakitleri (Ayarlar'dan acilir) */}
+          <div className="flex flex-col items-center gap-3 shrink-0">
+            <HavaSaatKarti />
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              {radyoGoster && <RadioUstBant />}
+              {ytMuzikGoster && <YouTubeMuzik />}
+              {spotifyGoster && <SpotifyUstBant />}
+              {namazGoster && <NamazVakitleri />}
+            </div>
+          </div>
+          {/* Sag: asistan modeli + konusma balonu */}
+          <div className="hidden lg:flex items-end gap-2 shrink-0">
+            <div className="relative mb-8">
+              <div className="bg-white/95 text-blue-950 rounded-xl rounded-br-sm px-3 py-2 text-xs font-semibold shadow-lg whitespace-nowrap">
+                "Doğru veri, sağlam gelecek."
+                <span className="absolute -bottom-1 right-5 h-2.5 w-2.5 rotate-45 bg-white/95" />
               </div>
             </div>
-            <div className="relative group">
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await logout()
-                  } finally {
-                    window.location.replace('/')
-                  }
-                }}
-                aria-label="Çıkış Yap"
-                title="Çıkış Yap"
-                className="relative rounded-2xl p-1 transition-transform duration-300 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-yellow-300/80"
-              >
-                <img
-                  src="/mascot-kalem.png"
-                  alt="MUBİS kalem asistanı"
-                  className="h-28 w-auto object-contain drop-shadow-[0_8px_18px_rgba(0,0,0,0.45)] animate-float-soft"
-                />
-              </button>
-              <span
-                className="pointer-events-none absolute bottom-full right-0 z-[80] translate-y-1 rounded-xl rounded-br-sm bg-white px-3 py-2 text-xs font-bold text-blue-950 opacity-0 shadow-xl transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100"
-              >
-                Çıkış Yap
-                <span className="absolute -bottom-1 right-6 h-2 w-2 rotate-45 bg-white" />
-              </span>
-            </div>
+            <img
+              src={adminCinsiyet === 'kadin' ? '/mascot-admin-kadin.png' : adminCinsiyet === 'erkek2' ? '/mascot-admin-erkek2-v4.png' : adminCinsiyet === 'kadin2' ? '/mascot-admin-kadin2-v2.png' : adminCinsiyet === 'kadin3' ? '/mascot-admin-kadin3-v2.png' : '/mascot-admin-erkek.png'}
+              alt={adminCinsiyet === 'kadin' || adminCinsiyet === 'kadin2' || adminCinsiyet === 'kadin3' ? 'Kadın asistan' : 'Erkek asistan'}
+              className="h-36 w-auto object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)]"
+            />
           </div>
         </div>
       </div>
 
       {/* ═══════════════════════════════════════════ */}
-      {/* OZET KARTLARI */}
+      {/* E-TEBLIGAT UYARISI */}
+      {/* ═══════════════════════════════════════════ */}
+      <EtebligatUyari />
+      {/* 2.7.542: e-Tebligat bildirim simgesi kaldirildi — MUBiS asistan balonu
+          uyarir, panel acar ve e-Tebligat sayfasina goturur (MubisAssistant.jsx) */}
+
+      {/* ═══════════════════════════════════════════ */}
+      {/* OZET KARTLARI (2.7.542: beyaz kart tasarimi) */}
       {/* ═══════════════════════════════════════════ */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4 mb-6">
         {/* Bekleyen Beyanlar */}
-        <Link 
+        <Link
           to="/admin/aylik-beyan-takip"
-          className="group bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 hover:border-red-500/50 hover:bg-red-500/5 transition-all duration-300 cursor-pointer"
+          className="group bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 hover:-translate-y-0.5 transition-all duration-300 cursor-pointer"
         >
           <div className="flex items-center justify-between mb-3">
-            <div className="w-9 h-9 bg-red-500/20 rounded-lg flex items-center justify-center">
-              <FileText className="w-4.5 h-4.5 text-red-400" />
+            <div className="w-9 h-9 bg-red-500 rounded-lg flex items-center justify-center shadow-md shadow-red-500/30">
+              <FileText className="w-4.5 h-4.5 text-white" />
             </div>
-            <ChevronRight className="w-4 h-4 text-gray-600 group-hover:text-red-400 transition-colors" />
+            <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-red-500 group-hover:translate-x-0.5 transition-all" />
           </div>
-          <div className="text-2xl font-bold text-red-400">{dashboardData.bekleyenBeyanlar}</div>
-          <div className="text-gray-400 text-xs mt-0.5">Bekleyen Beyan</div>
+          <div className="text-2xl font-bold text-white">{dashboardData.bekleyenBeyanlar}</div>
+          <div className="text-red-500 text-xs font-medium mt-0.5">Bekleyen Beyan</div>
+          <div className="text-gray-400 text-[10px]">Son 7 gün</div>
           {dashboardData.gecmisBeyanlar > 0 && (
-            <div className="mt-2 text-[10px] bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full inline-block font-medium">
-              {dashboardData.gecmisBeyanlar} suresi gecmis
+            <div className="mt-2 text-[10px] bg-red-500/10 text-red-500 px-2 py-0.5 rounded-full inline-block font-medium">
+              {dashboardData.gecmisBeyanlar} süresi geçmiş
             </div>
           )}
         </Link>
 
         {/* Tamamlanan Beyanlar */}
-        <Link 
-          to="/admin/all-beyan"
-          className="group bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 hover:border-green-500/50 hover:bg-green-500/5 transition-all duration-300 cursor-pointer"
+        <Link
+          to="/admin/aylik-beyan-takip"
+          className="group bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 hover:-translate-y-0.5 transition-all duration-300 cursor-pointer"
         >
           <div className="flex items-center justify-between mb-3">
-            <div className="w-9 h-9 bg-green-500/20 rounded-lg flex items-center justify-center">
-              <CheckCircle className="w-4.5 h-4.5 text-green-400" />
+            <div className="w-9 h-9 bg-green-500 rounded-lg flex items-center justify-center shadow-md shadow-green-500/30">
+              <CheckCircle className="w-4.5 h-4.5 text-white" />
             </div>
-            <ChevronRight className="w-4 h-4 text-gray-600 group-hover:text-green-400 transition-colors" />
+            <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-green-500 group-hover:translate-x-0.5 transition-all" />
           </div>
-          <div className="text-2xl font-bold text-green-400">{dashboardData.tamamlananBeyanlar}</div>
-          <div className="text-gray-400 text-xs mt-0.5">Tamamlanan Beyan</div>
+          <div className="text-2xl font-bold text-white">{dashboardData.tamamlananBeyanlar}</div>
+          <div className="text-green-600 text-xs font-medium mt-0.5">Tamamlanan Beyan</div>
+          <div className="text-gray-400 text-[10px]">Bu hafta</div>
         </Link>
 
-        {/* Mali Muhur Uyarilari */}
-        <div className="group bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 hover:border-yellow-500/50 hover:bg-yellow-500/5 transition-all duration-300 cursor-pointer">
+        {/* Mali Muhur Uyarlari */}
+        <div className="group bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 hover:-translate-y-0.5 transition-all duration-300 cursor-pointer">
           <div className="flex items-center justify-between mb-3">
-            <div className="w-9 h-9 bg-yellow-500/20 rounded-lg flex items-center justify-center">
-              <Shield className="w-4.5 h-4.5 text-yellow-400" />
+            <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center shadow-md shadow-amber-500/30">
+              <Shield className="w-4.5 h-4.5 text-white" />
             </div>
             {dashboardData.maliMuhurUyari > 0 && (
               <span className="relative flex h-2.5 w-2.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-yellow-400"></span>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-400"></span>
               </span>
             )}
           </div>
-          <div className="text-2xl font-bold text-yellow-400">{dashboardData.maliMuhurUyari}</div>
-          <div className="text-gray-400 text-xs mt-0.5">Mali Muhur / e-Imza</div>
+          <div className="text-2xl font-bold text-white">{dashboardData.maliMuhurUyari}</div>
+          <div className="text-amber-600 text-xs font-medium mt-0.5">Mali Mühür / e-İmza</div>
+          <div className="text-gray-400 text-[10px]">Kontrol gerekli</div>
         </div>
 
         {/* Musteri Sayisi */}
-        <Link 
+        <Link
           to="/admin/musteriler"
-          className="group bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 hover:border-blue-500/50 hover:bg-blue-500/5 transition-all duration-300 cursor-pointer"
+          className="group bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 hover:-translate-y-0.5 transition-all duration-300 cursor-pointer"
         >
           <div className="flex items-center justify-between mb-3">
-            <div className="w-9 h-9 bg-blue-500/20 rounded-lg flex items-center justify-center">
-              <Users className="w-4.5 h-4.5 text-blue-400" />
+            <div className="w-9 h-9 bg-blue-500 rounded-lg flex items-center justify-center shadow-md shadow-blue-500/30">
+              <Users className="w-4.5 h-4.5 text-white" />
             </div>
-            <ChevronRight className="w-4 h-4 text-gray-600 group-hover:text-blue-400 transition-colors" />
+            <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-blue-500 group-hover:translate-x-0.5 transition-all" />
           </div>
-          <div className="text-2xl font-bold text-blue-400">{dashboardData.clientStats.total}</div>
-          <div className="text-gray-400 text-xs mt-0.5">Toplam Musteri</div>
-          <div className="mt-2 text-[10px] text-gray-500">
-            {dashboardData.clientStats.active} aktif
-          </div>
+          <div className="text-2xl font-bold text-white">{dashboardData.clientStats.total}</div>
+          <div className="text-blue-600 text-xs font-medium mt-0.5">Toplam Müşteri</div>
+          <div className="text-gray-400 text-[10px]">{dashboardData.clientStats.active} aktif</div>
         </Link>
 
         {/* Toplam Is */}
-        <div className="col-span-2 lg:col-span-1 bg-gradient-to-br from-yellow-500/10 to-orange-500/10 rounded-xl p-4 border border-yellow-500/20">
+        <div className="col-span-2 lg:col-span-1 bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 hover:-translate-y-0.5 transition-all duration-300">
           <div className="flex items-center justify-between mb-3">
-            <div className="w-9 h-9 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-lg flex items-center justify-center shadow-lg shadow-yellow-500/20">
-              <Zap className="w-4.5 h-4.5 text-blue-950" />
+            <div className="w-9 h-9 bg-violet-500 rounded-lg flex items-center justify-center shadow-md shadow-violet-500/30">
+              <Zap className="w-4.5 h-4.5 text-white" />
             </div>
-            <Activity className="w-4 h-4 text-yellow-500/50" />
+            <Activity className="w-4 h-4 text-violet-300" />
           </div>
-          <div className="text-3xl font-bold text-white">{totalTasks}</div>
-          <div className="text-yellow-400/80 text-xs mt-0.5 font-medium">Toplam Bekleyen Is</div>
+          <div className="text-2xl font-bold text-white">{totalTasks}</div>
+          <div className="text-violet-600 text-xs font-medium mt-0.5">Toplam Bekleyen İş</div>
+          <div className="text-gray-400 text-[10px]">Süresi yaklaşan</div>
         </div>
       </div>
 
@@ -592,7 +846,7 @@ export default function AdminDashboard() {
                 </div>
                 <div>
                   <h2 className="text-white font-semibold text-sm">Yaklasan Son Tarihler</h2>
-                  <p className="text-gray-500 text-[11px]">Oncelik sirasina gore</p>
+                  <p className="text-gray-500 text-[11px]">Öncelik sırasına göre</p>
                 </div>
               </div>
               {dashboardData.groupedDeadlines.length > 5 && (
@@ -635,7 +889,11 @@ export default function AdminDashboard() {
                           </span>
                         </div>
                         <div className="text-gray-500 text-[11px] mt-0.5">
-                           Son tarih: {formatDateTR(group.deadline)}
+                          {group.odemeTarihi ? (
+                            <>Beyan: {formatDateTR(group.deadline)} • Ödeme: {formatDateTR(group.odemeTarihi)}</>
+                          ) : (
+                            <>Son tarih: {formatDateTR(group.deadline)}</>
+                          )}
                         </div>
                       </div>
 
@@ -671,7 +929,7 @@ export default function AdminDashboard() {
                   <Shield className="w-4 h-4 text-yellow-400" />
                 </div>
                 <div>
-                  <h2 className="text-white font-semibold text-sm">Mali Muhur / e-Imza Uyarilari</h2>
+                  <h2 className="text-white font-semibold text-sm">Mali Mühür / e-İmza Uyarıları</h2>
                   <p className="text-yellow-500/60 text-[11px]">60 gun icinde suresi dolacaklar</p>
                 </div>
               </div>
@@ -808,18 +1066,17 @@ export default function AdminDashboard() {
               <div className="w-8 h-8 bg-purple-500/20 rounded-lg flex items-center justify-center">
                 <Zap className="w-4 h-4 text-purple-400" />
               </div>
-              <h2 className="text-white font-semibold text-sm">Hizli Erisim</h2>
+              <h2 className="text-white font-semibold text-sm">Hızlı Erişim</h2>
             </div>
             <div className="p-3 grid grid-cols-2 gap-2">
               {[
-                { to: '/admin/musteriler', icon: Users, label: 'Musteriler', color: 'from-blue-500 to-blue-600' },
-                { to: '/admin/clients/new', icon: Plus, label: 'Yeni Musteri', color: 'from-yellow-400 to-yellow-600' },
-                { to: '/admin/aylik-beyan-takip', icon: CalendarDays, label: 'Aylik Beyan', color: 'from-emerald-500 to-emerald-600' },
+                { to: '/admin/musteriler', icon: Users, label: 'Müşteriler', color: 'from-blue-500 to-blue-600' },
+                { to: '/admin/clients/new', icon: Plus, label: 'Yeni Müşteri', color: 'from-yellow-400 to-yellow-600' },
+                { to: '/admin/aylik-beyan-takip', icon: CalendarDays, label: 'Aylık Beyan', color: 'from-emerald-500 to-emerald-600' },
                 { to: '/admin/aylik-beyan-takip', icon: FileCheck, label: 'Beyan Takip', color: 'from-teal-500 to-teal-600' },
-                { to: '/admin/gonderim-merkezi', icon: Send, label: 'Gonderim Merkezi', color: 'from-pink-500 to-pink-600' },
+                { to: '/admin/gonderim-merkezi', icon: Send, label: 'Gönderim Merkezi', color: 'from-pink-500 to-pink-600' },
                 { to: '/admin/duyuru-merkezi', icon: Megaphone, label: 'Duyuru Merkezi', color: 'from-purple-500 to-purple-600' },
-                { to: '/admin/borc-bildirim', icon: DollarSign, label: 'Borc Bildirim', color: 'from-red-500 to-red-600' },
-                { to: '/admin/all-beyan', icon: BarChart3, label: 'Beyan Rapor', color: 'from-cyan-500 to-cyan-600' },
+                { to: '/admin/borc-bildirim', icon: DollarSign, label: 'Borç Bildirim', color: 'from-red-500 to-red-600' },
                 { to: '/admin/smart-import', icon: Brain, label: 'AI Import', color: 'from-purple-500 to-purple-600' },
                 { to: '/admin/e-invoice', icon: Receipt, label: 'e-Fatura', color: 'from-indigo-500 to-indigo-600' },
                 { to: '/admin/documents', icon: FolderOpen, label: 'Evrak Merkezi', color: 'from-pink-500 to-pink-600' },
@@ -953,3 +1210,5 @@ export default function AdminDashboard() {
     </div>
   )
 }
+
+

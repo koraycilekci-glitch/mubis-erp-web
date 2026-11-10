@@ -23,33 +23,7 @@ export default function SetupPage() {
       setError('Tum alanlari doldurun')
       return
     }
-    setLoading(true)
-    setError('')
-    try {
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email: adminEmail,
-        password: adminPassword,
-        options: {
-          data: { name: adminName, role: 'admin' }
-        }
-      })
-      
-      if (signUpError) throw signUpError
-
-      // Profil tablosunda role'u admin yap
-      if (data.user) {
-        await supabase
-          .from('profiles')
-          .update({ role: 'admin', name: adminName })
-          .eq('id', data.user.id)
-      }
-
-      setMessage(`Admin hesabi olusturuldu: ${adminEmail}`)
-      setStep(2)
-    } catch (err) {
-      setError(err.message)
-    }
-    setLoading(false)
+    setError('Yönetici hesapları yalnızca sistem yöneticisi tarafından kullanıcı yönetiminden oluşturulabilir.')
   }
 
   const migrateData = async () => {

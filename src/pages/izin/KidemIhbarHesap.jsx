@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FileDown, Landmark } from 'lucide-react'
 import { getLeaveRecords } from '../../services/clientService'
-import { formatTurkishInput } from '../../utils/numberFormat'
+import { formatTurkishInput, hamTutarGirdisi } from '../../utils/numberFormat'
 import { createUnicodePdf } from '../../utils/unicodePdf'
 import {
   D,
@@ -420,7 +420,8 @@ export default function KidemIhbarHesap({ clientId, employees, clientList, setEr
                 min="0"
                 step="0.01"
                 value={overtimeAmount}
-                onChange={(event) => setOvertimeAmount(formatTurkishInput(event.target.value))}
+                onChange={(event) => setOvertimeAmount(hamTutarGirdisi(event.target.value))}
+                onBlur={(event) => { const h = hamTutarGirdisi(event.target.value); if (h && h !== ',') setOvertimeAmount(formatTurkishInput(h)) }}
                 placeholder="Varsa tutarı girin"
                 className={inputClass}
               />
@@ -433,7 +434,8 @@ export default function KidemIhbarHesap({ clientId, employees, clientList, setEr
                 min="0"
                 step="0.01"
                 value={holidayAmount}
-                onChange={(event) => setHolidayAmount(formatTurkishInput(event.target.value))}
+                onChange={(event) => setHolidayAmount(hamTutarGirdisi(event.target.value))}
+                onBlur={(event) => { const h = hamTutarGirdisi(event.target.value); if (h && h !== ',') setHolidayAmount(formatTurkishInput(h)) }}
                 placeholder="Varsa tutarı girin"
                 className={inputClass}
               />

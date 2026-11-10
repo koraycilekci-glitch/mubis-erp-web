@@ -37,6 +37,7 @@ export default function ClientBeyanProfile() {
       { id: 'muhtasar', label: 'Muhtasar', icon: '📄' },
       { id: 'sgk', label: 'SGK', icon: '🏥' },
       { id: 'gecici_vergi', label: 'Geçici Vergi', icon: '📊' },
+      { id: 'poset', label: 'Poşet', icon: '🛍️' },
       { id: 'kurumlar_vergi', label: 'Kurumlar Vergisi', icon: '🏢' },
       { id: 'gelir_vergi', label: 'Gelir Vergisi', icon: '👤' },
     ]
@@ -58,6 +59,7 @@ export default function ClientBeyanProfile() {
       { id: 'muhtasar', label: 'Muhtasar', icon: '📄' },
       { id: 'sgk', label: 'SGK', icon: '🏥' },
       { id: 'gecici_vergi', label: 'Geçici Vergi', icon: '📊' },
+      { id: 'poset', label: 'Poşet', icon: '🛍️' },
       { id: 'kurumlar_vergi', label: 'Kurumlar Vergisi', icon: '🏢' },
       { id: 'gelir_vergi', label: 'Gelir Vergisi', icon: '👤' },
     ]

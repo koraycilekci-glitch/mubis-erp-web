@@ -9,6 +9,9 @@ export const createEmployeeForm = () => ({
   ise_giris_tarihi: '',
   cikis_tarihi: '',
   dogum_tarihi: '',
+  calisma_izni_baslangic: '',
+  calisma_izni_bitis: '',
+  ise_giris_bildirge_url: '',
   departman: '',
   gorev: '',
   email: '',
@@ -43,6 +46,18 @@ export const asArray = (value) => {
 export const numberValue = (value) => parseTurkishNumber(value)
 
 export const dateValue = (value) => (value ? String(value).slice(0, 10) : '')
+
+export const isForeignWorker = (employee) => String(employee?.tc_kimlik || '').replace(/\D/g, '').startsWith('9')
+
+export const workPermitDaysRemaining = (expiryValue, today = new Date()) => {
+  const expiry = dateValue(expiryValue)
+  if (!expiry) return null
+  const [expiryYear, expiryMonth, expiryDay] = expiry.split('-').map(Number)
+  const expiryTime = Date.UTC(expiryYear, expiryMonth - 1, expiryDay)
+  const todayTime = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())
+  if (!Number.isFinite(expiryTime)) return null
+  return Math.round((expiryTime - todayTime) / 86400000)
+}
 
 export const displayDate = (value) => {
   const normalized = dateValue(value)

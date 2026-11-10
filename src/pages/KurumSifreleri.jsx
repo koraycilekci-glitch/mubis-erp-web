@@ -106,7 +106,7 @@ export default function KurumSifreleri() {
     // Turkce karakter icin DejaVuSans gomulur; yuklenemezse ASCII'ye cevrilir
     let fontOk = false
     try {
-      const r = await fetch('https://cdn.jsdelivr.net/npm/dejavu-fonts-ttf@2.37.3/ttf/DejaVuSans.ttf')
+      const r = await fetch('/fonts/DejaVuSans.ttf')
       if (r.ok) {
         const buf = await r.arrayBuffer()
         let binary = ''

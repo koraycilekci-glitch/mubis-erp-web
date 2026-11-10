@@ -1,5 +1,7 @@
 import os
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from supabase import create_client
 from shared.config import get_settings
 
@@ -69,3 +71,41 @@ def get_pending_jobs():
                 jobs.append({"office_id": office_id, "client_id": client["id"], "job_type": t})
 
     return jobs
+
+
+def check_work_permit_expiry(today=None):
+    sb = supabase_admin()
+    reference_date = today or datetime.now(ZoneInfo("Europe/Istanbul")).date()
+    start_date = reference_date.isoformat()
+    end_date = (reference_date + timedelta(days=30)).isoformat()
+    result = sb.table("employees").select(
+        "id, client_id, ad_soyad, tc_kimlik, calisma_izni_bitis, aktif"
+    ).gte("calisma_izni_bitis", start_date).lte("calisma_izni_bitis", end_date).execute()
+    employees = result.data or []
+    client_ids = sorted({int(row["client_id"]) for row in employees if row.get("client_id")})
+    if not client_ids:
+        return {"checked": len(employees), "notified": 0}
+
+    clients_result = sb.table("clients").select("id, office_id").in_("id", client_ids).execute()
+    clients_by_id = {int(row["id"]): row for row in clients_result.data or []}
+    notified = 0
+    for employee in employees:
+        tc = re.sub(r"\D", "", str(employee.get("tc_kimlik") or ""))
+        if not tc.startswith("9") or employee.get("aktif") is False:
+            continue
+        client_id = employee.get("client_id")
+        if not client_id or int(client_id) not in clients_by_id:
+            continue
+        expiry = datetime.fromisoformat(employee["calisma_izni_bitis"]).date()
+        days_remaining = (expiry - reference_date).days
+        response = sb.rpc("notify_work_permit_expiry", {
+            "p_employee_id": employee["id"],
+            "p_client_id": client_id,
+            "p_employee_name": employee.get("ad_soyad") or "Çalışan",
+            "p_permit_expiry_date": expiry.isoformat(),
+            "p_days_remaining": days_remaining,
+        }).execute()
+        if response.data is True:
+            notified += 1
+
+    return {"checked": len(employees), "notified": notified}

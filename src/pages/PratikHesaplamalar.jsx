@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react'
-import { Calculator, Briefcase, Receipt, Wallet, Shield, FileText, Save, Trash2, Edit3, FileDown, RotateCcw } from 'lucide-react'
+import { Calculator, Briefcase, Receipt, Shield, FileText, Save, Trash2, Edit3, FileDown, RotateCcw } from 'lucide-react'
 import { useParameters } from '../hooks/useParameters'
 import { useClients } from '../hooks/useClients'
 import * as D from '../data/defaults'
 import { jsPDF } from 'jspdf'
-import { formatTurkishInput, parseTurkishNumber } from '../utils/numberFormat'
+import { formatTurkishInput, parseTurkishNumber, hamTutarGirdisi } from '../utils/numberFormat'
 import { formatDateTR } from '../utils/dateUtils'
 import { createUnicodePdf } from '../utils/unicodePdf'
 import { getGuncelParametreler, kidemTavaniGuncel, asgariUcretBrutGuncel } from '../services/parametreService'
+import VerasetIntikalBeyan from './VerasetIntikalBeyan'
 
 // ========== ORTAK KOMPONENTLER ==========
 
@@ -22,6 +23,8 @@ function Card({ title, children, className = '' }) {
 
 function Input({ label, value, onChange, type = 'number', placeholder = '', suffix = '', disabled = false, className = '' }) {
   const amountInput = type === 'number'
+  // Para alanlarinda YAZARKEN ham deger tutulur (imlec kurusa kaymasin);
+  // bicimleme sadece alandan cikinca (onBlur) yapilir.
   return (
     <div className={className}>
       <label className="text-gray-400 text-xs block mb-1">{label}</label>
@@ -30,7 +33,12 @@ function Input({ label, value, onChange, type = 'number', placeholder = '', suff
           type={amountInput ? 'text' : type}
           inputMode={amountInput ? 'decimal' : undefined}
           value={value}
-          onChange={e => onChange(amountInput ? formatTurkishInput(e.target.value) : e.target.value)}
+          onChange={e => onChange(amountInput ? hamTutarGirdisi(e.target.value) : e.target.value)}
+          onBlur={amountInput ? e => {
+            const h = hamTutarGirdisi(e.target.value)
+            if (!h || h === ',' || h === '.') { onChange(''); return }
+            onChange(formatTurkishInput(h))
+          } : undefined}
           disabled={disabled}
           className={`w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-yellow-500 ${disabled ? 'opacity-60' : ''}`}
           placeholder={placeholder} />
@@ -130,7 +138,7 @@ function IhbarKidem() {
   const [ekOdeme, setEkOdeme] = useState('')
   const [kullanilmayanIzin, setKullanilmayanIzin] = useState('')
   const [kidemChecked, setKidemChecked] = useState(true)
-  const [ihbarChecked, setIhbarChecked] = useState(true)
+  const [ihbarChecked, setIhbarChecked] = useState(false)
   
   // Kayit
   const [savedId, setSavedId] = useState(null)
@@ -160,8 +168,11 @@ function IhbarKidem() {
   useEffect(() => {
     switch (cikisSebebi) {
       case 'istifa':
-      case 'emeklilik':
         setKidemChecked(emekliKagit)
+        setIhbarChecked(false)
+        break
+      case 'emeklilik':
+        setKidemChecked(true)
         setIhbarChecked(false)
         break
       case 'isveren':
@@ -174,6 +185,7 @@ function IhbarKidem() {
         setIhbarChecked(false)
         break
       case 'diger':
+        setIhbarChecked(false)
         break
     }
   }, [cikisSebebi, emekliKagit])
@@ -201,7 +213,11 @@ function IhbarKidem() {
 
   // Kidem
   const gunlukBrut = Math.min(toplamBrut / 30, kidemTavani / 30)
-    const kidemEligible = (cikisSebebi === 'istifa' || cikisSebebi === 'emeklilik')
+    // Kural: istifada kadem tazminati yalniz "yastan emeklilik icin SGK'dan
+    // yazi alindi" kutusu isaretliyse dogar; emeklilikte (yas disi) VARSAYILAN
+    // hesaplanir — onay kutusunun durumu kullanici karari (istek: emeklilikte
+    // kutu varsayilan secili gelsin).
+    const kidemEligible = cikisSebebi === 'istifa'
       ? emekliKagit
       : true
     const kidemBrut = kidemChecked && kidemEligible && calismaSuresi >= 1 ? calisma.kidemGunu * gunlukBrut : 0
@@ -834,22 +850,42 @@ function DegerArtisKazanci() {
       if (val) setSatisYiufe(String(val))
       const ist = params.getDakIstisna(d.getFullYear())
       if (ist) setIstisna(String(ist))
+      if (d.getFullYear() >= 2026) {
+        // 2026 icin henuz resmi tutar yayinlanmadi; kullanici bilgilendirilsin
+        setIstisnaNotu('2026 yili istisna tutari henuz Resmi Gazete\'de yayinlanmamistir; son bilinen 2025 tutari (150.000 TL) kullanilmistir.')
+      } else {
+        setIstisnaNotu('')
+      }
     }
   }, [satisTarih])
+
+  const [istisnaNotu, setIstisnaNotu] = useState('')
 
   const alis = parseTurkishNumber(alisBedel)
   const satis = parseTurkishNumber(satisBedel)
   const gider = parseTurkishNumber(satisGider)
-  const aYiufe = parseTurkishNumber(alisYiufe) || 1
-  const sYiufe = parseTurkishNumber(satisYiufe) || 1
+  const aYiufeRaw = parseTurkishNumber(alisYiufe)
+  const sYiufeRaw = parseTurkishNumber(satisYiufe)
+
+  // GVK md.39: 5 yildan fazla elde tutulan bina/arazi kazanci vergiye tabi degil
+  const eldeTutmaYil = (alisTarih && satisTarih)
+    ? (new Date(satisTarih) - new Date(alisTarih)) / (365.25 * 24 * 3600 * 1000)
+    : null
+  const besYilAsindi = eldeTutmaYil !== null && eldeTutmaYil > 5
+
+  // Yi-UFE eksikse hesaplama YAPILMAZ (eski kod eksigi 1 alip maliyeti sifirliyordu)
+  const yiufeEksik = satis > 0 && alis > 0 && (!aYiufeRaw || !sYiufeRaw)
+
+  const aYiufe = aYiufeRaw || 1
+  const sYiufe = sYiufeRaw || 1
   const ist = parseTurkishNumber(istisna)
 
   const endeksliMaliyet = alis * (sYiufe / aYiufe)
   const endeksliGider = gider // giderler de endekslenebilir ama basit tutalim
-  const kazanc = Math.max(0, satis - endeksliMaliyet - endeksliGider)
+  const kazanc = besYilAsindi ? 0 : Math.max(0, satis - endeksliMaliyet - endeksliGider)
   const matrah = Math.max(0, kazanc - ist)
-  const satisYil = satisTarih ? new Date(satisTarih).getFullYear() : 2025
-  const vergi = D.hesaplaGV(matrah, satisYil)
+  const satisYil = satisTarih ? new Date(satisTarih).getFullYear() : new Date().getFullYear()
+  const vergi = besYilAsindi ? 0 : D.hesaplaGV(matrah, satisYil)
 
   return (
     <div className="grid md:grid-cols-2 gap-4">
@@ -875,15 +911,28 @@ function DegerArtisKazanci() {
       <Card title="Sonuc">
         {satis > 0 && alis > 0 ? (
           <div className="space-y-1">
-            <Result label="Alis Bedeli" value={`${D.fmt(alis)} TL`} />
-            <Result label="Yi-UFE Orani" value={`${(sYiufe / aYiufe).toFixed(4)}`} />
-            <Result label="Endeksli Maliyet" value={`${D.fmt(endeksliMaliyet)} TL`} />
-            {gider > 0 && <Result label="Satis Giderleri" value={`${D.fmt(gider)} TL`} />}
-            <Result label="Satis Bedeli" value={`${D.fmt(satis)} TL`} />
-            <Result label="Kazanc" value={`${D.fmt(kazanc)} TL`} />
-            <Result label="Istisna Tutari" value={`-${D.fmt(ist)} TL`} negative />
-            <Result label="Vergi Matrahi" value={`${D.fmt(matrah)} TL`} />
-            <Result label="Odenecek Vergi" value={`${D.fmt(vergi)} TL`} highlight />
+            {besYilAsindi && (
+              <p className="text-emerald-400 text-xs mb-2">Bina {eldeTutmaYil.toFixed(1)} yil elde tutuldu — 5 yildan fazla oldugu icin deger artis kazanci vergiye tabi DEGIL (GVK md.39).</p>
+            )}
+            {yiufeEksik && (
+              <p className="text-red-400 text-xs mb-2">Yi-UFE degeri bulunamadi (tarih cok yeni olabilir). Dogru hesap icin Yi-UFE alanlarini elle girin.</p>
+            )}
+            {istisnaNotu && (
+              <p className="text-amber-300 text-xs mb-2">{istisnaNotu}</p>
+            )}
+            {!besYilAsindi && !yiufeEksik && (
+              <>
+                <Result label="Alis Bedeli" value={`${D.fmt(alis)} TL`} />
+                <Result label="Yi-UFE Orani" value={`${(sYiufe / aYiufe).toFixed(4)}`} />
+                <Result label="Endeksli Maliyet" value={`${D.fmt(endeksliMaliyet)} TL`} />
+                {gider > 0 && <Result label="Satis Giderleri" value={`${D.fmt(gider)} TL`} />}
+                <Result label="Satis Bedeli" value={`${D.fmt(satis)} TL`} />
+                <Result label="Kazanc" value={`${D.fmt(kazanc)} TL`} />
+                <Result label="Istisna Tutari" value={`-${D.fmt(ist)} TL`} negative />
+                <Result label="Vergi Matrahi" value={`${D.fmt(matrah)} TL`} />
+                <Result label="Odenecek Vergi" value={`${D.fmt(vergi)} TL`} highlight />
+              </>
+            )}
           </div>
         ) : <p className="text-gray-500 text-sm">Bilgileri girin</p>}
       </Card>
@@ -1019,7 +1068,7 @@ function DamgaVergisi() {
 function BrutNetHesap() {
   const [tutar, setTutar] = useState('')
   const [yon, setYon] = useState('brut_net')
-  const [yil, setYil] = useState('2025')
+  const [yil, setYil] = useState('2026')
   
   const t = parseTurkishNumber(tutar)
   const y = Number(yil)
@@ -1049,8 +1098,15 @@ function BrutNetHesap() {
             <Result label="SGK Isci (%14)" value={`-${D.fmt(sonuc.sgkIsci)} TL`} negative />
             <Result label="Issizlik Isci (%1)" value={`-${D.fmt(sonuc.issizlikIsci)} TL`} negative />
             <Result label="GV Matrahi" value={`${D.fmt(sonuc.gvMatrah)} TL`} />
-            <Result label="Gelir Vergisi (Aylik)" value={`-${D.fmt(sonuc.aylikGv)} TL`} negative />
-            <Result label="Damga Vergisi" value={`-${D.fmt(sonuc.damga)} TL`} negative />
+            <Result label="Hesaplanan Gelir Vergisi" value={`${D.fmt(sonuc.hamGv)} TL`} />
+            {y >= 2025 && (
+              <Result label="Asgari Ucret GV Istisnasi" value={`-${D.fmt(sonuc.gvIstisna)} TL`} />
+            )}
+            <Result label="Odenecek Gelir Vergisi" value={`-${D.fmt(sonuc.aylikGv)} TL`} negative />
+            {y >= 2025 && (
+              <Result label="Asgari Ucret Damga Istisnasi" value={`-${D.fmt(sonuc.damgaIstisna)} TL`} />
+            )}
+            <Result label="Odenecek Damga Vergisi" value={`-${D.fmt(sonuc.damga)} TL`} negative />
             <Result label="Net Ucret" value={`${D.fmt(sonuc.net)} TL`} highlight />
             <div className="my-2 border-t border-blue-700/30" />
             <Result label="SGK Isveren (%20.5)" value={`${D.fmt(sonuc.sgkIsveren)} TL`} />
@@ -1118,6 +1174,7 @@ function EmeklilikHesabi() {
 function BorclanmaHesabi() {
   const yil = new Date().getFullYear()
   const sinirlar = D.getGunlukPekSinirlari(yil)
+  const [tip, setTip] = useState('askerlik')
   const [gun, setGun] = useState('')
   const [pek, setPek] = useState('')
 
@@ -1125,6 +1182,11 @@ function BorclanmaHesabi() {
   useEffect(() => {
     setPek(String(sinirlar.asgari.toFixed(2)))
   }, [])
+
+  // Tip degisince gun sayisi temizlenir (otomatik doldurma yok).
+  // Dogum borclanmasi ust siniri: 2.160 gun (3 cocuk); limitler bilgi kutusunda.
+  const maxGun = 2160
+  useEffect(() => { setGun('') }, [tip])
 
   const g = parseTurkishNumber(gun)
   const p = parseTurkishNumber(pek)
@@ -1136,7 +1198,11 @@ function BorclanmaHesabi() {
     <div className="grid md:grid-cols-2 gap-4">
       <Card title="Borclanma (Askerlik/Cocuk)">
         <div className="space-y-3">
-          <Input label="Borclanma Gun Sayisi" value={gun} onChange={setGun} />
+          <Select label="Borclanma Tipi" value={tip} onChange={setTip} options={[
+            { value: 'askerlik', label: 'Askerlik Borclanmasi' },
+            { value: 'cocuk', label: 'Dogum / Cocuk Borclanmasi' }
+          ]} />
+          <Input label={tip === 'cocuk' ? `Borclanma Gun Sayisi (en fazla ${maxGun})` : 'Borclanma Gun Sayisi'} value={gun} onChange={setGun} />
           <Input label="Gunluk Prime Esas Kazanc (PEK)" value={pek} onChange={setPek} suffix="TL" />
           <div className="bg-blue-900/20 rounded-lg p-3 text-xs space-y-1">
             <p className="text-gray-400">{yil} yili gunluk PEK sinirlari:</p>
@@ -1144,14 +1210,31 @@ function BorclanmaHesabi() {
             <p className="text-white">Tavan: <span className="text-yellow-400 font-semibold">{D.fmt(sinirlar.tavan)} TL</span></p>
             <p className="text-gray-500">Borclanma tutari = Gun x PEK x %32</p>
           </div>
+          {tip === 'cocuk' && (
+            <div className="bg-blue-900/20 rounded-lg p-3 text-xs space-y-1.5">
+              <p className="text-yellow-400 font-semibold">Dogum (Cocuk) Borclanmasi Gun Limitleri</p>
+              <p className="text-white">1 Cocuk icin: en fazla 720 gun (2 yil)</p>
+              <p className="text-white">2 Cocuk icin: en fazla 1.440 gun (4 yil)</p>
+              <p className="text-white">3 Cocuk icin: en fazla 2.160 gun (6 yil)</p>
+              <p className="text-yellow-400 font-semibold pt-1">Temel Sartlar</p>
+              <p className="text-gray-300">- Dogumdan once adina en az 1 gun sigorta primi bildirilmis olmasi gerekir.</p>
+              <p className="text-gray-300">- Dogum sonrasinda adina prim odenmemis veya bos gecen sureler borclanilabilir.</p>
+              <p className="text-gray-300">- Cocugun sag dogmasi ve borclanilacak sure icinde hayatta olmasi sarttir.</p>
+              <p className="text-gray-300">- Basvuru: e-Devlet Kapisi uzerinden "4A Dogum Borclanmasi Basvurusu" hizmetiyle veya dogrudan SGK birimlerine bildirilebilir.</p>
+            </div>
+          )}
         </div>
       </Card>
       <Card title="Sonuc">
         {g > 0 && p > 0 ? (
           <div className="space-y-1">
-            <Result label="Gun Sayisi" value={`${g} gun`} />
+            <Result label="Borclanma Tipi" value={tip === 'cocuk' ? 'Dogum / Cocuk' : 'Askerlik'} />
+            <Result label="Gun Sayisi" value={tip === 'cocuk' ? `${g} gun (limit ${maxGun})` : `${g} gun`} />
             <Result label="Gunluk PEK" value={`${D.fmt(p)} TL`} />
             <Result label="Borclanma Tutari (%32)" value={`${D.fmt(borc)} TL`} highlight />
+            {tip === 'cocuk' && g > maxGun && (
+              <p className="text-red-400 text-xs mt-1">Uyari: Dogum borclanmasinda en fazla 2.160 gun (3 cocuk) borclanilabilir.</p>
+            )}
             <div className="my-1 border-t border-blue-700/30" />
             <Result label="Asgari PEK ile" value={`${D.fmt(borcAsgari)} TL`} />
             <Result label="Tavan PEK ile" value={`${D.fmt(borcTavan)} TL`} />
@@ -1169,7 +1252,16 @@ function SSKHisseHesabi() {
   const [calTip, setCalTip] = useState('normal')
   const [yil, setYil] = useState(String(new Date().getFullYear()))
   const [indirim, setIndirim] = useState('2')
+  // Secili yila ait brut asgari ucret (web'den, yoksa yerel tablo) —
+  // Brut Ucret alaninda silik (placeholder) olarak gosterilir.
+  const [webParams, setWebParams] = useState(null)
+  useEffect(() => {
+    let active = true
+    getGuncelParametreler().then((p) => { if (active && p) setWebParams(p) })
+    return () => { active = false }
+  }, [])
   const y = Number(yil)
+  const asgariBrut = asgariUcretBrutGuncel(webParams, y)
   const b = parseTurkishNumber(brut)
   const tavan = D.SGK.tavan[y] || D.SGK.tavan[2026]
   const sgkMatrah = Math.min(b, tavan)
@@ -1199,7 +1291,8 @@ function SSKHisseHesabi() {
             { value: '2', label: '%2 - Indirimli (varsayilan)' },
             { value: '5', label: '%5 - Bes Puanlik Indirim' }
           ]} />
-          <Input label="Brut Ucret" value={brut} onChange={setBrut} suffix="TL" />
+          <Input label={`Brut Ucret (${yil} asgari: ${D.fmt(asgariBrut)} TL, tavan: ${D.fmt(tavan)} TL)`} value={brut} onChange={setBrut} suffix="TL"
+            placeholder={asgariBrut ? formatTurkishInput(String(asgariBrut)) : ''} />
         </div>
       </Card>
       <Card title="Sonuc">
@@ -1353,20 +1446,21 @@ const KATEGORILER = [
       { id: 'gv_kv', label: 'Gelir / Kurumlar Vergisi', comp: GelirKurumlarVergisi },
       { id: 'gms', label: 'GMS Iradi Vergisi', comp: GMSIradi },
       { id: 'deger_artis', label: 'Deger Artis Kazanci', comp: DegerArtisKazanci },
-      { id: 'damga', label: 'Kontrat Damga Vergisi', comp: DamgaVergisi }
-    ]
-  },
-  { id: 'ucret', label: 'Ucret', icon: Wallet, color: 'from-yellow-500 to-yellow-700',
-    items: [
-      { id: 'brut_net', label: 'Brut / Net Ucret', comp: BrutNetHesap },
+      { id: 'damga', label: 'Kontrat Damga Vergisi', comp: DamgaVergisi },
       { id: 'kira_artis', label: 'Kira Artis Hesabi', comp: KiraArtis }
     ]
   },
   { id: 'sgk', label: 'SGK / Emeklilik', icon: Shield, color: 'from-purple-500 to-purple-700',
     items: [
+      { id: 'brut_net', label: 'Brut / Net Ucret', comp: BrutNetHesap },
       { id: 'emeklilik', label: 'Emeklilik Hesabi (4/A, 4/B)', comp: EmeklilikHesabi },
       { id: 'borclanma', label: 'Borclanma (Askerlik/Cocuk)', comp: BorclanmaHesabi },
       { id: 'ssk_hisse', label: 'SSK Isci + Isveren Hisseleri', comp: SSKHisseHesabi }
+    ]
+  },
+  { id: 'beyannameler', label: 'Beyannameler', icon: FileText, color: 'from-sky-500 to-sky-700',
+    items: [
+      { id: 'veraset_intikal', label: 'Veraset ve Intikal Vergisi Beyannamesi', comp: VerasetIntikalBeyan }
     ]
   },
   { id: 'fatura', label: 'KDV / Fatura', icon: FileText, color: 'from-orange-500 to-orange-700',

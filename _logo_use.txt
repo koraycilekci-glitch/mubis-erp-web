@@ -1,3 +1,0 @@
-404: src="/mascot-kalem.png"
-406: className="absolute left-1/2 -translate-x-1/2 bottom-1 w-[86%] object-contain animate-mascot-idle group-hover:animate-mascot-wave drop-shadow-[0_6px_10px_rgba(0,0,0,0.35)]"
-424: <img src="/mascot-avatar.png" alt="" className="w-full h-full object-cover" />

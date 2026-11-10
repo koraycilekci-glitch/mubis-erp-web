@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Camera, Upload, Trash2, Save, X, Eye, CheckCircle, AlertTriangle, FileText, Download } from 'lucide-react'
+import { Camera, Upload, Trash2, Save, X, Eye, CheckCircle, AlertTriangle, FileText, Download, FileSpreadsheet } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { processZReportImage, processZReportImagesBatch, convertToAccountingEntry } from '../services/zReportOCRService'
+import { processZReportImage, processZReportImagesBatch, convertToAccountingEntry, pdfIlkSayfaResmi, zRaporExcelOku } from '../services/zReportOCRService'
 import { saveZReport, updateZReportParsedData, createAccountingEntries } from '../services/zReportService'
 import { convertToLucaFormat, downloadLucaCSV, downloadLucaExcel, convertToDefterFormat, downloadDefterExcel } from '../services/zReportExportService'
 
@@ -24,6 +24,7 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
   const [selectedReport, setSelectedReport] = useState(null)
   const [batchResults, setBatchResults] = useState([])
   const [isBatchMode, setIsBatchMode] = useState(false)
+  const [excelYukleniyor, setExcelYukleniyor] = useState(false)
 
   const months = [
     'Ocak','Subat','Mart','Nisan','Mayis','Haziran',
@@ -60,7 +61,7 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
     }
   }
 
-  const handleFileSelect = (e) => {
+  const handleFileSelect = async (e) => {
     if (!clientId) {
       setMsg('Musteri ID bulunamadi. Lutfen tekrar giris yapin.')
       setTimeout(() => setMsg(''), 3000)
@@ -68,36 +69,100 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
     }
     const files = Array.from(e.target.files)
     if (!files.length) return
-    
-    // Sadece resim dosyalarini kabul et
-    const imageFiles = files.filter(file => file.type.startsWith('image/'))
-    if (imageFiles.length === 0) {
-      setMsg('Lutfen sadece resim dosyalari secin (JPG, PNG)')
+
+    // Resim + PDF kabul edilir; PDF'ler OCR icin ilk sayfadan resme cevrilir
+    const uygun = files.filter(f => f.type.startsWith('image/') || /\.pdf$/i.test(f.name) || f.type === 'application/pdf')
+    if (uygun.length === 0) {
+      setMsg('Lutfen resim (JPG, PNG) veya PDF dosyalari secin')
       setTimeout(() => setMsg(''), 3000)
       return
     }
-    
-    if (imageFiles.length > 10) {
-      setMsg('En fazla 10 resim yukleyebilirsiniz')
+
+    if (uygun.length > 10) {
+      setMsg('En fazla 10 dosya yukleyebilirsiniz')
       setTimeout(() => setMsg(''), 3000)
       return
     }
-    
-    // Mevcut resimlere ekle (batch modu icin)
-    const allFiles = [...selectedFiles, ...imageFiles]
+
+    // Mevcut dosyalara ekle (batch modu icin)
+    const allFiles = [...selectedFiles, ...uygun]
     if (allFiles.length > 10) {
-      setMsg('Toplam en fazla 10 resim yukleyebilirsiniz')
+      setMsg('Toplam en fazla 10 dosya yukleyebilirsiniz')
       setTimeout(() => setMsg(''), 3000)
       return
     }
-    
+
+    setMsg('PDF hazirlaniyor...')
+    const yeniUrler = []
+    for (const f of uygun) {
+      if (/\.pdf$/i.test(f.name) || f.type === 'application/pdf') {
+        try {
+          yeniUrler.push(await pdfIlkSayfaResmi(f))
+        } catch (err) {
+          console.error('PDF resme cevrilemedi:', err)
+          setMsg('PDF okunamadi: ' + (err.message || err))
+          setTimeout(() => setMsg(''), 4000)
+          return
+        }
+      } else {
+        yeniUrler.push(URL.createObjectURL(f))
+      }
+    }
+
     setSelectedFiles(allFiles)
-    const urls = imageFiles.map(file => URL.createObjectURL(file))
-    setPreviewUrls(prev => [...prev, ...urls])
+    setPreviewUrls(prev => [...prev, ...yeniUrler])
     setCurrentFileIndex(0)
     setOcrResult(null)
     setBatchResults([])
     setIsBatchMode(allFiles.length > 1)
+    setMsg('')
+  }
+
+  // Excel ile yukleme: her satir bir Z raporu / mali hafiza ozeti
+  const excelYukle = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!clientId) {
+      setMsg('Musteri ID bulunamadi. Lutfen tekrar giris yapin.')
+      setTimeout(() => setMsg(''), 3000)
+      return
+    }
+    setExcelYukleniyor(true)
+    setMsg('Excel okunuyor...')
+    try {
+      const satirlar = await zRaporExcelOku(file)
+      if (!satirlar.length) throw new Error('Excel icinde gecerli Z raporu satiri bulunamadi.')
+      for (let i = 0; i < satirlar.length; i++) {
+        const r = satirlar[i]
+        setMsg(`Excel satiri kaydediliyor (${i + 1}/${satirlar.length})...`)
+        const report = await saveZReport(
+          clientId, selectedYear, selectedMonth,
+          r.tarih || new Date().toISOString().split('T')[0],
+          '', `${file.name} (satir ${r._satir})`
+        )
+        await updateZReportParsedData(report.id, {
+          rawText: `Excel yukleme: ${file.name}`,
+          ...r,
+          zNo: r.evrakNo,
+          totalAmount: r.toplamSatis,
+          totalKdv: (r.kdv1 + r.kdv10 + r.kdv20),
+          kdvMatrah: (r.matrah1 + r.matrah10 + r.matrah20),
+          cashAmount: r.nakit,
+          creditCardAmount: r.krediKarti,
+          otherAmount: r.havale
+        })
+        const entries = convertToAccountingEntry(clientType, r)
+        await createAccountingEntries(clientId, report.id, entries)
+      }
+      setMsg(`${satirlar.length} Z raporu Excel'den kaydedildi!`)
+      loadReports()
+    } catch (err) {
+      setMsg('Excel yukleme hatasi: ' + (err.message || err))
+    } finally {
+      setExcelYukleniyor(false)
+      setTimeout(() => setMsg(''), 4000)
+    }
   }
 
   const handleOCR = async () => {
@@ -116,18 +181,49 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
         // Coklu mod - tek worker ile tum resimleri sirayla oku
         setMsg('Toplu OCR islemi basladi...')
         const results = await processZReportImagesBatch(previewUrls)
-        const enriched = results.map((result, i) => ({
-          file: selectedFiles[i],
-          previewUrl: previewUrls[i],
-          ...result
-        }))
+        // Her resim birden cok Z raporu icerebilir -> parsedList'i ac,
+        // her Z raporu ayri bir batch kaydi olur
+        const enriched = []
+        results.forEach((result, i) => {
+          const liste = (result.parsedList && result.parsedList.length > 0) ? result.parsedList : [result.parsed]
+          liste.forEach((p, j) => {
+            enriched.push({
+              file: selectedFiles[i],
+              previewUrl: previewUrls[i],
+              rawText: result.rawText,
+              parsed: p,
+              parsedList: [p],
+              confidence: p.confidence || 0,
+              subIndex: liste.length > 1 ? j + 1 : 0
+            })
+          })
+        })
         setBatchResults(enriched)
-        setMsg(`${enriched.length} resim basariyla okundu`)
+        setMsg(`${results.length} resim okundu — ${enriched.length} Z raporu bulundu`)
         setShowOcrModal(true)
       } else {
         // Tekli mod
         const result = await processZReportImage(previewUrls[0])
-        setOcrResult(result)
+        if (result.parsedList && result.parsedList.length > 1) {
+          // Tek fotografa ust uste birden cok Z raporu cekilmis ->
+          // coklu moda gec, her rapor ayri kayit olarak duzeltilebilir
+          const expanded = result.parsedList.map((p, j) => ({
+            file: selectedFiles[0],
+            previewUrl: previewUrls[0],
+            rawText: result.rawText,
+            parsed: p,
+            parsedList: [p],
+            confidence: p.confidence || 0,
+            subIndex: j + 1
+          }))
+          setIsBatchMode(true)
+          setOcrResult(null)
+          setBatchResults(expanded)
+          setMsg(`Fotografta ${expanded.length} Z raporu bulundu`)
+        } else {
+          setOcrResult(result)
+          setMsg('OCR tamamlandi')
+        }
         setShowOcrModal(true)
       }
     } catch (e) {
@@ -170,6 +266,7 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
       setPreviewUrls([])
       setOcrResult(null)
       setBatchResults([])
+      setIsBatchMode(false)
       setShowOcrModal(false)
       loadReports()
     } catch (e) {
@@ -214,6 +311,12 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
     await createAccountingEntries(clientId, report.id, entries)
     
     return report
+  }
+
+  const updateBatchResult = (index, field, value) => {
+    setBatchResults(prev => prev.map((r, i) =>
+      i === index ? { ...r, parsed: { ...r.parsed, [field]: value } } : r
+    ))
   }
 
   const handleDelete = async (report) => {
@@ -307,14 +410,26 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
               <input type="file" className="hidden" accept="image/*" capture="environment" onChange={handleFileSelect} />
             </label>
             
-            {/* Galeriden Sec */}
+            {/* Galeriden Sec (Resim / PDF) */}
             <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-blue-700/50 rounded-xl cursor-pointer hover:border-blue-500/50 hover:bg-blue-900/20 transition-colors">
               <div className="flex flex-col items-center justify-center pt-5 pb-6">
                 <Upload className="w-8 h-8 text-gray-400 mb-2" />
-                <p className="text-sm text-gray-400">Galeriden Sec</p>
-                <p className="text-xs text-gray-500">JPG, PNG (En fazla 10 resim)</p>
+                <p className="text-sm text-gray-400">Resim / PDF Sec</p>
+                <p className="text-xs text-gray-500">JPG, PNG, PDF (En fazla 10 dosya)</p>
               </div>
-              <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileSelect} />
+              <input type="file" className="hidden" accept="image/*,.pdf,application/pdf" multiple onChange={handleFileSelect} />
+            </label>
+
+            {/* Excel ile Yukle */}
+            <label className={`flex flex-col items-center justify-center w-full h-20 border-2 border-dashed border-green-700/50 rounded-xl cursor-pointer hover:border-green-500/50 hover:bg-green-900/10 transition-colors ${excelYukleniyor ? 'opacity-50 pointer-events-none' : ''}`}>
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="w-6 h-6 text-green-400" />
+                <div className="text-left">
+                  <p className="text-sm text-gray-400">{excelYukleniyor ? 'Excel yukleniyor...' : 'Excel ile Yukle'}</p>
+                  <p className="text-xs text-gray-500">Her satir bir Z raporu (Tarih, Evrak No, Nakit, Kredi Karti...)</p>
+                </div>
+              </div>
+              <input type="file" className="hidden" accept=".xlsx,.xls" onChange={excelYukle} />
             </label>
 
             {/* Onizleme Grid */}
@@ -377,12 +492,12 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
             {batchResults.length > 0 && isBatchMode && (
               <div className="bg-blue-900/30 rounded-lg p-3 border border-blue-700/30">
                 <div className="flex items-center gap-2 text-green-400 text-sm mb-2">
-                  <CheckCircle className="w-4 h-4" /> {batchResults.length} Resim Okundu
+                  <CheckCircle className="w-4 h-4" /> {batchResults.length} Z Raporu Okundu
                 </div>
                 <div className="max-h-32 overflow-y-auto space-y-1">
                   {batchResults.map((result, index) => (
                     <div key={index} className="text-xs text-gray-400 flex justify-between">
-                      <span>{result.file.name}</span>
+                      <span>{result.file.name}{result.subIndex ? ` (#${result.subIndex})` : ''}</span>
                       <span>{(result.parsed.satis0 + result.parsed.satis1 + result.parsed.satis10 + result.parsed.satis20).toLocaleString('tr-TR', {minimumFractionDigits: 2})} TL</span>
                     </div>
                   ))}
@@ -512,6 +627,55 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
               </div>
 
               <button onClick={() => setShowOcrModal(false)} className="w-full bg-blue-600 text-white py-2 rounded-lg">
+                Kaydet ve Kapat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toplu OCR Modal — her Z raporu ayri duzeltilebilir */}
+      {showOcrModal && !ocrResult && isBatchMode && batchResults.length > 0 && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-blue-900 rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto border border-blue-700/30">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-white">OCR Sonuclari - {batchResults.length} Z Raporu</h3>
+                <button onClick={() => setShowOcrModal(false)} className="text-gray-400 hover:text-white">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                {batchResults.map((result, index) => (
+                  <div key={index} className="bg-blue-800/30 rounded-lg p-4 border border-blue-700/30">
+                    <div className="flex items-center gap-2 mb-3">
+                      <img src={result.previewUrl} alt="" className="w-10 h-10 object-cover rounded bg-black/20" />
+                      <span className="text-sm text-white">{result.file.name}{result.subIndex ? ` (#${result.subIndex})` : ''}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div>
+                        <label className="block text-xs text-gray-400 mb-1">Tarih</label>
+                        <input type="date" value={result.parsed.tarih || ''} onChange={e => updateBatchResult(index, 'tarih', e.target.value)} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-400 mb-1">Evrak No</label>
+                        <input type="text" value={result.parsed.evrakNo || ''} onChange={e => updateBatchResult(index, 'evrakNo', e.target.value)} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
+                      {['satis0', 'satis1', 'satis10', 'satis20', 'nakit', 'krediKarti', 'matrah1', 'matrah10', 'matrah20', 'kdv1', 'kdv10', 'kdv20'].map(field => (
+                        <div key={field}>
+                          <label className="block text-xs text-gray-400 mb-1">{field.toUpperCase()}</label>
+                          <input type="number" step="0.01" value={result.parsed[field] || 0} onChange={e => updateBatchResult(index, field, parseFloat(e.target.value) || 0)} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <button onClick={() => setShowOcrModal(false)} className="w-full bg-blue-600 text-white py-2 rounded-lg mt-4">
                 Kaydet ve Kapat
               </button>
             </div>

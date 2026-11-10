@@ -155,7 +155,29 @@ export async function deletePayment(id) {
   if (error) throw error
 }
 
+// Odemenin borc kalemini (donem) satirdan duzelt — yanlis kayitlar icin
+export async function updatePayment(id, updates = {}) {
+  const { data, error } = await supabase.from('payments').update(updates).eq('id', id).select()
+  if (error) throw error
+  return data && data[0]
+}
+
 // ============ BORC HESAPLAMA ============
+
+// Donem girisini tekil kanonik bicime cevirir: "2026/12", "12/2026", "2026 12",
+// "2026.12" -> "2026-12". Birebir eslesmeyen eski kayitlarin da borctan dusmesi icin.
+export function normalizeDonem(d) {
+  const s = String(d || '').trim()
+  if (!s) return s
+  // Turkce/ASCII donem adlari -> kanonik borc kalemleri
+  if (/önceki|onceki/i.test(s)) return 'Onceki Donem'
+  if (/defter|ta%C5%9F|ta%C5%9F|tasdik/i.test(s)) return 'Defter Tasdik'
+  let m = s.match(/^(\d{4})[\s\/.\-](\d{1,2})$/)
+  if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}`
+  m = s.match(/^(\d{1,2})[\s\/.\-](\d{4})$/)
+  if (m) return `${m[2]}-${String(m[1]).padStart(2, '0')}`
+  return s
+}
 
 export function hesaplaBorcOzeti(fee, payments, referansTarih = new Date()) {
   const bos = { oncekiDonem: 0, defterTasdik: 0, aylikUcret: 0, gecenAy: 0, aylikToplam: 0, toplamBorc: 0, toplamOdeme: 0, kalanBorc: 0, alindiOdeme: 0, bekleyenOdeme: 0, reddedilenOdeme: 0, sonOdeme: null, odenenAylar: [], odenmeyenAylar: [] }
@@ -176,7 +198,7 @@ export function hesaplaBorcOzeti(fee, payments, referansTarih = new Date()) {
   const toplandi = (p) => p.durum !== 'reddedildi' &&
     (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel')
   const toplam = (liste) => (liste || []).reduce((s, p) => s + (Number(p.tutar) || 0), 0)
-  const donemToplam = (d) => toplam((payments || []).filter(p => p.donem === d && toplandi(p)))
+  const donemToplam = (d) => toplam((payments || []).filter(p => normalizeDonem(p.donem) === d && toplandi(p)))
 
   // Odemelerin basladigi ay (baslangictan once odeme varsa faturalama oradan baslar)
   const odenenAyListesi = Array.from({ length: 12 }, (_, i) => i + 1)
@@ -188,10 +210,36 @@ export function hesaplaBorcOzeti(fee, payments, referansTarih = new Date()) {
   const gecenAy = Math.max(0, refAy - basAyNo + 1)
 
   const aylikToplam = aylikUcret * gecenAy
-  const toplamBorc = oncekiDonem + defterTasdik + aylikToplam
+  // Onceki yillarin odenmemis aylik ucretleri: referans yilindan onceki her yil icin
+  // faturalanan borc - o yila ait tahsilat. Yil degisince (orn. 2027'ye girince)
+  // gecen yilin kalan borcu "önceki dönem"e otomatik eklenir (admin tarafıyla aynı mantık).
+  const simdiYil = new Date().getFullYear()
+  const simdiAy = new Date().getMonth() + 1
+  const gecmisKalan = (() => {
+    if (aylikUcret <= 0) return 0
+    const odemeYillari = (payments || [])
+      .filter(p => /^\d{4}-/.test(normalizeDonem(p.donem) || ''))
+      .map(p => Number(normalizeDonem(p.donem).slice(0, 4)))
+    const gecmisBasYil = Number(fee.baslangic_yil) || (odemeYillari.length ? Math.min(...odemeYillari) : refYil)
+    if (refYil <= gecmisBasYil) return 0
+    let t = 0
+    for (let Y = gecmisBasYil; Y <= refYil - 1; Y++) {
+      if (Y > simdiYil) break
+      const sonAy = Y === simdiYil ? simdiAy : 12
+      let odendiTutar = 0
+      for (let m = 1; m <= sonAy; m++) {
+        odendiTutar += Math.min(donemToplam(`${Y}-${String(m).padStart(2, '0')}`), aylikUcret)
+      }
+      t += Math.max(0, aylikUcret * sonAy - odendiTutar)
+    }
+    return t
+  })()
+  const oncekiDonemToplam = oncekiDonem + gecmisKalan
+
+  const toplamBorc = oncekiDonemToplam + defterTasdik + aylikToplam
 
   // Tahsilat her borc kaleminde kendi tutariyla sinirli (cift/eski kayitlar fazla sayilmaz)
-  const odOdenen = Math.min(donemToplam('Onceki Donem'), oncekiDonem)
+  const odOdenen = Math.min(donemToplam('Onceki Donem'), oncekiDonemToplam)
   const dtOdenen = Math.min(donemToplam('Defter Tasdik'), defterTasdik)
   const ayOdenen = odenenAyListesi.reduce((s, m) => s + Math.min(donemToplam(`${refYil}-${String(m).padStart(2, '0')}`), aylikUcret), 0)
   const toplamOdeme = odOdenen + dtOdenen + ayOdenen
@@ -209,12 +257,12 @@ export function hesaplaBorcOzeti(fee, payments, referansTarih = new Date()) {
   const sonOdeme = uygulanan.length > 0 ? uygulanan[0].odeme_tarihi : null
 
   return {
-    oncekiDonem, defterTasdik, aylikUcret, gecenAy, aylikToplam, toplamBorc, toplamOdeme,
+    oncekiDonem: oncekiDonemToplam, oncekiDonemToplam, defterTasdik, aylikUcret, gecenAy, aylikToplam, toplamBorc, toplamOdeme,
     kalanBorc: toplamBorc - toplamOdeme, alindiOdeme, bekleyenOdeme, reddedilenOdeme, sonOdeme,
     odenenAylar: tamOdenenAylar, odenmeyenAylar,
     aylikKalan,
     defterKalan: Math.max(0, defterTasdik - donemToplam('Defter Tasdik')),
-    oncekiKalan: Math.max(0, oncekiDonem - donemToplam('Onceki Donem'))
+    oncekiKalan: Math.max(0, oncekiDonemToplam - donemToplam('Onceki Donem'))
   }
 }
 
@@ -222,7 +270,7 @@ export function hesaplaBorcOzeti(fee, payments, referansTarih = new Date()) {
 // Odeme linki aciklamasi ve toplu borc bildirimi icin ortak detayli mesaj
 const AY_ADLARI = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
 
-export function buildBorcMesaji({ clientName = '', fee = null, ozet = {}, bankInfo = null, linkUrl = '' }) {
+export function buildBorcMesaji({ clientName = '', fee = null, ozet = {}, bankInfo = null, bankAccounts = null, linkUrl = '' }) {
   const fmtTL = (n) => Number(n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 })
   const yil = new Date().getFullYear()
   const aylikKalan = Number(ozet?.aylikKalan) || 0
@@ -244,8 +292,13 @@ export function buildBorcMesaji({ clientName = '', fee = null, ozet = {}, bankIn
   if (oncekiKalan > 0) satirlar.push(`Önceki Yıldan Kalan: ${fmtTL(oncekiKalan)} TL`)
   satirlar.push(`Toplam Borcunuz: ${fmtTL(kalanBorc)} TL'dir.`)
   satirlar.push('Ödemelerinizi düzenli olarak yapmanızı rica ederiz.')
-  if (bankInfo?.iban || bankInfo?.hesapSahibi) {
-    satirlar.push(`Banka Bilgileri: ${[bankInfo.hesapSahibi, bankInfo.iban, bankInfo.banka ? `(${bankInfo.banka})` : ''].filter(Boolean).join(' ')}`.trim())
+  // Coklu banka: tum hesaplar satir satir yazilir; eski tek bankInfo da desteklenir
+  const hesaplar = (Array.isArray(bankAccounts) && bankAccounts.length)
+    ? bankAccounts
+    : (bankInfo?.iban || bankInfo?.hesapSahibi) ? [bankInfo] : []
+  for (const h of hesaplar) {
+    if (!h?.iban && !h?.hesapSahibi) continue
+    satirlar.push(`Banka Bilgileri: ${[h.hesapSahibi, h.iban, h.banka ? `(${h.banka})` : ''].filter(Boolean).join(' ')}`.trim())
   }
   if (linkUrl) {
     satirlar.push('Kredi Kartı ile ödeme yapmak için linke tıklayın:')
@@ -261,7 +314,10 @@ export const BANKA_BILGILERI = {
   iban: 'TR04 0006 2000 1350 0006 6215 82'
 }
 
-export async function getBankInfo() {
+// Coklu banka destegi (2.7.150): app_settings 'banka_bilgileri' degeri artık
+// { bankalar: [{banka, hesapSahibi, iban}] } olarak saklanir. Eski tek-kayit
+// formati ({banka, hesapSahibi, iban}) okunurken otomatik listeye cevrilir.
+export async function getBankAccounts() {
   try {
     let ofisId = null
     try { ofisId = await getMyOfficeId() } catch { /* yoksa filtreleme */ }
@@ -272,13 +328,51 @@ export async function getBankInfo() {
     if (ofisId) sorgu = sorgu.eq('office_id', ofisId)
     const { data, error } = await sorgu.maybeSingle()
     if (error) throw error
-    if (!data?.value) return BANKA_BILGILERI
+    if (!data?.value) return [{ ...BANKA_BILGILERI }]
     const parsed = JSON.parse(data.value)
-    return {
-      banka: parsed.banka || BANKA_BILGILERI.banka,
-      hesapSahibi: parsed.hesapSahibi || BANKA_BILGILERI.hesapSahibi,
-      iban: parsed.iban || BANKA_BILGILERI.iban
+    if (Array.isArray(parsed?.bankalar) && parsed.bankalar.length) {
+      return parsed.bankalar.map(b => ({
+        banka: b.banka || '',
+        hesapSahibi: b.hesapSahibi || '',
+        iban: b.iban || ''
+      }))
     }
+    // Eski format (tek kayit) -> listeye cevir
+    if (parsed?.banka || parsed?.iban || parsed?.hesapSahibi) {
+      return [{ banka: parsed.banka || '', hesapSahibi: parsed.hesapSahibi || '', iban: parsed.iban || '' }]
+    }
+    return [{ ...BANKA_BILGILERI }]
+  } catch (err) {
+    console.error('Banka hesaplari okuma hatasi:', err)
+    return [{ ...BANKA_BILGILERI }]
+  }
+}
+
+export async function saveBankAccounts(bankalar) {
+  const temiz = (bankalar || [])
+    .map(b => ({ banka: (b.banka || '').trim(), hesapSahibi: (b.hesapSahibi || '').trim(), iban: (b.iban || '').trim() }))
+    .filter(b => b.banka || b.hesapSahibi || b.iban)
+  if (!temiz.length) throw new Error('En az bir banka hesabi gerekli')
+  let ofisId = null
+  try { ofisId = await getMyOfficeId() } catch { /* yoksa null */ }
+  const { error } = await supabase
+    .from('app_settings')
+    .upsert({
+      key: 'banka_bilgileri',
+      office_id: ofisId,
+      value: JSON.stringify({ bankalar: temiz })
+    }, { onConflict: 'office_id,key' })
+  if (error) throw error
+  return true
+}
+
+export async function getBankInfo() {
+  // Coklu formatla uyumlu: ilk hesabi dondurur (geriye donuk uyum)
+  try {
+    const hesaplar = await getBankAccounts()
+    const ilk = hesaplar[0]
+    if (ilk && (ilk.banka || ilk.hesapSahibi || ilk.iban)) return ilk
+    return BANKA_BILGILERI
   } catch (err) {
     console.error('Banka bilgisi okuma hatasi:', err)
     return BANKA_BILGILERI
@@ -315,8 +409,8 @@ export function generateReceiptHtml({ client, payment, office }) {
         <meta charset="UTF-8" />
         <title>Odeme Makbuzu</title>
         <style>
-          body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 40px; color: #333; }
-          .receipt { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+          body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 40px; color: #333; min-height: 100vh; box-sizing: border-box; display: flex; align-items: center; justify-content: center; }
+          .receipt { max-width: 860px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
           .header { text-align: center; border-bottom: 2px solid #1e3a8a; padding-bottom: 20px; margin-bottom: 30px; }
           .header h1 { color: #1e3a8a; margin: 0; font-size: 28px; }
           .header p { color: #666; margin: 8px 0 0; }
@@ -332,7 +426,7 @@ export function generateReceiptHtml({ client, payment, office }) {
           .status.alindi { background: #dbeafe; color: #1e40af; }
           .status.bekliyor { background: #fef3c7; color: #92400e; }
           .status.reddedildi { background: #fee2e2; color: #991b1b; }
-          @media print { body { background: white; padding: 0; } .no-print { display: none; } }
+          @media print { body { background: white; padding: 0; display: block; min-height: 0; } .no-print { display: none; } }
         </style>
       </head>
       <body>
@@ -378,9 +472,54 @@ export function generateReceiptHtml({ client, payment, office }) {
 
 export function openReceipt(payment, client, office) {
   const html = generateReceiptHtml({ client, payment, office })
-  const w = window.open('', '_blank')
-  if (w) {
-    w.document.write(html)
-    w.document.close()
+  // GORUNUR uygulama ici pencere: popup engelleyicisi, gizli iframe baski
+  // engelleri, bos sekme yazimi sansurleri — hicbiri devreye giremez.
+  // Kullanici makbuzu gorur; Yazdir dugmesi ile dogrudan baski/PDF alir.
+  try {
+    const eski = document.getElementById('mubis-makbuz-pencere')
+    if (eski) eski.remove()
+
+    const karart = document.createElement('div')
+    karart.id = 'mubis-makbuz-pencere'
+    karart.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;padding:24px;'
+
+    const panel = document.createElement('div')
+    panel.style.cssText = 'background:#fff;border-radius:12px;width:100%;max-width:1080px;height:94vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.4);'
+
+    const cubuk = document.createElement('div')
+    cubuk.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#1e3a8a;color:#fff;flex-shrink:0;'
+    const baslik = document.createElement('span')
+    baslik.textContent = 'ODEME MAKBUZU'
+    baslik.style.cssText = 'font-weight:700;font-size:14px;letter-spacing:0.5px;'
+    const dugmeler = document.createElement('div')
+    dugmeler.style.cssText = 'display:flex;gap:8px;'
+    const yazdir = document.createElement('button')
+    yazdir.textContent = 'Yazdir / PDF Kaydet'
+    yazdir.style.cssText = 'padding:7px 14px;background:#facc15;color:#1e3a8a;border:none;border-radius:6px;font-weight:700;font-size:13px;cursor:pointer;'
+    const kapat = document.createElement('button')
+    kapat.textContent = 'Kapat'
+    kapat.style.cssText = 'padding:7px 14px;background:rgba(255,255,255,0.15);color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;'
+    dugmeler.appendChild(yazdir)
+    dugmeler.appendChild(kapat)
+    cubuk.appendChild(baslik)
+    cubuk.appendChild(dugmeler)
+
+    const cerceve = document.createElement('iframe')
+    cerceve.srcdoc = html
+    cerceve.title = 'Odeme Makbuzu'
+    cerceve.style.cssText = 'flex:1;border:0;width:100%;'
+
+    yazdir.onclick = () => {
+      try { cerceve.contentWindow.focus(); cerceve.contentWindow.print() } catch (e) { console.error('Baski hatasi:', e) }
+    }
+    kapat.onclick = () => karart.remove()
+
+    panel.appendChild(cubuk)
+    panel.appendChild(cerceve)
+    karart.appendChild(panel)
+    document.body.appendChild(karart)
+  } catch (e) {
+    console.error('Makbuz penceresi acilamadi:', e)
+    alert('Makbuz gosterilemedi: ' + ((e && e.message) || e))
   }
 }

@@ -98,6 +98,33 @@ export default function Home() {
   // Site ziyaretci sayaci: ana sayfa acildiginda oturum basina bir kez kaydedilir
   useEffect(() => { recordSiteVisit('/') }, [])
 
+  // Canlı asistan (Inter Reception) yalnızca ana sayfada: mount'ta yükle,
+  // sayfadan ayrılınca script + widget'ın eklediği düğme/iframe'i temizle.
+  // Widget id/class koymadan body'ye fixed button + iframe eklediği için
+  // mount öncesi gövde anlık görüntüsüyle fark tespiti yapılır.
+  useEffect(() => {
+    const once = new Set(Array.from(document.body.children))
+    // Önceki temizlikten kalan kurulum bayrağını sıfırla (ana sayfaya dönüşte tekrar yüklenebilsin)
+    try { delete window.__irAvatarWidgetInstalled } catch { window.__irAvatarWidgetInstalled = false }
+    const script = document.createElement('script')
+    script.src = 'https://interreception.com/avatar-widget.js'
+    script.dataset.id = 'jAafnmjomqLh1BZjLemcASFY'
+    script.dataset.position = 'left'
+    script.defer = true
+    document.body.appendChild(script)
+    return () => {
+      script.remove()
+      Array.from(document.body.children).forEach(el => {
+        if (once.has(el) || el === script) return
+        const tag = el.tagName
+        const sabit = el.style?.position === 'fixed'
+        if (tag === 'IFRAME' || (tag === 'BUTTON' && sabit) || (tag === 'DIV' && sabit && el.querySelector?.('iframe[title*="Inter Reception" i]'))) {
+          el.remove()
+        }
+      })
+    }
+  }, [])
+
   const features = [
     { icon: Shield, title: 'Güvenli', description: 'E-İmza ve Mali Mühür entegrasyonu' },
     { icon: Zap, title: 'Hızlı', description: 'AI destekli otomasyon sistemi' },

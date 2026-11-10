@@ -1,3 +1,5 @@
+import { tahakkukDonemi } from '../services/documentService'
+
 const DOCUMENT_TYPE_LABELS = {
   sigorta_tahakkuk: 'Tahakkuk Fişi',
   tahakkuk: 'Tahakkuk Fişi',
@@ -85,10 +87,29 @@ export function getTahakkukList(beyanDurumlari, baseKey) {
   }
 
   // 2. _documents icindeki sigorta_tahakkuk kayitlari (SGK)
+  //    YALNIZ dosya adindaki donem baseKey donemiyle uyusanlar — aksi halde
+  //    tum aylarin evraklari her ayin tutarina karisir (tarih damgali adlar
+  //    donemsiz oldugu icin hariclenir; bunlar tamirde dogru aya tasinir)
   const docs = beyanDurumlari?.[`${baseKey}_documents`]
   if (Array.isArray(docs)) {
+    const parca = String(baseKey || '').split('_')
+    const keyYil = parseInt(parca[0], 10)
+    const keyAy = parseInt(parca[1], 10)
+    const dosyaAdi = (url) => {
+      try {
+        const s = String(url || '').split('?')[0]
+        return decodeURIComponent(s.substring(s.lastIndexOf('/') + 1))
+      } catch { return '' }
+    }
     docs.forEach(d => {
       if (d?.category === 'sigorta_tahakkuk' && d?.url && !seen.has(d.url)) {
+        const donem = tahakkukDonemi(dosyaAdi(d.url))
+        if (donem) {
+          if (keyAy && donem.ay && donem.ay !== keyAy) return
+          if (keyYil && donem.yil && donem.yil !== keyYil) return
+        } else {
+          return // donemsiz ad → gösterme (yanlis aya karismasin)
+        }
         seen.add(d.url)
         list.push({
           url: d.url,
@@ -156,6 +177,129 @@ export function getBeyanList(beyanDurumlari, baseKey) {
 
 export function sumTahakkukTutar(list) {
   return list.reduce((sum, t) => sum + (Number(t.tutar) || 0), 0)
+}
+
+/**
+ * OLU / YANLIS DONEM KAYIT TEMIZLIGI (self-heal):
+ * 1) Silinen/degisistirilen tahakkuk dosyalarinin DB kalintilarini temizler:
+ *    Storage'da olmayan (HEAD 404) dosyalarin kayitlari cikarilir.
+ * 2) Yanlis donemdeki tekil url/documents kayitlarini temizler: eski deplo
+ *    ayni dosyayi birden fazla ayin `_tahakkuk_url`'ine yazabilmisti —
+ *    dosya Storage'da hala var oldugu icin olu-dosya kontrolu onu goremez,
+ *    ancak dosya adindaki donem baseKey'in donemiyle uyusmaz.
+ *
+ * Belirti: musteriya hatali/ayni tutar birden fazla ayda gosterilir; keşif
+ * atlanir (tutar > 0).
+ *
+ * Donus: { yeniMap, degisti } — degisti ise cagiran DB'ye yazmali.
+ */
+export async function oluTahakkukTemizle(dbMap) {
+  const map = { ...(dbMap || {}) }
+  let degisti = false
+
+  const dosyaVar = async (url) => {
+    if (!url) return false
+    try {
+      const r = await fetch(url, { method: 'HEAD' })
+      return r.ok
+    } catch {
+      return false
+    }
+  }
+
+  const dosyaAdi = (url) => {
+    try {
+      const s = String(url || '').split('?')[0]
+      return decodeURIComponent(s.substring(s.lastIndexOf('/') + 1))
+    } catch { return '' }
+  }
+
+  // baseKey = <yil>_<ay>_<tur>; dosya adindaki donem uyusmuyorsa kayit
+  // yanlis aya yazilmistir (donem tespit edilemeyenlere dokunulmaz)
+  const donemUyumu = (url, yil, ay) => {
+    const donem = tahakkukDonemi(dosyaAdi(url))
+    if (!donem) return true
+    if (donem.ay && ay && donem.ay !== ay) return false
+    if (donem.yil && yil && donem.yil !== yil) return false
+    return true
+  }
+
+  const baseKeyDonemi = (baseKey) => {
+    const parca = String(baseKey || '').split('_')
+    return { yil: parseInt(parca[0], 10), ay: parseInt(parca[1], 10) }
+  }
+
+  // Ilgili baseKey'leri topla: liste, tek url veya tutar alani olan tum tahakkuk
+  // kayitlari (listesi olmayan salt-tutar kalintilari da yakalanir)
+  const baseKeyler = new Set()
+  for (const key of Object.keys(dbMap || {})) {
+    if (key.endsWith('_tahakkuklar')) baseKeyler.add(key.replace(/_tahakkuklar$/, ''))
+    else if (key.endsWith('_tahakkuk_url')) baseKeyler.add(key.replace(/_tahakkuk_url$/, ''))
+    else if (key.endsWith('_tutar')) baseKeyler.add(key.replace(/_tutar$/, ''))
+  }
+
+  for (const baseKey of baseKeyler) {
+    const key = `${baseKey}_tahakkuklar`
+    const { yil, ay } = baseKeyDonemi(baseKey)
+
+    // 1) Liste ogesi: oluler cikarilir + donem uyusmayanlar cikarilir
+    const liste = Array.isArray(map[key]) ? map[key] : []
+    const canliListe = []
+    let listeDegisti = false
+    for (const t of liste) {
+      if (!(await dosyaVar(t?.url))) { listeDegisti = true; continue }
+      if (!donemUyumu(t?.url, yil, ay)) { listeDegisti = true; continue }
+      canliListe.push(t)
+    }
+    if (listeDegisti) { map[key] = canliListe; degisti = true }
+
+    // _documents icindeki sigorta_tahakkuk kayitlari da getTahakkukList'e girer
+    const docsKey = `${baseKey}_documents`
+    const docs = Array.isArray(map[docsKey]) ? map[docsKey] : null
+    if (docs) {
+      const canliDocs = []
+      let docsDegisti = false
+      for (const d of docs) {
+        if (d?.category === 'sigorta_tahakkuk' && d?.url) {
+          if (!(await dosyaVar(d.url)) || !donemUyumu(d.url, yil, ay)) {
+            docsDegisti = true
+            continue
+          }
+        }
+        canliDocs.push(d)
+      }
+      if (docsDegisti) { map[docsKey] = canliDocs; degisti = true }
+    }
+
+    // 2) Eski tek url kaydi: olu VEYA donem uyusmuyorsa temizlenir
+    //    (ayni dosya dogru donemde zaten listelenir)
+    const urlKey = `${baseKey}_tahakkuk_url`
+    const tekUrl = map[urlKey]
+    if (tekUrl && (!(await dosyaVar(tekUrl)) || !donemUyumu(tekUrl, yil, ay))) {
+      map[urlKey] = ''
+      degisti = true
+    }
+
+    // 3) Tutar/durum yeniden hesapla (kaynaklarin hepsi temizlendikten sonra)
+    const birlesen = getTahakkukList(map, baseKey)
+    const yeniTutar = sumTahakkukTutar(birlesen)
+    const eskiTutar = Number(map[`${baseKey}_tutar`]) || 0
+    if (yeniTutar !== eskiTutar) {
+      map[`${baseKey}_tutar`] = yeniTutar
+      degisti = true
+    }
+    if (birlesen.length === 0 && (eskiTutar > 0 || map[urlKey])) {
+      // Hicbir gecerli dosya kalmadi: kalinti alanlari sifirla → keşif yeniden calisir
+      map[`${baseKey}_tutar`] = 0
+      map[`${baseKey}_analiz_durumu`] = ''
+      map[urlKey] = ''
+      map[`${baseKey}_son_odeme`] = ''
+      map[`${baseKey}_tahakkuk_no`] = ''
+      degisti = true
+    }
+  }
+
+  return { yeniMap: map, degisti }
 }
 
 /** SGK icin musteriye gosterilecek hizmet listesi(ler)ini bulur.

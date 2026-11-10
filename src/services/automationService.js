@@ -23,14 +23,19 @@ async function apiPost(path, body) {
 }
 
 export async function getAutomationSettings() {
-  const officeId = await getMyOfficeId()
-  const { data, error } = await supabase
-    .from('automation_settings')
-    .select('*')
-    .eq('office_id', officeId)
-    .single()
-  if (error && error.code !== 'PGRST116') throw error
-  return data || {
+  try {
+    const officeId = await getMyOfficeId()
+    const { data, error } = await supabase
+      .from('automation_settings')
+      .select('*')
+      .eq('office_id', officeId)
+      .single()
+    if (error && error.code !== 'PGRST116') throw error
+    if (data) return data
+  } catch (e) {
+    console.warn('[otomasyon] ayarlar tablosu okunamadi, varsayilanlar kullaniliyor:', e?.message)
+  }
+  return {
     enabled: true,
     schedule_time: '02:00',
     repeat_type: 'daily',
@@ -41,24 +46,34 @@ export async function getAutomationSettings() {
 }
 
 export async function saveAutomationSettings(settings) {
-  const officeId = await getMyOfficeId()
-  const { error } = await supabase
-    .from('automation_settings')
-    .upsert({ ...settings, office_id: officeId }, { onConflict: 'office_id' })
-  if (error) throw error
-  return true
+  try {
+    const officeId = await getMyOfficeId()
+    const { error } = await supabase
+      .from('automation_settings')
+      .upsert({ ...settings, office_id: officeId }, { onConflict: 'office_id' })
+    if (error) throw error
+    return true
+  } catch (e) {
+    console.warn('[otomasyon] ayarlar buluta kaydedilemedi (yerel plan yine de calisir):', e?.message)
+    return false
+  }
 }
 
 export async function getAutomationJobs(limit = 50) {
-  const officeId = await getMyOfficeId()
-  const { data, error } = await supabase
-    .from('automation_jobs')
-    .select('*, clients(name)')
-    .eq('office_id', officeId)
-    .order('created_at', { ascending: false })
-    .limit(limit)
-  if (error) throw error
-  return data || []
+  try {
+    const officeId = await getMyOfficeId()
+    const { data, error } = await supabase
+      .from('automation_jobs')
+      .select('*, clients(name)')
+      .eq('office_id', officeId)
+      .order('created_at', { ascending: false })
+      .limit(limit)
+    if (error) throw error
+    return data || []
+  } catch (e) {
+    console.warn('[otomasyon] gorev tablosu okunamadi:', e?.message)
+    return []
+  }
 }
 
 export async function getAutomationDocuments(filters = {}) {
@@ -117,18 +132,23 @@ export async function saveClientPortalCredentials(clientId, creds) {
 }
 
 export async function getAutomationStats() {
-  const officeId = await getMyOfficeId()
-  const today = new Date().toISOString().split('T')[0]
+  try {
+    const officeId = await getMyOfficeId()
+    const today = new Date().toISOString().split('T')[0]
 
-  const [clientsRes, jobsRes, docsRes] = await Promise.all([
-    supabase.from('clients').select('id', { count: 'exact' }).eq('office_id', officeId),
-    supabase.from('automation_jobs').select('id', { count: 'exact' }).eq('office_id', officeId).eq('status', 'running'),
-    supabase.from('automation_documents').select('id', { count: 'exact' }).eq('office_id', officeId).gte('created_at', today)
-  ])
+    const [clientsRes, jobsRes, docsRes] = await Promise.all([
+      supabase.from('clients').select('id', { count: 'exact' }).eq('office_id', officeId),
+      supabase.from('automation_jobs').select('id', { count: 'exact' }).eq('office_id', officeId).eq('status', 'running'),
+      supabase.from('automation_documents').select('id', { count: 'exact' }).eq('office_id', officeId).gte('created_at', today)
+    ])
 
-  return {
-    totalClients: clientsRes.count || 0,
-    activeJobs: jobsRes.count || 0,
-    todayDocuments: docsRes.count || 0
+    return {
+      totalClients: clientsRes.count || 0,
+      activeJobs: jobsRes.count || 0,
+      todayDocuments: docsRes.count || 0
+    }
+  } catch (e) {
+    console.warn('[otomasyon] istatistikler okunamadi:', e?.message)
+    return { totalClients: 0, activeJobs: 0, todayDocuments: 0 }
   }
 }

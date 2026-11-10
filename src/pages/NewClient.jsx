@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { ArrowLeft, Save, User, Building, MapPin, Calendar, FileText, X, Globe, Users, Newspaper, Eye, EyeOff, Plus, Home, Search } from 'lucide-react'
+import { ArrowLeft, Save, User, Building, MapPin, Calendar, FileText, X, Globe, Users, Newspaper, Eye, EyeOff, Plus, Home, Search, CreditCard, Shield, Hash, DollarSign, FolderOpen, Briefcase } from 'lucide-react'
 import { searchNace, formatNaceCode } from '../utils/naceCodes'
 import { KIRA_STOPAJ_ORANI } from '../utils/kiraUtils'
 import { formatTurkishInput, parseTurkishNumber } from '../utils/numberFormat'
@@ -12,6 +12,8 @@ export default function NewClient() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [showPasswords, setShowPasswords] = useState({})
+  // Musteri karti gorunumlu sekmeler (ClientDetail "Bilgiler" ekranindaki gibi)
+  const [sekme, setSekme] = useState('bilgiler')
   const [formData, setFormData] = useState({
     type: 'company',
     name: '',
@@ -164,6 +166,17 @@ export default function NewClient() {
     if (name === 'phone' && (!formData.whatsapp || formData.whatsapp === formData.phone)) {
       newData.whatsapp = value
     }
+    // Vergi türü değişince müşteri tipi otomatik eşitlenir:
+    // Gelir Vergisi -> Gerçek Kişi (bireysel), Kurumlar Vergisi -> Şirket
+    // Gerçek kişide Vergi No (VKN) korunur, silinmez.
+    if (name === 'taxType') {
+      if (value === 'Gelir Vergisi') {
+        newData.type = 'individual'
+      } else if (value === 'Kurumlar Vergisi') {
+        newData.type = 'company'
+        newData.tc = ''
+      }
+    }
     setFormData(newData)
   }
 
@@ -204,21 +217,7 @@ export default function NewClient() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header */}
-      <div className="flex items-center space-x-4 mb-8">
-        <button 
-          onClick={() => navigate('/admin')}
-          className="text-gray-400 hover:text-white transition-colors"
-        >
-          <ArrowLeft className="w-6 h-6" />
-        </button>
-        <div>
-          <h1 className="text-3xl font-bold text-white">Yeni Müşteri Ekle</h1>
-          <p className="text-gray-400 mt-1">Müşteri bilgilerini girerek sisteme ekleyin</p>
-        </div>
-      </div>
-
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <form onSubmit={handleSubmit} className="space-y-6">
         {error && (
           <div className="bg-red-500/20 border border-red-500/50 rounded-xl p-4 flex items-center space-x-3">
@@ -227,13 +226,98 @@ export default function NewClient() {
           </div>
         )}
 
+        {/* Ust baslik — musteri karti gorunumu (ClientDetail gibi) */}
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-4 min-w-0">
+            <button
+              type="button"
+              onClick={() => navigate('/admin')}
+              className="text-gray-400 hover:text-white transition-colors"
+            >
+              <ArrowLeft className="w-6 h-6" />
+            </button>
+            <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0">
+              <span className="text-white text-xl font-bold">
+                {(formData.type === 'company' ? formData.name : (formData.name || '')).trim().charAt(0).toLocaleUpperCase('tr') || '?'}
+              </span>
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-2xl font-bold text-white truncate">
+                {formData.name?.trim() || 'Yeni Müşteri'}
+              </h1>
+              <div className="flex items-center gap-2 flex-wrap">
+                {formData.type === 'company'
+                  ? <span className="text-blue-300 text-sm">VKN: {formData.vkn || '—'}</span>
+                  : <span className="text-blue-300 text-sm">TC: {formData.tc || '—'}</span>}
+                <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 text-xs font-medium">Aktif</span>
+                {formData.musteriSinifi && (
+                  <span className="px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 text-xs font-medium">{formData.musteriSinifi}</span>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              disabled={loading}
+              className="px-5 py-2.5 rounded-xl bg-yellow-400 hover:bg-yellow-300 text-blue-950 text-sm font-semibold disabled:opacity-50 flex items-center gap-2 transition-colors"
+            >
+              {loading
+                ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-950"></div>
+                : <><Save className="w-4 h-4" /> Müşteri Ekle</>}
+            </button>
+          </div>
+        </div>
+
+        {/* Sekme cubugu — musteri kartindakiyla ayni */}
+        <div className="flex gap-1 flex-wrap bg-blue-900/40 rounded-xl p-1.5 border border-blue-800/40">
+          {[
+            { k: 'bilgiler', etiket: 'Bilgiler', Ik: Building },
+            { k: 'bankalar', etiket: 'Bankalar', Ik: CreditCard },
+            { k: 'kurum', etiket: 'Kurum Erisimi', Ik: Globe },
+            { k: 'ehizmet', etiket: 'E-Hizmetler', Ik: Shield },
+            { k: 'evraklar', etiket: 'Evraklar', Ik: FolderOpen },
+            { k: 'hesapkodlari', etiket: 'Hesap Kodlari', Ik: Hash },
+            { k: 'personel', etiket: 'Personel', Ik: Users },
+            { k: 'ucret', etiket: 'Muhasebe Ucreti', Ik: DollarSign }
+          ].map(({ k, etiket, Ik }) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setSekme(k)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                sekme === k
+                  ? 'bg-blue-600/60 text-white'
+                  : 'text-blue-300 hover:bg-blue-800/40'
+              }`}
+            >
+              <Ik className="w-4 h-4" /> {etiket}
+            </button>
+          ))}
+        </div>
+
+        {/* Kayit sonrasi doldurulacak sekmeler icin bilgi notu */}
+        {!['bilgiler', 'kurum', 'ehizmet'].includes(sekme) && (
+          <div className="bg-blue-800/20 rounded-2xl p-8 border border-blue-700/30 text-center">
+            <Briefcase className="w-10 h-10 text-blue-500 mx-auto mb-3" />
+            <p className="text-white font-medium mb-1">
+              {sekme === 'bankalar' ? 'Bankalar' : sekme === 'evraklar' ? 'Evraklar' : sekme === 'hesapkodlari' ? 'Hesap Kodları' : sekme === 'personel' ? 'Personel' : 'Muhasebe Ücreti'}
+            </p>
+            <p className="text-gray-400 text-sm">
+              Müşteri kaydedildikten sonra müşteri kartından bu bölümü doldurabilirsiniz.
+              Şimdilik <strong className="text-blue-300">Bilgiler</strong>, <strong className="text-blue-300">Kurum Erişimi</strong> ve <strong className="text-blue-300">E-Hizmetler</strong> sekmelerini doldurun.
+            </p>
+          </div>
+        )}
+
+        {sekme === 'bilgiler' && (<>
         {/* Müşteri Tipi */}
         <div className="bg-blue-800/20 rounded-2xl p-6 border border-blue-700/30">
           <h3 className="text-lg font-semibold text-white mb-4">Müşteri Tipi</h3>
           <div className="flex space-x-4">
             <button
               type="button"
-              onClick={() => setFormData(prev => ({ ...prev, type: 'company', tc: '' }))}
+              onClick={() => setFormData(prev => ({ ...prev, type: 'company', tc: '', taxType: 'Kurumlar Vergisi' }))}
               className={`flex-1 p-4 rounded-xl border-2 transition-all ${
                 formData.type === 'company' 
                   ? 'border-yellow-400 bg-yellow-500/10' 
@@ -246,7 +330,7 @@ export default function NewClient() {
             </button>
             <button
               type="button"
-              onClick={() => setFormData(prev => ({ ...prev, type: 'individual', vkn: '' }))}
+              onClick={() => setFormData(prev => ({ ...prev, type: 'individual', vkn: '', taxType: 'Gelir Vergisi' }))}
               className={`flex-1 p-4 rounded-xl border-2 transition-all ${
                 formData.type === 'individual' 
                   ? 'border-yellow-400 bg-yellow-500/10' 
@@ -789,6 +873,24 @@ export default function NewClient() {
                         </span>
                       </div>
                     </div>
+                    <div>
+                      <label className="text-gray-500 text-xs block mb-1">Kira Baslangic</label>
+                      <input
+                        type="date"
+                        value={sahip.kiraBaslangic || ''}
+                        onChange={(e) => updateMalSahibi(idx, 'kiraBaslangic', e.target.value)}
+                        className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 text-xs block mb-1">Kira Bitis</label>
+                      <input
+                        type="date"
+                        value={sahip.kiraBitis || ''}
+                        onChange={(e) => updateMalSahibi(idx, 'kiraBitis', e.target.value)}
+                        className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400"
+                      />
+                    </div>
                   </div>
                 </div>
               ))}
@@ -796,6 +898,10 @@ export default function NewClient() {
           )}
         </div>
 
+        </>
+        )}
+
+        {sekme === 'ehizmet' && (<>
         <div className="bg-blue-800/20 rounded-2xl p-6 border border-blue-700/30">
           <h3 className="text-lg font-semibold text-white mb-4 flex items-center space-x-2">
             <FileText className="w-5 h-5 text-yellow-400" />
@@ -838,7 +944,7 @@ export default function NewClient() {
               />
               <div>
                 <div className="text-white font-medium text-sm">e-SMM</div>
-                <div className="text-gray-500 text-xs">e-SMMM (Serbest Meslek)</div>
+                <div className="text-gray-500 text-xs">e-SMM (Serbest Meslek)</div>
               </div>
             </label>
             {/* ✅ e-Defter Mükellefi + Periyot */}
@@ -895,6 +1001,10 @@ export default function NewClient() {
           </div>
         </div>
 
+        </>
+        )}
+
+        {sekme === 'kurum' && (<>
         {/* Portal Hesapları - SGK 4 ALANLI */}
         <div className="bg-blue-800/20 rounded-2xl p-6 border border-blue-700/30">
           <h3 className="text-lg font-semibold text-white mb-4 flex items-center space-x-2">
@@ -992,7 +1102,7 @@ export default function NewClient() {
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center space-x-2">
                   <Building className="w-5 h-5 text-green-400" />
-                  <span className="text-white font-medium">e-Arşiv / DVS</span>
+                  <span className="text-white font-medium">Dijital Vergi Dairesi (e-Arşiv)</span>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
@@ -1079,6 +1189,10 @@ export default function NewClient() {
           </div>
         </div>
 
+        </>
+        )}
+
+        {sekme === 'bilgiler' && (<>
         {/* Tarihler */}
         <div className="bg-blue-800/20 rounded-2xl p-6 border border-blue-700/30">
           <h3 className="text-lg font-semibold text-white mb-4 flex items-center space-x-2">
@@ -1128,6 +1242,9 @@ export default function NewClient() {
             </div>
           </div>
         </div>
+
+        </>
+        )}
 
         {/* Butonlar */}
         <div className="flex space-x-4 pb-8">

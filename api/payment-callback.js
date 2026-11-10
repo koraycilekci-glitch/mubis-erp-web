@@ -27,6 +27,50 @@ async function createAdminNotification(supabase, { title, message, route, metada
   }
 }
 
+/**
+ * PayTR odemesini kaydeder (ayni merchant_oid tekrar kaydedilmez).
+ * Hem link hem iframe bildirimleri bu ortak yolu kullanir.
+ */
+async function recordPaytrPayment(supabase, { clientId, tutar, merchantOid }) {
+  // Daha once ayni merchant_oid icin kayit yapilmis mi kontrol et
+  const { data: existing } = await supabase
+    .from('payments')
+    .select('id')
+    .eq('gateway_ref', merchantOid)
+    .single()
+
+  if (existing) {
+    console.log('PayTR tekrarlayan bildirim, zaten kayitli:', merchantOid)
+    return
+  }
+
+  const { error, data: inserted } = await supabase.from('payments').insert({
+    client_id: clientId,
+    tutar: tutar,
+    odeme_tipi: 'kredi_karti',
+    odeme_kanali: 'paytr',
+    aciklama: `PayTR online odeme (borctan dusulum bekliyor)`,
+    donem: new Date().toISOString().slice(0, 7),
+    gateway_ref: merchantOid,
+    durum: 'alindi',
+    odeme_tarihi: new Date().toISOString().split('T')[0]
+  }).select().single()
+
+  if (error) {
+    console.error('PayTR odeme kaydi hatasi:', error)
+    return
+  }
+
+  console.log(`PayTR odeme kaydedildi (alindi): client=${clientId}, tutar=${tutar} TL`)
+  const clientName = await getClientName(supabase, clientId)
+  await createAdminNotification(supabase, {
+    title: 'Yeni Online Odeme Alindi',
+    message: `${clientName || clientId} nolu musteri PayTR ile ${tutar.toLocaleString('tr-TR')} TL odeme yapti. Musteri detay sayfasindan hangi borc kalemine dusulecegini secin.`,
+    route: `/admin/client/${clientId}`,
+    metadata: { paymentId: inserted?.id, clientId, tutar, gateway: 'paytr' }
+  })
+}
+
 export default async function handler(req, res) {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -48,7 +92,45 @@ export default async function handler(req, res) {
       console.error('Supabase service key eksik. Vercel ayarlarinda SUPABASE_SERVICE_ROLE_KEY tanimlanmali.')
     }
 
-    // ============ PAYTR CALLBACK ============
+    // ============ PAYTR IFRAME BILDIRIMI ============
+    // Iframe API bildirimi: { merchant_oid, status, total_amount, hash }
+    // hash = base64(hmac_sha256(merchant_oid + status + total_amount, merchant_key))
+    // merchant_oid formati: MUBIS_<clientId>_<timestamp>
+    if (!body.callback_id && body.merchant_oid && body.status !== undefined && body.total_amount && body.hash) {
+      const merchantKey = process.env.PAYTR_MERCHANT_KEY
+      const merchantSalt = process.env.PAYTR_MERCHANT_SALT
+
+      if (!merchantKey || !merchantSalt) {
+        console.error('PayTR anahtarlari eksik (iframe)')
+        return res.status(200).send('OK')
+      }
+
+      const hashStr = body.merchant_oid + body.status + body.total_amount
+      const expectedHash = crypto.createHmac('sha256', merchantKey).update(hashStr + merchantSalt).digest('base64')
+
+      if (expectedHash !== body.hash) {
+        console.error('PayTR iframe hash dogrulama basarisiz!')
+        return res.status(200).send('OK')
+      }
+
+      if (body.status === 'success' && supabaseUrl && supabaseServiceKey) {
+        // merchant_oid formatindan client_id parse et: MUBIS_<clientId>_<timestamp>
+        const m = String(body.merchant_oid || '').match(/^MUBIS_(\d+)_\d+$/)
+        const clientId = m ? (parseInt(m[1]) || null) : null
+        const tutar = (Number(body.total_amount) || 0) / 100 // Kurustan TL'ye
+
+        if (clientId && tutar > 0) {
+          const supabase = createClient(supabaseUrl, supabaseServiceKey)
+          await recordPaytrPayment(supabase, { clientId, tutar, merchantOid: body.merchant_oid })
+        }
+      }
+
+      // PayTR plain text OK yaniti bekliyor
+      res.setHeader('Content-Type', 'text/plain')
+      return res.status(200).send('OK')
+    }
+
+    // ============ PAYTR LINK CALLBACK ============
     // PayTR callback_link kullandiginda source parametresi olmaz,
     // PayTR dogrudan bu URL'e POST yapar. callback_id ile taniyoruz.
     if (body.callback_id && body.merchant_oid) {

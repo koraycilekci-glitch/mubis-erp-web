@@ -4,11 +4,13 @@
 
 import { getClient, dbToFrontend } from '../services/clientService'
 import { getAccountingFee, getPayments, hesaplaBorcOzeti } from '../services/paymentService'
-import { getBeyanStorageKey, getFormattedBeyanDeadline, getMonthName } from './dateUtils'
+import { getBeyanStorageKey, getFormattedBeyanDeadline, getFormattedSgkOdemeGunu, getMonthName } from './dateUtils'
 import { getTahakkukList, sumTahakkukTutar, getHizmetListesi } from './tahakkukUtils'
+import { buildCariAiContext } from './cariAiContext'
 
 const DURUM_ADI = {
   yapilamadi: 'henüz hazırlanmadı',
+  evrak_alindi: 'evrakları alındı, hazırlanıyor',
   hazir: 'hazırlandı, onay bekliyor',
   onaylandi: 'onaylandı',
   tahakkuk_gonderildi: 'tahakkuk gönderildi',
@@ -46,6 +48,7 @@ function ayinKalemleri(yil, ay) {
 function ayOzeti(beyanDurumlari, yil, ay) {
   const satirlar = []
   let toplam = 0
+  let eksikTutarVar = false
 
   ayinKalemleri(yil, ay).forEach(k => {
     const storage = getBeyanStorageKey(k.type, yil, ay)
@@ -58,18 +61,23 @@ function ayOzeti(beyanDurumlari, yil, ay) {
       : (Number(beyanDurumlari[`${key}_tutar`]) || 0)
 
     const durum = beyanDurumlari[key] || 'yapilamadi'
-    // Tutari da durumu da olmayan kalemi yazma
-    if (!tutar && durum === 'yapilamadi') return
+    if (!tutar && durum === 'yapilamadi' && tahakkuklar.length === 0) return
+    const tutarEksik = tutar <= 0 || tahakkuklar.some(t => !(Number(t.tutar) > 0))
+    if (tutarEksik) eksikTutarVar = true
 
-    const sonOdeme = getFormattedBeyanDeadline(yil, ay, k.gun)
+    // SGK: son gunden TAKIP EDEN ilk is gunune (ileri) — 31 Cumartesi -> 2 Kasim
+    const sonOdeme = k.type === 'sgk'
+      ? getFormattedSgkOdemeGunu(yil, ay)
+      : getFormattedBeyanDeadline(yil, ay, k.gun)
     const donem = `${getMonthName(storage.belongMonth)} ${storage.belongYear} dönemi`
 
     let satir = `- ${k.ad} (${donem}): `
-    satir += tutar > 0 ? `${para(tutar)} TL` : 'tutar henüz belli değil'
+    satir += tutar > 0 ? `${para(tutar)} TL${tutarEksik ? ' (diğer tahakkuk tutarları henüz belli değil)' : ''}` : 'tutar henüz belli değil'
     satir += `, son ödeme ${tarihTR(sonOdeme)}, durum: ${DURUM_ADI[durum] || durum}`
+    if (beyanDurumlari[`${key}_odendi`] === true) satir += ', sistemde ödendi olarak işaretlenmiş'
 
     if (tahakkuklar.length > 1) {
-      satir += ` (${tahakkuklar.length} ayrı tahakkuk: ${tahakkuklar.map(t => para(t.tutar) + ' TL').join(' + ')})`
+      satir += ` (${tahakkuklar.length} ayrı tahakkuk: ${tahakkuklar.map(t => Number(t.tutar) > 0 ? para(t.tutar) + ' TL' : 'tutar bilinmiyor').join(' + ')})`
     }
 
     // Belge linkleri: musteriye yalnizca tahakkuk fisi; SGK'da ek olarak hizmet listesi.
@@ -88,7 +96,7 @@ function ayOzeti(beyanDurumlari, yil, ay) {
     toplam += tutar
   })
 
-  return { satirlar, toplam }
+  return { satirlar, toplam, eksikTutarVar }
 }
 
 /**
@@ -142,23 +150,26 @@ KALAN MUHASEBE BORCU: ${para(b.kalanBorc)} TL${b.sonOdeme ? `\nSon ödeme yaptı
 
   const vergiBolumleri = []
   aylar.forEach(a => {
-    const { satirlar, toplam } = ayOzeti(beyanDurumlari, a.yil, a.ay)
+    const { satirlar, toplam, eksikTutarVar } = ayOzeti(beyanDurumlari, a.yil, a.ay)
     if (satirlar.length === 0) return
     vergiBolumleri.push(`[${getMonthName(a.ay)} ${a.yil} - ${a.etiket}] (bu ay ödenecek vergi/SGK)
 ${satirlar.join('\n')}
-${a.etiket} TOPLAM VERGİ+SGK: ${para(toplam)} TL`)
+${a.etiket} BİLİNEN VERGİ+SGK TAHAKKUKLARI TOPLAMI: ${para(toplam)} TL${eksikTutarVar ? ' (bazı tahakkuk tutarları henüz bilinmediğinden kesin toplam değildir)' : ''}`)
   })
 
   if (vergiBolumleri.length > 0) {
     bolumler.push(`VERGİ VE SGK TAHAKKUKLARI:
-(Tarihler ödemenin yapılacağı tarihtir; parantezteki dönem beyanın ait olduğu aydır.)
+(Tarihler ödemenin yapılacağı tarihtir; parantezteki dönem beyanın ait olduğu aydır.
+Ödeme sorularında ilgili aydaki tutarı bilinen her tahakkuku, türünü ve son ödeme tarihini belirt.
+Tutarı bilinmeyen kalemler varsa bunu söyle, bilinen tutarları yok sayma ve bilinen toplamı kesin ödeme borcu olarak sunma.)
 ${vergiBolumleri.join('\n\n')}`)
   } else {
     bolumler.push('VERGİ VE SGK TAHAKKUKLARI: Sistemde bu döneme ait yüklenmiş tahakkuk bulunmuyor.')
   }
 
-  bolumler.push(`NOT: Vergi/SGK tutarları tahakkuk belgelerinden okunmuştur; ödenip ödenmediği bilgisi
-sistemde tutulmaz. Muhasebe ücreti borcu ise ödemeler düşülerek hesaplanmıştır.`)
+  bolumler.push(`NOT: Vergi/SGK tutarları tahakkuk belgelerinden okunmuştur. Ödendi olarak işaretlenmemiş
+kalemlerin ödeme durumu doğrulanmış değildir; tahakkuk toplamı kalan borçla aynı kabul edilmemelidir.
+Muhasebe ücreti borcu ise ödemeler düşülerek hesaplanmıştır.`)
 
   // Genel belgeler (vergi levhasi, imza sirkuleri, gazete vb.)
   const docs = dbClient?.client_documents || client.clientDocuments || {}
@@ -187,6 +198,14 @@ hizmet listesi vb.) yukarıdaki listede o belgenin bağlantısı varsa cevabınd
 [Belge Adı](https://...) markdown biçiminde ver ki kullanıcı tıklayıp açabilsin.
 Müşteriye asla beyanname linki verme; yalnızca tahakkuk fişi ve SGK hizmet listesi linki ver.
 Listede olmayan bir belge için link uydurma; "bu belge henüz sisteme yüklenmemiş" de.`)
+
+  // Cari hesap (kartlar, bakiyeler, cek/senet portfoyu)
+  try {
+    const cariMetni = await buildCariAiContext(clientId)
+    if (cariMetni) bolumler.push(cariMetni)
+  } catch (e) {
+    console.warn('Cari AI baglami olusturulamadi:', e)
+  }
 
   return bolumler.join('\n\n')
 }

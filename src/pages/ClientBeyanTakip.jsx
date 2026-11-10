@@ -3,9 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useClients } from '../hooks/useClients'
 import { supabase } from '../lib/supabase'
-import { ArrowLeft, FileText, CheckCircle, Clock, Send, ThumbsUp, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, FileText, CheckCircle, Clock, Send, ThumbsUp, AlertTriangle, Eye, Download } from 'lucide-react'
+import { getBeyanDocuments } from '../services/beyanDocumentService'
 
-const MONTHS = ['Ocak', 'Subat', 'Mart', 'Nisan', 'Mayis', 'Haziran', 'Temmuz', 'Agustos', 'Eylul', 'Ekim', 'Kasim', 'Aralik']
+const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
 
 const BEYAN_TYPES = [
   { id: 'kdv', name: 'KDV', color: 'text-blue-400' },
@@ -21,6 +22,7 @@ const BEYAN_TYPES = [
 
 const STATUS_MAP = {
   yapilamadi: { label: 'Yapilmadi', cls: 'bg-red-500/20 text-red-400' },
+  evrak_alindi: { label: 'Evrak Alindi', cls: 'bg-sky-500/20 text-sky-400' },
   hazir: { label: 'Hazir', cls: 'bg-blue-500/20 text-blue-400' },
   onaylandi: { label: 'Onaylandi', cls: 'bg-green-500/20 text-green-400' },
   tahakkuk_gonderildi: { label: 'Tahakkuk', cls: 'bg-purple-500/20 text-purple-400' },
@@ -223,6 +225,9 @@ export default function ClientBeyanTakip() {
                       const tahakkukTutar = client?.beyan_durumlari?.[`${statusKey}_tutar`] || 0
                       const hasTahakkuk = tahakkukTutar > 0
                       
+                      const { beyannameList, tahakkukList } = getBeyanDocuments(client?.beyan_durumlari || {}, selectedYear, mi, bt.id)
+                      const allDocs = [...beyannameList, ...tahakkukList]
+
                       return (
                         <td key={mi} className="px-1 py-2 text-center">
                           <div className="space-y-1">
@@ -232,14 +237,35 @@ export default function ClientBeyanTakip() {
                               className={`w-full rounded px-1 py-1 text-[10px] font-medium border-0 focus:outline-none focus:ring-1 focus:ring-yellow-400 cursor-pointer ${info.cls}`}
                             >
                               <option value="yapilamadi">Yapilmadi</option>
+                              <option value="evrak_alindi">Evrak Alindi</option>
                               <option value="hazir">Hazir</option>
                               <option value="onaylandi">Onaylandi</option>
                               <option value="tahakkuk_gonderildi">Tahakkuk</option>
                             </select>
-                            
+
                             {hasTahakkuk && (
                               <div className="text-[9px] text-green-400 font-medium">
                                 {tahakkukTutar.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL
+                              </div>
+                            )}
+
+                            {allDocs.length > 0 && (
+                              <div className="flex items-center justify-center gap-1">
+                                {allDocs.slice(0, 2).map((d, idx) => (
+                                  <a
+                                    key={idx}
+                                    href={d.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    title={d.name || (d.docType === 'tahakkuk' ? 'Tahakkuk' : 'Beyanname')}
+                                    className="p-0.5 rounded bg-blue-900/40 text-blue-400 hover:text-white"
+                                  >
+                                    <Eye className="w-3 h-3" />
+                                  </a>
+                                ))}
+                                {allDocs.length > 2 && (
+                                  <span className="text-[9px] text-gray-400">+{allDocs.length - 2}</span>
+                                )}
                               </div>
                             )}
                           </div>

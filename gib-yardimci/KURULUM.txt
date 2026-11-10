@@ -7,7 +7,20 @@ GIB (Dijital Vergi Dairesi) sayfalarindaki formlari otomatik
 doldurur, beyanname/tahakkuk ve e-Bildirge islemlerinde giris
 bilgilerinizi hazirlar.
 
---- KURULUM (bir kere) ---
+--- EXE ILE KURULUM ---
+
+1. ZIP dosyasindaki tum dosyalari bir klasore cikarin.
+2. Acik eski yardimci varsa sistem tepsisi menusunden kapatin.
+3. "MUBiS-Kurulum.cmd" dosyasina cift tiklayin.
+4. C:\MUBiS\config.json dosyasini Not Defteri ile acin.
+   Yoneticiden guvenli kanaldan aldiginiz masaustu anahtarini
+   "desktop_anahtari" alanina yazin. Istege bagli 2Captcha
+   anahtarini "captcha_api_key" alanina yazin. Sunucu anahtarini
+   masaustu alanina yazmayin ve anahtarlari kimseyle paylasmayin.
+5. Dosyayi kaydedin ve bilgisayari yeniden baslatin; yardimci
+   yeni ayarlarla otomatik baslar.
+
+--- KAYNAKTAN KURULUM (Node.js ile) ---
 
 1. Node.js kurulu mu? Degilse https://nodejs.org adresinden
    "LTS" surumunu kurun (bir kere, 2 dakika).
@@ -16,9 +29,18 @@ bilgilerinizi hazirlar.
    (Gerekli paketleri indirir, internet gerekli)
 
 3. "config.ornek.json" dosyasini kopyalayip adini "config.json"
-   yapin ve icine GIB / e-Bildirge sifrelerinizi girin.
-   NOT: Bu dosya SADECE sizin bilgisayarinizda kalir,
-   hicbir sunucuya gonderilmez.
+   yapin ve gerekli bilgileri girin. JSON icindeki cift tirnaklari
+   ve virgul kurallarini koruyun.
+   2Captcha kullanacaksaniz API anahtarini istege bagli
+   "captcha_api_key" alanina girin. Bos birakilirsa, yerel OCR
+   mevcutsa kullanilir veya kod elle girilir. Anahtari paylasmayin.
+   Bildirimler ve fatura Drive senkronu icin yoneticinin guvenli
+   kanaldan verdigi masaustu anahtarini "desktop_anahtari" alanina
+   girin. Sunucu anahtarini bu alana yazmayin.
+   NOT: config.json dosyasini sadece bilgisayarinizda saklayin.
+
+   EXE kurulumu kullaniyorsaniz ayar dosyasi C:\MUBiS\config.json
+   konumundadir. Degisiklikten sonra yardimci programi yeniden baslatin.
 
 4. "baslat.bat" dosyasina cift tiklayin.
    Siyah bir pencere acilir ve acik kalir (kucultun).

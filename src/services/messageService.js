@@ -216,6 +216,36 @@ export async function replyFromClient({ clientId, message, parentId = null, clie
   return data
 }
 
+/**
+ * Sistem/MUBiS Asistan -> musteri bilgi mesaji (gonderim tamamlama vb.).
+ * replyFromClient ile ayni insert deseni (RLS uyumlu); sender='admin',
+ * sender_name='MUBİS Asistan'. Eklenirken hata olursa sessizce yutulmaz,
+ * cagiran taraf try/catch ile kullanir.
+ */
+export async function systemMessageToClient({ clientId, clientName = '', message }) {
+  if (!clientId) throw new Error('Müşteri bulunamadı')
+  if (!message || !message.trim()) throw new Error('Mesaj boş olamaz')
+  const assistantMessage = `🤖 MUBİS Asistan\n\n${String(message).trim()}`
+  const kayit = {
+    client_id: clientId,
+    sender: 'admin',
+    sender_name: 'MUBİS Asistan',
+    title: 'MUBİS Asistan',
+    message: message.trim(),
+    assistant_message: assistantMessage,
+    priority: 'normal',
+    action_type: 'bilgi',
+    channels: ['portal']
+  }
+  const { data, error } = await supabase
+    .from('client_messages')
+    .insert(kayit)
+    .select()
+    .single()
+  if (error) throw new Error('Mesaj kaydedilemedi: ' + error.message)
+  return data
+}
+
 /** Bir musterinin tum mesajlari (eskiden yeniye) */
 export async function getMessages(clientId, limit = 100) {
   if (!clientId) return []

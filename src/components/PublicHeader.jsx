@@ -3,7 +3,7 @@ import { useState, useRef, useEffect } from 'react'
 import {
   Phone, Mail, ChevronDown, Menu, X,
   UserCircle2, Calculator, FileText, Users, BarChart3, Shield, CalendarDays,
-  FileArchive, FileCheck, Building2
+  FileArchive, FileCheck, Building2, BookOpenCheck, Wallet
 } from 'lucide-react'
 
 const SosyalIkon = ({ d }) => (
@@ -18,30 +18,32 @@ const MENU = [
   {
     label: 'Hizmetlerimiz',
     items: [
-      { label: 'Beyanname Takibi', to: '/ozellikler', icon: FileText },
-      { label: 'Müşteri Yönetimi', to: '/ozellikler', icon: Users },
-      { label: 'Raporlama', to: '/ozellikler', icon: BarChart3 },
-      { label: 'Vergi Takvimi', to: '/ozellikler', icon: CalendarDays }
+      { label: 'Beyanname Takibi', to: '/hizmet/beyanname-takibi', icon: FileText },
+      { label: 'Müşteri Yönetimi', to: '/hizmet/musteri-yonetimi', icon: Users },
+      { label: 'Raporlama', to: '/hizmet/raporlama', icon: BarChart3 },
+      { label: 'Vergi Takvimi', to: '/hizmet/vergi-takvimi', icon: CalendarDays }
     ]
   },
   {
     label: 'Çözümlerimiz',
     items: [
-      { label: 'Mali Müşavir Paneli', to: '/ozellikler', icon: Building2 },
-      { label: 'Müşteri Portalı', to: '/ozellikler', icon: UserCircle2 },
-      { label: 'Güvenli Altyapı', to: '/ozellikler', icon: Shield }
+      { label: 'Mali Müşavir Paneli', to: '/hizmet/mali-musavir-paneli', icon: Building2 },
+      { label: 'Müşteri Portalı', to: '/hizmet/musteri-portali', icon: UserCircle2 },
+      { label: 'Cari Hesap', to: '/hizmet/cari-hesap', icon: Wallet },
+      { label: 'Güvenli Altyapı', to: '/hizmet/guvenli-altyapi', icon: Shield }
     ]
   },
   {
     label: 'e-Belgeler',
     items: [
-      { label: 'e-Fatura', to: '/ozellikler', icon: FileText },
-      { label: 'e-Arşiv', to: '/ozellikler', icon: FileArchive },
-      { label: 'e-İrsaliye', to: '/ozellikler', icon: FileCheck },
-      { label: 'e-Defter', to: '/ozellikler', icon: FileArchive }
+      { label: 'e-Fatura', to: '/hizmet/e-fatura', icon: FileText },
+      { label: 'e-Arşiv', to: '/hizmet/e-arsiv', icon: FileArchive },
+      { label: 'e-İrsaliye', to: '/hizmet/e-irsaliye', icon: FileCheck },
+      { label: 'e-Defter', to: '/hizmet/e-defter', icon: BookOpenCheck }
     ]
   },
   { label: 'Hesaplamalar', to: '/hesaplamalar' },
+  { label: 'Hakkımızda', to: '/hakkimizda' },
   { label: 'İletişim', to: '/iletisim' }
 ]
 
@@ -77,9 +79,9 @@ export default function PublicHeader() {
               <Phone className="w-3.5 h-3.5" />
               0 (212) 260 66 67
             </a>
-            <a href="mailto:info@mubiserp.com" className="flex items-center gap-2 hover:text-white transition-colors">
+            <a href="mailto:info@mubiserp.com.tr" className="flex items-center gap-2 hover:text-white transition-colors">
               <Mail className="w-3.5 h-3.5" />
-              info@mubiserp.com
+              info@mubiserp.com.tr
             </a>
           </div>
           <div className="flex items-center gap-5 text-blue-200">
@@ -90,7 +92,7 @@ export default function PublicHeader() {
             </div>
             <span className="w-px h-4 bg-blue-700/60" />
             <Link to="/iletisim" className="hover:text-white transition-colors">Destek</Link>
-            <Link to="/ozellikler" className="hover:text-white transition-colors">Hakkımızda</Link>
+            <Link to="/hakkimizda" className="hover:text-white transition-colors">Hakkımızda</Link>
           </div>
         </div>
       </div>

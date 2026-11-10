@@ -121,6 +121,8 @@ export default function OdemeTakip() {
   // hücreye tıklayıp düzenleme (accounting_fees kaydı).
   const [feeModal, setFeeModal] = useState(null) // { clientId, name, alan, etiket }
   const [feeTutar, setFeeTutar] = useState('')
+  const [feeAy, setFeeAy] = useState(new Date().getMonth() + 1)
+  const [feeYil, setFeeYil] = useState(new Date().getFullYear())
   const [feeSaving, setFeeSaving] = useState(false)
   const [feeError, setFeeError] = useState('')
 
@@ -134,6 +136,8 @@ export default function OdemeTakip() {
     const fee = fees.find(f => f.client_id === row.id) || null
     const deger = Number(fee?.[alan]) || 0
     setFeeTutar(deger ? formatTurkishInput(String(deger)) : '')
+    setFeeAy(Number(fee?.baslangic_ay) || new Date().getMonth() + 1)
+    setFeeYil(Number(fee?.baslangic_yil) || new Date().getFullYear())
     setFeeError('')
     setFeeModal({ clientId: row.id, name: row.name || row.company || 'Müşteri', alan, etiket: FEE_ALANLARI[alan]?.etiket || alan })
   }
@@ -142,6 +146,7 @@ export default function OdemeTakip() {
     e.preventDefault()
     if (!feeModal) return
     const mevcut = fees.find(f => f.client_id === feeModal.clientId) || {}
+    const aylikDegisiyor = feeModal.alan === 'aylik_ucret'
     setFeeSaving(true)
     setFeeError('')
     try {
@@ -149,8 +154,8 @@ export default function OdemeTakip() {
         onceki_donem_borc: feeModal.alan === 'onceki_donem_borc' ? feeTutar : (mevcut.onceki_donem_borc ?? 0),
         defter_tasdik_ucreti: feeModal.alan === 'defter_tasdik_ucreti' ? feeTutar : (mevcut.defter_tasdik_ucreti ?? 0),
         aylik_ucret: feeModal.alan === 'aylik_ucret' ? feeTutar : (mevcut.aylik_ucret ?? 0),
-        baslangic_ay: mevcut.baslangic_ay || 1,
-        baslangic_yil: mevcut.baslangic_yil || new Date().getFullYear(),
+        baslangic_ay: aylikDegisiyor ? (Number(feeAy) || mevcut.baslangic_ay || 1) : (mevcut.baslangic_ay || 1),
+        baslangic_yil: aylikDegisiyor ? (Number(feeYil) || mevcut.baslangic_yil || new Date().getFullYear()) : (mevcut.baslangic_yil || new Date().getFullYear()),
         notlar: mevcut.notlar || ''
       })
       setFeeModal(null)
@@ -1012,6 +1017,38 @@ export default function OdemeTakip() {
                   className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
                 />
               </label>
+              {feeModal.alan === 'aylik_ucret' && (
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block space-y-1">
+                    <span className="text-xs text-gray-400">Başlangıç Ayı</span>
+                    <select
+                      value={feeAy}
+                      onChange={(e) => setFeeAy(Number(e.target.value))}
+                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
+                    >
+                      {['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'].map((ad, i) => (
+                        <option key={i + 1} value={i + 1}>{i + 1} - {ad}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block space-y-1">
+                    <span className="text-xs text-gray-400">Başlangıç Yılı</span>
+                    <input
+                      type="number"
+                      min={2020}
+                      max={2035}
+                      value={feeYil}
+                      onChange={(e) => setFeeYil(Number(e.target.value) || new Date().getFullYear())}
+                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
+                    />
+                  </label>
+                </div>
+              )}
+              <p className="text-[11px] text-gray-500">
+                {feeModal.alan === 'aylik_ucret'
+                  ? 'Aylık ücret bu ay/yıldan itibaren faturalanır; borç/ödeme takibi buna göre hesaplanır.'
+                  : 'Tutar kaydedilir; ödeme takibi güncellenir.'}
+              </p>
               {feeError && <p className="text-red-400 text-xs">{feeError}</p>}
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setFeeModal(null)} className="px-4 py-2 rounded-lg bg-blue-800/40 text-gray-300 text-sm hover:bg-blue-800/60">Vazgeç</button>

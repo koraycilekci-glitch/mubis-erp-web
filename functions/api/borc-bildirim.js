@@ -53,7 +53,7 @@ function planOku(ham) {
     aktif: !!j.aktif,
     gunler: Array.isArray(j.gunler) ? j.gunler.map(Number).filter(n => n >= 1 && n <= 31) : [],
     saat: /^\d{1,2}:\d{2}$/.test(String(j.saat || '')) ? String(j.saat) : '10:00',
-    kanal: j.kanal === 'email' ? 'email' : j.kanal === 'ikisi' ? 'ikisi' : 'whatsapp',
+    kanal: ['email', 'ikisi', 'tercih'].includes(j.kanal) ? j.kanal : 'whatsapp',
     muhasebeDahil: j.muhasebeDahil === true,
     son_anahtar: String(j.son_anahtar || '')
   }
@@ -294,7 +294,7 @@ export async function onRequestPost({ env, request }) {
     ? [...new Set(govde.gunler.map(Number).filter(n => n >= 1 && n <= 31))].sort((a, b) => a - b)
     : []
   const saat = /^\d{1,2}:\d{2}$/.test(String(govde.saat || '')) ? String(govde.saat) : null
-  const kanal = govde.kanal === 'email' ? 'email' : govde.kanal === 'ikisi' ? 'ikisi' : 'whatsapp'
+  const kanal = ['email', 'ikisi', 'tercih'].includes(govde.kanal) ? govde.kanal : 'whatsapp'
   const muhasebeDahil = govde.muhasebeDahil === true
   if (!gunler.length || !saat) return json({ ok: false, error: 'gün ve saat gerekli' }, 400)
 
@@ -327,7 +327,7 @@ async function calistir(env, supabase) {
 
   // Müşteriler + güncel borç sonuçları
   const [{ data: musteriler }, { data: borclar }] = await Promise.all([
-    supabase.from('clients').select('id, name, company, phone, email, phonenumbers, emails, close_date'),
+    supabase.from('clients').select('id, name, company, phone, email, phonenumbers, emails, beyan_durumlari, beyanDurumlari, close_date'),
     supabase.from('borc_sonuclari').select('client_id, tip, toplam, detay, mesaj, sorgu_ts')
   ])
 
@@ -341,9 +341,9 @@ async function calistir(env, supabase) {
     if (!g[b.tip] || new Date(b.sorgu_ts) > new Date(g[b.tip].sorgu_ts)) g[b.tip] = b
   }
 
-  // E-posta için SMTP
+  // E-posta için SMTP (tercih modunda müşteri bazında e-posta gerekebilir)
   let transporter = null
-  if (plan.kanal === 'email' || plan.kanal === 'ikisi') {
+  if (plan.kanal === 'email' || plan.kanal === 'ikisi' || plan.kanal === 'tercih') {
     const host = ayarlar.smtp_host
     const user = ayarlar.smtp_user
     const pass = ayarlar.smtp_pass
@@ -376,11 +376,21 @@ async function calistir(env, supabase) {
     const ad = m.company || m.name || ''
     const mesaj = mesajUret(ad || 'Değerli Müşterimiz', zaman.tarih, sgk, vergi, muhasebe)
 
+    // 2.8.320: "Tercih" -> müşterinin Tahakkuk Gönderim Şekli neyse ona göre.
+    let hedefKanal = plan.kanal
+    if (hedefKanal === 'tercih') {
+      let bd = m.beyan_durumlari || m.beyanDurumlari || {}
+      if (typeof bd === 'string') { try { bd = JSON.parse(bd) } catch { bd = {} } }
+      const tercih = bd?.tahakkukGonderim || 'whatsapp'
+      if (tercih === 'yok') continue
+      hedefKanal = tercih === 'mail' ? 'email' : tercih === 'ikisi' ? 'ikisi' : 'whatsapp'
+    }
+
     try {
       const yapilan = []
       const eksikler = []
 
-      if (plan.kanal === 'whatsapp' || plan.kanal === 'ikisi') {
+      if (hedefKanal === 'whatsapp' || hedefKanal === 'ikisi') {
         const telefonlar = []
         if (m.phone) telefonlar.push(m.phone)
         if (Array.isArray(m.phonenumbers)) {
@@ -391,7 +401,7 @@ async function calistir(env, supabase) {
         }
 
         if (!telefonlar.length) {
-          if (plan.kanal === 'whatsapp') throw new Error('telefon yok')
+          if (hedefKanal === 'whatsapp') throw new Error('telefon yok')
           eksikler.push('telefon yok')
         } else {
           const hedef = String(env?.YARDIMCI_URL || '').replace(/\/+$/, '')
@@ -413,7 +423,7 @@ async function calistir(env, supabase) {
         }
       }
 
-      if (plan.kanal === 'email' || plan.kanal === 'ikisi') {
+      if (hedefKanal === 'email' || hedefKanal === 'ikisi') {
         const adresler = []
         if (m.email) adresler.push(m.email)
         if (Array.isArray(m.emails)) {
@@ -424,7 +434,7 @@ async function calistir(env, supabase) {
         }
 
         if (!adresler.length) {
-          if (plan.kanal === 'email') throw new Error('e-posta yok')
+          if (hedefKanal === 'email') throw new Error('e-posta yok')
           eksikler.push('e-posta yok')
         } else {
           if (!transporter) throw new Error('SMTP ayarları eksik')
@@ -455,7 +465,7 @@ async function calistir(env, supabase) {
       audience: 'admin',
       type: 'borc_bildirim_otomatik',
       title: 'Otomatik borç bildirimi',
-      message: `${zaman.tarih} ${zaman.saat}: ${sonuclar.length} müşteriye ${plan.kanal === 'ikisi' ? 'WhatsApp + e-posta' : plan.kanal === 'email' ? 'e-posta' : 'WhatsApp'} gönderildi` +
+      message: `${zaman.tarih} ${zaman.saat}: ${sonuclar.length} müşteriye ${plan.kanal === 'ikisi' ? 'WhatsApp + e-posta' : plan.kanal === 'email' ? 'e-posta' : plan.kanal === 'tercih' ? 'müşteri tercihine göre' : 'WhatsApp'} gönderildi` +
         (plan.muhasebeDahil ? ' (muhasebe borcu dahil)' : '') +
         (hatalar.length ? `, ${hatalar.length} hata.` : '.'),
       route: '/admin/musteri-borc-dokumu'

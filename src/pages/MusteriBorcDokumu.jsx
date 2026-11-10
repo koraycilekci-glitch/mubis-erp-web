@@ -9,6 +9,8 @@ import {
   RefreshCw, Search, Send, Square, Users, Wallet, X
 } from 'lucide-react'
 import AylikTakvim from '../components/AylikTakvim'
+import PlanDilimSatirlari from '../components/PlanDilimSatirlari'
+import { dilimleriGunlereBol, dilimNormalize, dilimGecerli } from '../utils/planDilim'
 
 // Sorgu sonucu bu günden eskiyse "güncel borç" sayılmaz. Borç anlık bir
 // durumdur; ödenmiş eski bir borç aylar sonra hâlâ "borç" gibi görünmesin.
@@ -106,18 +108,7 @@ function DetayKutu({ baslik, tutar, satirlar, ts, renk = 'sky', bos = false }) {
 
 // 2.8.320: Bir dilim birden fazla gün taşıyorsa (gunler_ay: [18, 27, 30])
 // her günü ayrı satıra böl; böylece tüm günler görünür ve düzenlemede silinmez.
-function dilimleriGunlereBol(liste, varsayilanSaat = '06:00') {
-  const cikti = []
-  for (const z of Array.isArray(liste) ? liste : []) {
-    const saat = /^\d{1,2}:\d{2}$/.test(String(z?.saat || '')) ? z.saat : varsayilanSaat
-    const gunler = Array.isArray(z?.gunler_ay)
-      ? [...new Set(z.gunler_ay.map(Number).filter(n => n >= 1 && n <= 31))].sort((a, b) => a - b)
-      : []
-    if (!gunler.length) cikti.push({ gunler_ay: [], saat })
-    else for (const gun of gunler) cikti.push({ gunler_ay: [gun], saat })
-  }
-  return cikti
-}
+// Haftalık dilimler tek satır olarak kalır. (Ortak util: utils/planDilim.js)
 
 function borcMesaji(client, sgk, vergi, muhasebe = null) {
   const ad = client?.company || client?.name || 'Değerli Müşterimiz'
@@ -436,11 +427,20 @@ export default function MusteriBorcDokumu() {
   const kanalGonder = async (seciliKanal, client, mesaj) => {
     const yapilan = []
     const hatalar = []
+    // 2.8.320: "Tercih" -> müşterinin iletişim bilgilerindeki Tahakkuk Gönderim
+    // Şekli (whatsapp / mail / ikisi / yok) neyse ona göre gönderilir.
+    let hedef = seciliKanal
+    if (seciliKanal === 'tercih') {
+      const tercih = (client?.beyanDurumlari || client?.beyan_durumlari || {})?.tahakkukGonderim || 'whatsapp'
+      if (tercih === 'yok') return 'gönderim tercihi yok'
+      hedef = tercih === 'mail' ? 'email' : tercih === 'ikisi' ? 'ikisi' : 'whatsapp'
+    }
+    const secili = hedef
 
-    if (seciliKanal === 'whatsapp' || seciliKanal === 'ikisi') {
+    if (secili === 'whatsapp' || secili === 'ikisi') {
       const tel = telefonlar(client)
       if (!tel.length) {
-        if (seciliKanal === 'whatsapp') throw new Error('Telefon numarası yok')
+        if (secili === 'whatsapp') throw new Error('Telefon numarası yok')
         hatalar.push('telefon yok')
       } else {
         for (const t of tel) {
@@ -451,10 +451,10 @@ export default function MusteriBorcDokumu() {
       }
     }
 
-    if (seciliKanal === 'email' || seciliKanal === 'ikisi') {
+    if (secili === 'email' || secili === 'ikisi') {
       const adresler = epostalar(client)
       if (!adresler.length) {
-        if (seciliKanal === 'email') throw new Error('E-posta adresi yok')
+        if (secili === 'email') throw new Error('E-posta adresi yok')
         hatalar.push('e-posta yok')
       } else {
         for (const to of adresler) {
@@ -474,7 +474,7 @@ export default function MusteriBorcDokumu() {
     return yapilan.join(' + ')
   }
 
-  const kanalEtiket = (k) => k === 'email' ? 'E-posta' : k === 'ikisi' ? 'WhatsApp + E-posta' : 'WhatsApp'
+  const kanalEtiket = (k) => k === 'tercih' ? 'Müşteri tercihi' : k === 'email' ? 'E-posta' : k === 'ikisi' ? 'WhatsApp + E-posta' : 'WhatsApp'
 
   // Tek müşteriye gönderim
   const gonderTek = async (grup) => {
@@ -486,7 +486,7 @@ export default function MusteriBorcDokumu() {
     setGonderimSonuc('')
     try {
       const ozet = await kanalGonder(kanal, client, mesaj)
-      setGonderimSonuc(`${musteriAdi(client)}: gönderildi — ${ozet}.`)
+      setGonderimSonuc(`${musteriAdi(client)}: ${ozet === 'gönderim tercihi yok' ? 'gönderim tercihi "yok" olduğu için gönderilmedi.' : `gönderildi — ${ozet}.`}`)
     } catch (e) {
       setGonderimSonuc(`${musteriAdi(client)}: ${e?.message || 'gönderilemedi'}`)
     } finally {
@@ -503,13 +503,15 @@ export default function MusteriBorcDokumu() {
     setTopluGonderiyor(true)
     setGonderimSonuc('')
     let basarili = 0
+    let atlanan = 0
     const hatalar = []
     for (const grup of hedefler) {
       const { client, sgk, vergi } = grup
       const muh = muhasebeDahil ? muhasebeBorc[String(client.id)] : null
       const mesaj = borcMesaji(client, sgk, vergi, muh)
       try {
-        await kanalGonder(kanal, client, mesaj)
+        const ozet = await kanalGonder(kanal, client, mesaj)
+        if (ozet === 'gönderim tercihi yok') { atlanan++; continue }
         basarili++
         setGonderimSonuc(`${basarili}/${hedefler.length} gönderildi…`)
       } catch (e) {
@@ -519,6 +521,7 @@ export default function MusteriBorcDokumu() {
     setTopluGonderiyor(false)
     setGonderimSonuc(
       `Toplu gönderim tamamlandı: ${basarili} başarılı` +
+      (atlanan ? `, ${atlanan} tercih "yok" (atlandı)` : '') +
       (hatalar.length ? `, ${hatalar.length} hata (${hatalar.slice(0, 3).join(' · ')})` : '') + '.'
     )
   }
@@ -576,7 +579,7 @@ export default function MusteriBorcDokumu() {
       const turlarZamanlar = {}
       for (const t of ['sgk', 'vergi']) {
         const liste = dilimleriGunlereBol(kayit.turlar_zamanlar?.[t] || [], '06:00')
-          .filter(z => z.gunler_ay.length)
+          .filter(dilimGecerli)
         if (liste.length) turlarZamanlar[t] = liste
       }
       const turlar = Object.keys(turlarZamanlar)
@@ -696,7 +699,7 @@ export default function MusteriBorcDokumu() {
         aktif: !!p.aktif,
         gunler: Array.isArray(p.gunler) && p.gunler.length ? p.gunler.map(Number) : [1],
         saat: /^\d{1,2}:\d{2}$/.test(String(p.saat || '')) ? p.saat : '10:00',
-        kanal: p.kanal === 'email' ? 'email' : p.kanal === 'ikisi' ? 'ikisi' : 'whatsapp',
+        kanal: ['email', 'ikisi', 'tercih'].includes(p.kanal) ? p.kanal : 'whatsapp',
         muhasebeDahil: p.muhasebeDahil === true
       })
     } catch { /* yoksay */ }
@@ -769,7 +772,7 @@ export default function MusteriBorcDokumu() {
   const ilerlemeYuzde = sorguIlerleme?.toplam ? Math.round((sorguIlerleme.islem / sorguIlerleme.toplam) * 100) : 0
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 p-4 pt-8">
       {/* Başlık */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-3">
@@ -995,11 +998,12 @@ export default function MusteriBorcDokumu() {
               </button>
             )}
             <div className="inline-flex rounded-lg overflow-hidden border border-blue-700/50">
-              {[{ v: 'whatsapp', ad: 'WhatsApp' }, { v: 'email', ad: 'E-posta' }, { v: 'ikisi', ad: 'İkisi' }].map(o => (
+              {[{ v: 'tercih', ad: 'Tercih' }, { v: 'whatsapp', ad: 'WhatsApp' }, { v: 'email', ad: 'E-posta' }, { v: 'ikisi', ad: 'İkisi' }].map(o => (
                 <button
                   key={o.v}
                   type="button"
                   onClick={() => setKanal(o.v)}
+                  title={o.v === 'tercih' ? 'Müşterinin iletişim bilgilerindeki Tahakkuk Gönderim Şekli neyse ona göre gönderilir' : undefined}
                   className={`px-2.5 py-1.5 text-[11px] font-medium transition-colors ${kanal === o.v ? 'bg-emerald-500 text-white' : 'bg-blue-900/50 text-gray-400 hover:text-gray-200'}`}
                 >{o.ad}</button>
               ))}
@@ -1049,10 +1053,10 @@ export default function MusteriBorcDokumu() {
         <>
           {/* Masaüstü tablo */}
           <div className="hidden lg:block rounded-2xl border border-blue-800/40 bg-blue-950/30 overflow-hidden">
-            <table className="w-full text-sm">
+            <table className="w-full table-fixed text-sm">
               <thead className="bg-blue-900/40 text-[10px] uppercase tracking-wider text-gray-400">
                 <tr>
-                  <th className="w-10 px-3 py-3">
+                  <th className="w-[4%] px-2 py-3">
                     <input
                       type="checkbox"
                       checked={tumuSecili}
@@ -1060,13 +1064,13 @@ export default function MusteriBorcDokumu() {
                       className="w-4 h-4 rounded border-blue-700/50 bg-blue-900/40 text-cyan-500"
                     />
                   </th>
-                  <th className="px-3 py-3 text-left font-semibold">Müşteri</th>
-                  <th className="px-3 py-3 text-right font-semibold">SGK</th>
-                  <th className="px-3 py-3 text-right font-semibold">Vergi (GİB)</th>
-                  {muhasebeDahil && <th className="px-3 py-3 text-right font-semibold">Muhasebe</th>}
-                  <th className="px-3 py-3 text-right font-semibold">Toplam</th>
-                  <th className="px-3 py-3 text-center font-semibold">Son Sorgu</th>
-                  <th className="px-3 py-3 text-right font-semibold pr-4">İşlem</th>
+                  <th className={`${muhasebeDahil ? 'w-[24%]' : 'w-[30%]'} px-3 py-3 text-left font-semibold`}>Müşteri</th>
+                  <th className="w-[12%] px-3 py-3 text-right font-semibold">SGK</th>
+                  <th className="w-[12%] px-3 py-3 text-right font-semibold">Vergi (GİB)</th>
+                  {muhasebeDahil && <th className="w-[11%] px-3 py-3 text-right font-semibold">Muhasebe</th>}
+                  <th className="w-[13%] px-3 py-3 text-right font-semibold">Toplam</th>
+                  <th className="w-[11%] px-3 py-3 text-center font-semibold">Son Sorgu</th>
+                  <th className="w-[10%] px-3 py-3 text-right font-semibold pr-4">İşlem</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-blue-800/30">
@@ -1298,7 +1302,7 @@ export default function MusteriBorcDokumu() {
                   <div>
                     <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Kanal</label>
                     <div className="inline-flex rounded-xl overflow-hidden border border-blue-700/50 w-full">
-                      {[{ v: 'whatsapp', ad: 'WhatsApp' }, { v: 'email', ad: 'E-posta' }, { v: 'ikisi', ad: 'İkisi' }].map(o => (
+                      {[{ v: 'tercih', ad: 'Tercih' }, { v: 'whatsapp', ad: 'WhatsApp' }, { v: 'email', ad: 'E-posta' }, { v: 'ikisi', ad: 'İkisi' }].map(o => (
                         <button
                           key={o.v}
                           type="button"
@@ -1396,40 +1400,11 @@ export default function MusteriBorcDokumu() {
                       {dilimler.length === 0 && (
                         <p className="text-[11px] text-gray-500 py-1">Dilim yok — otomatik sorgulanmaz.</p>
                       )}
-                      {dilimler.map((z, idx) => (
-                        <div key={idx} className="flex items-center gap-1.5">
-                          <div className="relative">
-                            <input
-                              type="number"
-                              min={1}
-                              max={31}
-                              value={z.gunler_ay?.[0] || ''}
-                              onChange={e => {
-                                const n = Math.min(31, Math.max(0, Number(e.target.value) || 0))
-                                borcDilimGuncelle(tur, idx, { gunler_ay: n >= 1 ? [n] : [] })
-                              }}
-                              placeholder="Gün"
-                              title="Ayın kaçıncı günü (1-31)"
-                              className="w-16 bg-blue-900/60 border border-blue-700/50 rounded-lg pl-2 pr-6 py-1.5 text-white text-xs tabular-nums"
-                            />
-                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-gray-500 pointer-events-none">gün</span>
-                          </div>
-                          <input
-                            type="time"
-                            value={z.saat || '06:00'}
-                            onChange={e => borcDilimGuncelle(tur, idx, { saat: e.target.value })}
-                            className="bg-blue-900/60 border border-blue-700/50 rounded-lg px-2 py-1.5 text-white text-xs"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => borcDilimSil(tur, idx)}
-                            title="Bu dilimi sil"
-                            className="p-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 hover:bg-red-500/20"
-                          >
-                            <Minus className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ))}
+                      <PlanDilimSatirlari
+                        dilimler={dilimler}
+                        onDegistir={(idx, yeni) => borcDilimGuncelle(tur, idx, yeni)}
+                        onSil={(idx) => borcDilimSil(tur, idx)}
+                      />
                     </div>
                   )
                 })}

@@ -20739,6 +20739,7 @@ async function borcCronKontrol() {
   const now = new Date();
   const bugunStr = gunlukBugunStr();
   const gun = now.getDay();
+  const haftaGunu = gun === 0 ? 7 : gun;
   const ayinGunu = now.getDate();
   const saatStr = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
   // 2.8.46: PER-TÜR AYRI GÜN+SAAT. plan.turlar_zamanlar varsa her tür
@@ -20758,12 +20759,20 @@ async function borcCronKontrol() {
         const z = liste[zi] || {};
         const zSaat = String(z.saat || "06:00");
         if (!/^\d{1,2}:\d{2}$/.test(zSaat) || zSaat > saatStr) continue;
-        const zGunler = Array.isArray(z.gunler_ay) ? z.gunler_ay.map(Number).filter((n) => n >= 1 && n <= 31) : [];
-        if (zGunler.length && !zGunler.includes(ayinGunu)) continue;
-        if (!zGunler.length) {
-          const gunlerAy = Array.isArray(plan.gunler_ay) ? plan.gunler_ay.map(Number) : [];
-          if (gunlerAy.length && !gunlerAy.includes(ayinGunu)) continue;
-          if (!gunlerAy.length && (!Array.isArray(plan.gunler) || !plan.gunler.map(Number).includes(gun))) continue;
+        // 2.8.320: HAFTALIK mod -> haftanin gunlerine bak (1=Pzt ... 7=Paz)
+        const zHaftalik = z.mod === "haftalik";
+        if (zHaftalik) {
+          const zHafta = Array.isArray(z.hafta_gunleri) ? z.hafta_gunleri.map(Number).filter((n) => n >= 1 && n <= 7) : [];
+          if (zHafta.length && !zHafta.includes(haftaGunu)) continue;
+          if (!zHafta.length) continue;
+        } else {
+          const zGunler = Array.isArray(z.gunler_ay) ? z.gunler_ay.map(Number).filter((n) => n >= 1 && n <= 31) : [];
+          if (zGunler.length && !zGunler.includes(ayinGunu)) continue;
+          if (!zGunler.length) {
+            const gunlerAy = Array.isArray(plan.gunler_ay) ? plan.gunler_ay.map(Number) : [];
+            if (gunlerAy.length && !gunlerAy.includes(ayinGunu)) continue;
+            if (!gunlerAy.length && (!Array.isArray(plan.gunler) || !plan.gunler.map(Number).includes(gun))) continue;
+          }
         }
         const anahtar = "t" + tur + "_i" + zi;
         let sonDeger = plan.son_turlar && plan.son_turlar[anahtar];
@@ -20955,6 +20964,7 @@ async function dvsCronKontrol() {
   const now = new Date();
   const bugunStr = gunlukBugunStr();
   const gun = now.getDay();
+  const haftaGunu = gun === 0 ? 7 : gun;
   const saatStr = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
   // 2.8.12: tur bazli plan — pos / 109 / 110 her biri icin ayri gun_ay + saat;
   // plan.turlar_plan yoksa eski turlar/gun_ay/saat'ten migrate edilir
@@ -20991,12 +21001,18 @@ async function dvsCronKontrol() {
       const z = dilimler[zi] || {};
       const zSaat = String(z.saat || "05:00");
       if (!/^\d{1,2}:\d{2}$/.test(zSaat) || zSaat > saatStr) continue;
-      const zGunler = Array.isArray(z.gunler_ay) ? z.gunler_ay.map(Number).filter((n) => n >= 1 && n <= 31) : [];
-      if (zGunler.length) {
-        if (!zGunler.includes(now.getDate())) continue;
+      // 2.8.320: HAFTALIK mod -> haftanin gunleri (1=Pzt ... 7=Paz)
+      if (z.mod === "haftalik") {
+        const zHafta = Array.isArray(z.hafta_gunleri) ? z.hafta_gunleri.map(Number).filter((n) => n >= 1 && n <= 7) : [];
+        if (!zHafta.includes(haftaGunu)) continue;
       } else {
-        // Gün seçilmemişse eski haftalık davranış
-        if (!Array.isArray(plan.gunler) || !plan.gunler.map(Number).includes(gun)) continue;
+        const zGunler = Array.isArray(z.gunler_ay) ? z.gunler_ay.map(Number).filter((n) => n >= 1 && n <= 31) : [];
+        if (zGunler.length) {
+          if (!zGunler.includes(now.getDate())) continue;
+        } else {
+          // Gün seçilmemişse eski haftalık davranış
+          if (!Array.isArray(plan.gunler) || !plan.gunler.map(Number).includes(gun)) continue;
+        }
       }
       const anahtar = paylasilan ? "i" + zi + "_" + tur : "t" + tur + "_i" + zi;
       let sonYerel = "";

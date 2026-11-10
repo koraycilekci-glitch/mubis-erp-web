@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useClients } from '../hooks/useClients'
-import { getAllAccountingFees, getAllPayments, addPayment, deletePayment, hesaplaBorcOzeti, getActivePaymentProvider, getBankInfo, buildBorcMesaji } from '../services/paymentService'
+import { getAllAccountingFees, getAllPayments, addPayment, deletePayment, saveAccountingFee, hesaplaBorcOzeti, getActivePaymentProvider, getBankInfo, buildBorcMesaji } from '../services/paymentService'
 import {
   DollarSign, Users, Search, FileSpreadsheet, FileText,
-  CheckCircle, AlertTriangle, Clock, X, CreditCard, Copy, Mail, MessageCircle, Minus, Plus, Trash2
+  CheckCircle, AlertTriangle, Clock, X, CreditCard, Copy, Mail, MessageCircle, Minus, Plus, Trash2, Pencil
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
@@ -116,6 +116,51 @@ export default function OdemeTakip() {
   const [odemeForm, setOdemeForm] = useState({ tutar: '', odeme_tipi: 'nakit', odeme_tarihi: new Date().toISOString().split('T')[0], aciklama: '' })
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
+
+  // 2.8.320: Aylık Ücret / Defter Tasdik / Önceki Dönem tutarlarını doğrudan
+  // hücreye tıklayıp düzenleme (accounting_fees kaydı).
+  const [feeModal, setFeeModal] = useState(null) // { clientId, name, alan, etiket }
+  const [feeTutar, setFeeTutar] = useState('')
+  const [feeSaving, setFeeSaving] = useState(false)
+  const [feeError, setFeeError] = useState('')
+
+  const FEE_ALANLARI = {
+    aylik_ucret: { etiket: 'Aylık Ücret', alan: 'aylik_ucret' },
+    defter_tasdik_ucreti: { etiket: 'Defter Tasdik', alan: 'defter_tasdik_ucreti' },
+    onceki_donem_borc: { etiket: 'Önceki Dönem Borcu', alan: 'onceki_donem_borc' }
+  }
+
+  const openFeeModal = (row, alan) => {
+    const fee = fees.find(f => f.client_id === row.id) || null
+    const deger = Number(fee?.[alan]) || 0
+    setFeeTutar(deger ? formatTurkishInput(String(deger)) : '')
+    setFeeError('')
+    setFeeModal({ clientId: row.id, name: row.name || row.company || 'Müşteri', alan, etiket: FEE_ALANLARI[alan]?.etiket || alan })
+  }
+
+  const saveFee = async (e) => {
+    e.preventDefault()
+    if (!feeModal) return
+    const mevcut = fees.find(f => f.client_id === feeModal.clientId) || {}
+    setFeeSaving(true)
+    setFeeError('')
+    try {
+      await saveAccountingFee(feeModal.clientId, {
+        onceki_donem_borc: feeModal.alan === 'onceki_donem_borc' ? feeTutar : (mevcut.onceki_donem_borc ?? 0),
+        defter_tasdik_ucreti: feeModal.alan === 'defter_tasdik_ucreti' ? feeTutar : (mevcut.defter_tasdik_ucreti ?? 0),
+        aylik_ucret: feeModal.alan === 'aylik_ucret' ? feeTutar : (mevcut.aylik_ucret ?? 0),
+        baslangic_ay: mevcut.baslangic_ay || 1,
+        baslangic_yil: mevcut.baslangic_yil || new Date().getFullYear(),
+        notlar: mevcut.notlar || ''
+      })
+      setFeeModal(null)
+      await loadData()
+    } catch (err) {
+      setFeeError(err?.message || 'Kaydedilemedi')
+    } finally {
+      setFeeSaving(false)
+    }
+  }
 
   // Online odeme linki (musteri bazli)
   const [selectedClient, setSelectedClient] = useState(null)
@@ -812,7 +857,13 @@ export default function OdemeTakip() {
                         )}
                       </div>
                     </td>
-                    <td className="sticky z-10 bg-[#1f3d78] px-3 py-2 text-right text-gray-300 whitespace-nowrap min-w-[110px]" style={{ left: 228 }}>{r.aylikUcret > 0 ? `₺ ${fmt(r.aylikUcret)}` : '-'}</td>
+                    <td className="sticky z-10 bg-[#1f3d78] px-3 py-2 text-right text-gray-300 whitespace-nowrap min-w-[110px]" style={{ left: 228 }}>
+                      <button type="button" onClick={() => openFeeModal(r, 'aylik_ucret')} title="Aylık ücreti düzenle"
+                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-blue-700/40 hover:text-white transition-colors">
+                        {r.aylikUcret > 0 ? `₺ ${fmt(r.aylikUcret)}` : <span className="text-gray-600">-</span>}
+                        <Pencil className="w-3 h-3 text-blue-300/70" />
+                      </button>
+                    </td>
                     <td className="sticky z-10 bg-[#1f3d78] px-3 py-2 text-right whitespace-nowrap min-w-[110px]" style={{ left: 338 }}>
                       {(() => {
                         const durum = kalemDurum(r, 'Defter Tasdik')
@@ -836,6 +887,10 @@ export default function OdemeTakip() {
                         }
                         return <span className="text-gray-600">-</span>
                       })()}
+                      <button type="button" onClick={() => openFeeModal(r, 'defter_tasdik_ucreti')} title="Defter tasdik tutarını düzenle"
+                        className="inline-flex items-center p-1 rounded text-blue-300/70 hover:text-blue-300 hover:bg-blue-700/40 transition-colors">
+                        <Pencil className="w-3 h-3" />
+                      </button>
                     </td>
                     <td className="sticky z-10 bg-[#1f3d78] px-3 py-2 text-right whitespace-nowrap min-w-[110px]" style={{ left: 448 }}>
                       {(() => {
@@ -860,6 +915,10 @@ export default function OdemeTakip() {
                         }
                         return <span className="text-gray-600">-</span>
                       })()}
+                      <button type="button" onClick={() => openFeeModal(r, 'onceki_donem_borc')} title="Önceki dönem borcu tutarını düzenle"
+                        className="inline-flex items-center p-1 rounded text-blue-300/70 hover:text-blue-300 hover:bg-blue-700/40 transition-colors">
+                        <Pencil className="w-3 h-3" />
+                      </button>
                     </td>
                     <td className="sticky z-10 bg-[#1f3d78] px-3 py-2 text-right text-yellow-400 font-medium whitespace-nowrap min-w-[110px] shadow-[6px_0_10px_-4px_rgba(0,0,0,0.45)]" style={{ left: 558 }}>₺ {fmt(r.toplamBorc)}</td>
                     {AYLER.map((_, mi) => {
@@ -926,6 +985,44 @@ export default function OdemeTakip() {
         </div>
       </div>
       <p className="text-gray-500 text-xs mt-2">Ay hücresine tıklayarak o ay için ödeme kaydı girebilirsiniz. Müşteri adının yanındaki kart simgesi online ödeme linki gönderir.</p>
+
+      {/* 2.8.320: Aylık Ücret / Defter Tasdik / Önceki Dönem tutarı düzenleme */}
+      {feeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setFeeModal(null)}>
+          <div className="bg-blue-900 rounded-2xl border border-blue-700/50 shadow-2xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-blue-700/30">
+              <h3 className="text-lg font-bold text-white">{feeModal.etiket} Düzenle</h3>
+              <button onClick={() => setFeeModal(null)} className="text-gray-400 hover:text-white p-1"><X className="w-5 h-5" /></button>
+            </div>
+            <form onSubmit={saveFee} className="p-5 space-y-4">
+              <div>
+                <p className="text-xs text-gray-400">Müşteri</p>
+                <p className="text-white font-medium">{kisaAd(feeModal.name)}</p>
+              </div>
+              <label className="block space-y-1">
+                <span className="text-xs text-gray-400">{feeModal.etiket} (TL)</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={feeTutar}
+                  onChange={(e) => setFeeTutar(hamTutarGirdisi(e.target.value))}
+                  onBlur={(e) => { const h = hamTutarGirdisi(e.target.value); if (h && h !== ',') setFeeTutar(formatTurkishInput(h)) }}
+                  placeholder="0,00"
+                  required
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
+                />
+              </label>
+              {feeError && <p className="text-red-400 text-xs">{feeError}</p>}
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setFeeModal(null)} className="px-4 py-2 rounded-lg bg-blue-800/40 text-gray-300 text-sm hover:bg-blue-800/60">Vazgeç</button>
+                <button type="submit" disabled={feeSaving} className="px-5 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-500 disabled:opacity-50">
+                  {feeSaving ? 'Kaydediliyor...' : 'Kaydet'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Odeme Kaydi Modal */}
       {odemeModal && (

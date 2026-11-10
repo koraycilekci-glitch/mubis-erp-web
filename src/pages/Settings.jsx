@@ -7,23 +7,9 @@ import { getBankInfo, saveBankInfo, getBankAccounts, saveBankAccounts } from '..
 import { gibYardimciIs, yardimciFetch } from '../utils/gibOdemeHelper'
 import { Settings as SettingsIcon, Lock, Clock, Users, Eye, EyeOff, CheckCircle, AlertCircle, Save, RefreshCw, MessageCircle, Mail, FolderOpen, FolderTree, Plus, Minus, Trash2, Pencil, Volume2, Play, CreditCard, Building2, Link2, Bot, Landmark, Shield } from 'lucide-react'
 import FolderStructureEditor from '../components/FolderStructureEditor'
+import PlanDilimSatirlari from '../components/PlanDilimSatirlari'
 import { SES_TERCIHLERI, VARSAYILAN_SES_AYARI, seslerHazirOlunca, sesSec, konus, sesAyariCoz, sesDestekleniyor, sesCinsiyeti, cinsiyetSesiVar } from '../utils/speechUtils'
-
-// 2.8.320: Eski kayıtlarda bir dilim birden fazla gün taşıyabiliyor
-// (gunler_ay: [18, 27, 30]). Ekranda hepsinin görünmesi ve düzenlemede
-// kaybolmaması için her günü ayrı dilim satırına bölüyoruz.
-function dilimleriGunlereBol(liste, varsayilanSaat = '06:00') {
-  const cikti = []
-  for (const z of Array.isArray(liste) ? liste : []) {
-    const saat = /^\d{1,2}:\d{2}$/.test(String(z?.saat || '')) ? z.saat : varsayilanSaat
-    const gunler = Array.isArray(z?.gunler_ay)
-      ? [...new Set(z.gunler_ay.map(Number).filter(n => n >= 1 && n <= 31))].sort((a, b) => a - b)
-      : []
-    if (!gunler.length) cikti.push({ gunler_ay: [], saat })
-    else for (const gun of gunler) cikti.push({ gunler_ay: [gun], saat })
-  }
-  return cikti
-}
+import { dilimleriGunlereBol, dilimNormalize, dilimGecerli } from '../utils/planDilim'
 
 export default function Settings() {
   const { user, profile, updatePassword } = useAuth()
@@ -857,11 +843,8 @@ export default function Settings() {
       const p = borcCronTurlarPlan[t.v] || {}
       if (p.aktif !== true) continue
       const liste = (p.zamanlar || [])
-        .map(z => ({
-          gunler_ay: [...new Set((z.gunler_ay || []).map(Number).filter(n => n >= 1 && n <= 31))].sort((a, b) => a - b),
-          saat: /^\d{1,2}:\d{2}$/.test(String(z.saat || '')) ? z.saat : '06:00'
-        }))
-        .filter(z => z.gunler_ay.length)
+        .map(z => dilimNormalize(z, '06:00'))
+        .filter(dilimGecerli)
       if (liste.length) turlarZamanlar[t.v] = liste
     }
     const turlar = Object.keys(turlarZamanlar)
@@ -1009,11 +992,8 @@ export default function Settings() {
         continue
       }
       const liste = (p.zamanlar || [])
-        .map(z => ({
-          gunler_ay: [...new Set((z.gunler_ay || []).map(Number).filter(n => n >= 1 && n <= 31))].sort((a, b) => a - b),
-          saat: /^\d{1,2}:\d{2}$/.test(String(z.saat || '')) ? z.saat : '05:00'
-        }))
-        .filter(z => z.gunler_ay.length)
+        .map(z => dilimNormalize(z, '05:00'))
+        .filter(dilimGecerli)
       const ilk = liste[0] || { gunler_ay: [], saat: '05:00' }
       turlarPlan[t.v] = {
         aktif: liste.length > 0,
@@ -1143,7 +1123,7 @@ export default function Settings() {
                           <span className="inline-flex items-center gap-2 text-sm font-medium text-white">
                             <span className={`w-2 h-2 rounded-full ${renk === 'amber' ? 'bg-amber-400' : 'bg-sky-400'}`} />
                             {t.e}
-                            <span className="text-[10px] text-gray-500">({dilimler.filter(z => (z.gunler_ay || []).length).length} dilim)</span>
+                            <span className="text-[10px] text-gray-500">({dilimler.filter(dilimGecerli).length} dilim)</span>
                           </span>
                           <button
                             type="button"
@@ -1156,38 +1136,11 @@ export default function Settings() {
                         {dilimler.length === 0 && (
                           <p className="text-[11px] text-gray-500 py-1">Dilim yok — otomatik sorgulanmaz.</p>
                         )}
-                        {dilimler.map((z, idx) => (
-                          <div key={idx} className="flex items-center gap-1.5">
-                            <div className="relative">
-                              <input
-                                type="number" min={1} max={31}
-                                value={z.gunler_ay?.[0] || ''}
-                                onChange={e => {
-                                  const n = Math.min(31, Math.max(0, Number(e.target.value) || 0))
-                                  borcCronDilimGuncelle(t.v, idx, { gunler_ay: n >= 1 ? [n] : [] })
-                                }}
-                                placeholder="Gün"
-                                title="Ayın kaçıncı günü (1-31)"
-                                className="w-16 bg-blue-900/60 border border-blue-700/50 rounded-lg pl-2 pr-6 py-1.5 text-white text-xs tabular-nums"
-                              />
-                              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-gray-500 pointer-events-none">gün</span>
-                            </div>
-                            <input
-                              type="time"
-                              value={z.saat || '06:00'}
-                              onChange={e => borcCronDilimGuncelle(t.v, idx, { saat: e.target.value })}
-                              className="bg-blue-900/60 border border-blue-700/50 rounded-lg px-2 py-1.5 text-white text-xs"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => borcCronDilimSil(t.v, idx)}
-                              title="Bu dilimi sil"
-                              className="p-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 hover:bg-red-500/20"
-                            >
-                              <Minus className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        ))}
+                        <PlanDilimSatirlari
+                          dilimler={dilimler}
+                          onDegistir={(idx, yeni) => borcCronDilimGuncelle(t.v, idx, yeni)}
+                          onSil={(idx) => borcCronDilimSil(t.v, idx)}
+                        />
                       </div>
                     )
                   })}
@@ -1292,39 +1245,12 @@ export default function Settings() {
                             {dilimler.length === 0 && (
                               <p className="text-[11px] text-gray-500 py-1">Dilim yok — otomatik sorgulanmaz.</p>
                             )}
-                            {dilimler.map((z, idx) => (
-                              <div key={idx} className="flex items-center gap-1.5">
-                                <div className="relative">
-                                  <input
-                                    type="number"
-                                    min={1} max={31}
-                                    value={z.gunler_ay?.[0] || ''}
-                                    onChange={e => {
-                                      const n = Math.min(31, Math.max(0, Number(e.target.value) || 0))
-                                      dvsCronDilimGuncelle(t.v, idx, { gunler_ay: n >= 1 ? [n] : [] })
-                                    }}
-                                    placeholder="Gün"
-                                    title="Ayın kaçıncı günü (1-31)"
-                                    className="w-16 bg-blue-900/60 border border-blue-700/50 rounded-lg pl-2 pr-6 py-1.5 text-white text-xs tabular-nums"
-                                  />
-                                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-gray-500 pointer-events-none">gün</span>
-                                </div>
-                                <input
-                                  type="time"
-                                  value={z.saat || '05:00'}
-                                  onChange={e => dvsCronDilimGuncelle(t.v, idx, { saat: e.target.value })}
-                                  className="bg-blue-900/60 border border-blue-700/50 rounded-lg px-2 py-1.5 text-white text-xs"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => dvsCronDilimSil(t.v, idx)}
-                                  title="Bu dilimi sil"
-                                  className="p-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 hover:bg-red-500/20"
-                                >
-                                  <Minus className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            ))}
+                            <PlanDilimSatirlari
+                              dilimler={dilimler}
+                              varsayilanSaat="05:00"
+                              onDegistir={(idx, yeni) => dvsCronDilimGuncelle(t.v, idx, yeni)}
+                              onSil={(idx) => dvsCronDilimSil(t.v, idx)}
+                            />
                           </div>
                         )
                       })}

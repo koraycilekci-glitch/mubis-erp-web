@@ -30,15 +30,34 @@ export async function planJsonYaz(supabase, key, deger) {
   return false
 }
 
-// Gun+saat dilimlerini normalize eder: [{gunler_ay:[1,15], saat:'05:00'}]
+// Gun+saat dilimlerini normalize eder.
+//   gunluk  : {mod:'gunluk',  gunler_ay:[1,15], saat:'05:00'}
+//   haftalik: {mod:'haftalik', hafta_gunleri:[1,5], saat:'05:00'}  (1=Pzt ... 7=Paz)
+// Eski kayitlarda mod yoktur; gunler_ay doluysa gunluk kabul edilir.
 export function zamanlariNormalize(liste) {
   if (!Array.isArray(liste)) return []
   return liste
-    .map(z => ({
-      gunler_ay: Array.isArray(z?.gunler_ay)
-        ? [...new Set(z.gunler_ay.map(Number).filter(n => n >= 1 && n <= 31))].sort((a, b) => a - b)
-        : [],
-      saat: /^\d{1,2}:\d{2}$/.test(String(z?.saat || '')) ? z.saat : '05:00'
-    }))
-    .filter(z => z.gunler_ay.length)
+    .map(z => {
+      const mod = z?.mod === 'haftalik' ? 'haftalik' : 'gunluk'
+      const saat = /^\d{1,2}:\d{2}$/.test(String(z?.saat || '')) ? z.saat : '05:00'
+      if (mod === 'haftalik') {
+        return {
+          mod,
+          gunler_ay: [],
+          hafta_gunleri: Array.isArray(z?.hafta_gunleri)
+            ? [...new Set(z.hafta_gunleri.map(Number).filter(n => n >= 1 && n <= 7))].sort((a, b) => a - b)
+            : [],
+          saat
+        }
+      }
+      return {
+        mod,
+        gunler_ay: Array.isArray(z?.gunler_ay)
+          ? [...new Set(z.gunler_ay.map(Number).filter(n => n >= 1 && n <= 31))].sort((a, b) => a - b)
+          : [],
+        hafta_gunleri: [],
+        saat
+      }
+    })
+    .filter(z => (z.mod === 'haftalik' ? z.hafta_gunleri.length : z.gunler_ay.length))
 }

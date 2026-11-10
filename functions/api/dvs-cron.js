@@ -76,13 +76,20 @@ export async function onRequestPost({ env, request }) {
   const GECERLI_TURLAR = ['pos', '109', '110']
   const zamanlariNormalize = (liste) => Array.isArray(liste)
     ? liste
-        .map(z => ({
-          gunler_ay: Array.isArray(z?.gunler_ay)
-            ? [...new Set(z.gunler_ay.map(Number).filter(n => n >= 1 && n <= 31))].sort((a, b) => a - b)
-            : [],
-          saat: /^\d{1,2}:\d{2}$/.test(String(z?.saat || '')) ? z.saat : null
-        }))
-        .filter(z => z.gunler_ay.length && z.saat)
+        .map(z => {
+          const mod = z?.mod === 'haftalik' ? 'haftalik' : 'gunluk'
+          return {
+            mod,
+            gunler_ay: Array.isArray(z?.gunler_ay)
+              ? [...new Set(z.gunler_ay.map(Number).filter(n => n >= 1 && n <= 31))].sort((a, b) => a - b)
+              : [],
+            hafta_gunleri: Array.isArray(z?.hafta_gunleri)
+              ? [...new Set(z.hafta_gunleri.map(Number).filter(n => n >= 1 && n <= 7))].sort((a, b) => a - b)
+              : [],
+            saat: /^\d{1,2}:\d{2}$/.test(String(z?.saat || '')) ? z.saat : null
+          }
+        })
+        .filter(z => z.saat && (z.mod === 'haftalik' ? z.hafta_gunleri.length : z.gunler_ay.length))
     : []
   // Eski paylaşılan dilimler (yalnızca dolu geldiyse)
   let zamanlar = null

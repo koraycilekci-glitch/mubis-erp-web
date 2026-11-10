@@ -9,6 +9,22 @@ import { Settings as SettingsIcon, Lock, Clock, Users, Eye, EyeOff, CheckCircle,
 import FolderStructureEditor from '../components/FolderStructureEditor'
 import { SES_TERCIHLERI, VARSAYILAN_SES_AYARI, seslerHazirOlunca, sesSec, konus, sesAyariCoz, sesDestekleniyor, sesCinsiyeti, cinsiyetSesiVar } from '../utils/speechUtils'
 
+// 2.8.320: Eski kayıtlarda bir dilim birden fazla gün taşıyabiliyor
+// (gunler_ay: [18, 27, 30]). Ekranda hepsinin görünmesi ve düzenlemede
+// kaybolmaması için her günü ayrı dilim satırına bölüyoruz.
+function dilimleriGunlereBol(liste, varsayilanSaat = '06:00') {
+  const cikti = []
+  for (const z of Array.isArray(liste) ? liste : []) {
+    const saat = /^\d{1,2}:\d{2}$/.test(String(z?.saat || '')) ? z.saat : varsayilanSaat
+    const gunler = Array.isArray(z?.gunler_ay)
+      ? [...new Set(z.gunler_ay.map(Number).filter(n => n >= 1 && n <= 31))].sort((a, b) => a - b)
+      : []
+    if (!gunler.length) cikti.push({ gunler_ay: [], saat })
+    else for (const gun of gunler) cikti.push({ gunler_ay: [gun], saat })
+  }
+  return cikti
+}
+
 export default function Settings() {
   const { user, profile, updatePassword } = useAuth()
   const [activeTab, setActiveTab] = useState('password')
@@ -821,12 +837,10 @@ export default function Settings() {
           if (!liste.length && eskiTurlar.includes(t.v)) liste = [{ gunler_ay: eskiGun, saat: eskiSaat }]
           return [t.v, {
             aktif: liste.length > 0,
-            zamanlar: liste.length
-              ? liste.map(z => ({
-                  gunler_ay: Array.isArray(z?.gunler_ay) ? z.gunler_ay.map(Number).filter(n => n >= 1 && n <= 31) : [],
-                  saat: /^\d{1,2}:\d{2}$/.test(String(z?.saat || '')) ? z.saat : '06:00'
-                }))
-              : [{ gunler_ay: [], saat: '06:00' }]
+            zamanlar: (() => {
+              const bolunmus = dilimleriGunlereBol(liste, '06:00')
+              return bolunmus.length ? bolunmus : [{ gunler_ay: [], saat: '06:00' }]
+            })()
           }]
         })))
       } else setBorcCronPlan(null)
@@ -972,12 +986,10 @@ export default function Settings() {
           }
           return [t.v, {
             aktif: liste.length > 0,
-            zamanlar: liste.length
-              ? liste.map(z => ({
-                  gunler_ay: Array.isArray(z?.gunler_ay) ? z.gunler_ay.map(Number).filter(n => n >= 1 && n <= 31) : [],
-                  saat: /^\d{1,2}:\d{2}$/.test(String(z?.saat || '')) ? z.saat : '05:00'
-                }))
-              : [{ gunler_ay: [], saat: '05:00' }]
+            zamanlar: (() => {
+              const bolunmus = dilimleriGunlereBol(liste, '05:00')
+              return bolunmus.length ? bolunmus : [{ gunler_ay: [], saat: '05:00' }]
+            })()
           }]
         })))
       } else setDvsCronPlan(null)

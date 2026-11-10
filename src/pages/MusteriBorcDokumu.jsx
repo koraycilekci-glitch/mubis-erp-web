@@ -104,6 +104,21 @@ function DetayKutu({ baslik, tutar, satirlar, ts, renk = 'sky', bos = false }) {
   )
 }
 
+// 2.8.320: Bir dilim birden fazla gün taşıyorsa (gunler_ay: [18, 27, 30])
+// her günü ayrı satıra böl; böylece tüm günler görünür ve düzenlemede silinmez.
+function dilimleriGunlereBol(liste, varsayilanSaat = '06:00') {
+  const cikti = []
+  for (const z of Array.isArray(liste) ? liste : []) {
+    const saat = /^\d{1,2}:\d{2}$/.test(String(z?.saat || '')) ? z.saat : varsayilanSaat
+    const gunler = Array.isArray(z?.gunler_ay)
+      ? [...new Set(z.gunler_ay.map(Number).filter(n => n >= 1 && n <= 31))].sort((a, b) => a - b)
+      : []
+    if (!gunler.length) cikti.push({ gunler_ay: [], saat })
+    else for (const gun of gunler) cikti.push({ gunler_ay: [gun], saat })
+  }
+  return cikti
+}
+
 function borcMesaji(client, sgk, vergi, muhasebe = null) {
   const ad = client?.company || client?.name || 'Değerli Müşterimiz'
   const tarih = bugunTR()
@@ -526,10 +541,7 @@ export default function MusteriBorcDokumu() {
       if (tz) {
         for (const t of ['sgk', 'vergi']) {
           if (Array.isArray(tz[t]) && tz[t].length) {
-            turlarZamanlar[t] = tz[t].map(z => ({
-              gunler_ay: Array.isArray(z?.gunler_ay) ? z.gunler_ay.map(Number).filter(n => n >= 1 && n <= 31) : [],
-              saat: /^\d{1,2}:\d{2}$/.test(String(z?.saat || '')) ? z.saat : '06:00'
-            }))
+            turlarZamanlar[t] = dilimleriGunlereBol(tz[t], '06:00')
             turlar.push(t)
           }
         }
@@ -539,7 +551,7 @@ export default function MusteriBorcDokumu() {
         const saat = /^\d{1,2}:\d{2}$/.test(String(p.saat || '')) ? p.saat : '06:00'
         const eskiTurlar = Array.isArray(p.turlar) && p.turlar.length ? p.turlar : ['sgk', 'vergi']
         for (const t of eskiTurlar) {
-          turlarZamanlar[t] = [{ gunler_ay: gunler, saat }]
+          turlarZamanlar[t] = dilimleriGunlereBol([{ gunler_ay: gunler, saat }], '06:00')
           turlar.push(t)
         }
       }
@@ -563,11 +575,7 @@ export default function MusteriBorcDokumu() {
     try {
       const turlarZamanlar = {}
       for (const t of ['sgk', 'vergi']) {
-        const liste = (kayit.turlar_zamanlar?.[t] || [])
-          .map(z => ({
-            gunler_ay: [...new Set((z.gunler_ay || []).map(Number).filter(n => n >= 1 && n <= 31))].sort((a, b) => a - b),
-            saat: /^\d{1,2}:\d{2}$/.test(String(z.saat || '')) ? z.saat : '06:00'
-          }))
+        const liste = dilimleriGunlereBol(kayit.turlar_zamanlar?.[t] || [], '06:00')
           .filter(z => z.gunler_ay.length)
         if (liste.length) turlarZamanlar[t] = liste
       }

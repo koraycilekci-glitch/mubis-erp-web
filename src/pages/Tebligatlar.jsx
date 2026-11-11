@@ -1336,6 +1336,7 @@ export default function Tebligatlar() {
         </div>
       )}
 
+
       {/* Otomatik Gonderim Planı */}
       <div className="bg-blue-950/40 border border-blue-800/30 rounded-2xl p-5 space-y-4">
         <div className="flex items-center justify-between">
@@ -1465,6 +1466,7 @@ export default function Tebligatlar() {
           </>
         )}
       </div>
+
 
       {/* Bos durum: musteri secilmemis */}
       {!seciliId && (

@@ -17640,16 +17640,30 @@ const ISLER = {
         break;
       }
       // d) Kutu bosaldiysa mesaj GONDERILDI say — mukerrer gonderimi onler.
+      // SADECE mesaj gorunduyse basari say; kutu bosalmasi tek basina
+      // (hata/temizleme) basari sayilmaz — yanlis "gonderildi" bildirimi onler.
       // (Eskiden gonder butonunun de kaybolmasi sartti; buton kalinca
       //  ikinci kez tikliyor ve ayni mesaj iki kere gidiyordu.)
-      if (s3 && s3.kutuVar && s3.kutuMetin.length === 0) {
-        console.log("[whatsapp-web-gonder] gonderim kutu bosaldi -> tamam");
-        gonderildi = true;
-        break;
+      if (s3 && s3.kutuVar && s3.kutuMetin.length === 0 && s3.gonderVar === false) {
+        // Kutu bosaldi VE gonder butonu kayboldu -> gercekten gonderildi
+        // olabilir; ek bir bekleme ile sonMesajlar'i tekrar kontrol et.
+        await bekle2(2000);
+        const s4 = await durumOku();
+        const mesajGorundu2 = !!(s4?.sonMesajlar || []).some((t) => mesajParca && t.includes(mesajParca));
+        if (mesajGorundu2) {
+          console.log("[whatsapp-web-gonder] gonderim (gecikmeli) dogrulandi");
+          gonderildi = true;
+          break;
+        }
       }
       if (s3 && !s3.kutuVar) {
-        gonderildi = true;
-        break;
+        await bekle2(2000);
+        const s4 = await durumOku();
+        const mesajGorundu2 = !!(s4?.sonMesajlar || []).some((t) => mesajParca && t.includes(mesajParca));
+        if (mesajGorundu2) {
+          gonderildi = true;
+          break;
+        }
       }
       // e) Kutu hala dolu ise metni temizle ve tekrar dene
       if (s3?.kutuMetin && s3.kutuMetin.length > 0) {
@@ -20517,16 +20531,21 @@ async function faturaCronKontrol() {
   const gun = now.getDay();
   const saatStr = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
   let planVadesi = false;
-  if (plan && plan.aktif !== false && Array.isArray(plan.gunler) && plan.gunler.map(Number).includes(gun) && /^\d{1,2}:\d{2}$/.test(String(plan.saat || "")) && String(plan.saat) <= saatStr) {
-    let sonYerel = "";
-    if (plan.son_calisma) {
-      try {
-        const d = new Date(plan.son_calisma);
-        sonYerel = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
-      } catch {
+  if (plan && plan.aktif !== false && Array.isArray(plan.gunler) && plan.gunler.length) {
+    const pg = plan.gunler.map(Number);
+    const haftaEslesir = pg.filter((n) => n >= 0 && n <= 6).includes(gun);
+    const ayGunuEslesir = pg.filter((n) => n >= 101 && n <= 131).map((n) => n - 100).includes(now.getDate());
+    if ((haftaEslesir || ayGunuEslesir) && /^\d{1,2}:\d{2}$/.test(String(plan.saat || "")) && String(plan.saat) <= saatStr) {
+      let sonYerel = "";
+      if (plan.son_calisma) {
+        try {
+          const d = new Date(plan.son_calisma);
+          sonYerel = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+        } catch {
+        }
       }
+      if (sonYerel < bugunStr) planVadesi = true;
     }
-    if (sonYerel < bugunStr) planVadesi = true;
   }
   if (!planVadesi && !talepler.length) return;
   faturaCronCalisiyor = true;

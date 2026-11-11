@@ -17614,22 +17614,24 @@ const ISLER = {
           await bekle2(800);
         }
       }
-      // b) GONDER: Enter tusu ile gonder (WhatsApp Web'de en guvenilir yontem).
+      // b) GONDER: JS click + Enter yedegi.
       if (!gonderTiklandi) {
         gonderTiklandi = true;
-        const kutuH = await page.$(kutuSecici);
-        if (kutuH) {
-          await kutuH.click().catch(() => { });
-          await bekle2(500);
-        }
-        let sPre = await durumOku();
-        if (sPre && sPre.kutuVar && sPre.kutuMetin.length === 0) {
-          await page.keyboard.type(mesaj.replace(/\r?\n/g, " "), { delay: 10 });
-          await bekle2(1000);
-        }
+        await page.evaluate(() => {
+          const el = document.querySelector('div[contenteditable="true"][data-tab], footer div[contenteditable="true"], div[contenteditable="true"][role="textbox"]');
+          if (el) el.focus();
+        }).catch(() => { });
+        await bekle2(1000);
+        const tiklandi = await page.evaluate(() => {
+          const btn = document.querySelector('button[aria-label="Send"], button[aria-label*="gönder" i], button[aria-label*="send" i], button[data-testid="send"], span[data-icon="send"]')?.closest('button, div[role="button"]');
+          if (btn) { btn.click(); return true; }
+          return false;
+        }).catch(() => false);
+        console.log("[whatsapp-web-gonder] JS send click:", tiklandi);
+        await bekle2(1000);
         await page.keyboard.press("Enter");
         console.log("[whatsapp-web-gonder] Enter ile gonderim yapildi (deneme " + deneme + ")");
-        await bekle2(5000);
+        await bekle2(6000);
       } else {
         console.log("[whatsapp-web-gonder] Gonder butonuna zaten tiklandi; tekrar tiklanmiyor (deneme " + deneme + ")");
         await bekle2(3000);
@@ -17637,6 +17639,19 @@ const ISLER = {
       // Dogrulama
       const s3 = await durumOku();
       let dogrulandi = false;
+      if (s3) {
+        if (s3.kutuVar && s3.kutuMetin.length === 0) dogrulandi = true;
+        if (!s3.kutuVar) dogrulandi = true;
+        const mg = !!(s3?.sonMesajlar || []).some((t) => mesajParca && t.includes(mesajParca));
+        if (mg) dogrulandi = true;
+      }
+      if (dogrulandi) {
+        console.log("[whatsapp-web-gonder] gonderim dogrulandi");
+        gonderildi = true;
+      } else {
+        console.log("[whatsapp-web-gonder] gonderim dogrulanamadi - kutu hala dolu");
+      }
+      // Dogrulama
       if (s3) {
         if (s3.kutuVar && s3.kutuMetin.length === 0) dogrulandi = true;
         if (!s3.kutuVar) dogrulandi = true;

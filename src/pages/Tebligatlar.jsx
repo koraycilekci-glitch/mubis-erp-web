@@ -84,7 +84,9 @@ export default function Tebligatlar() {
   const [cronSaat, setCronSaat] = useState('09:00')
   const [cronTekrar, setCronTekrar] = useState(true)
   const [cronKaydediliyor, setCronKaydediliyor] = useState(false)
-  // 2.8.320: Otomatik GONDERIM plani (fatura cron benzeri, tek global plan)
+  // 2.8.2: Kayitli planlarda toplu silme icin secim
+  const [cronPlanSecim, setCronPlanSecim] = useState(new Set())
+  // 2.8.320: Otomatik GONDERIM plani
   const [gonderimPanel, setGonderimPanel] = useState(false)
   const [gonderimPlan, setGonderimPlan] = useState(null)
   const [gonderimAktif, setGonderimAktif] = useState(false)

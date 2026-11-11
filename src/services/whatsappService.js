@@ -375,11 +375,13 @@ export async function openWhatsAppWeb({ phone, message, kaynak = null }) {
 
   // 1) Yardimci program varsa tam otomatik gonderim (GONDER tusuna otomatik basar)
   let yardimciHata = ''
+  let yardimciSonuc = null
   try {
     const gonder = hedefKaynak === 'vps'
       ? (p) => yardimciIsSunucu('whatsapp-web-gonder', p, 3 * 60 * 1000)
       : (p) => gibYardimciIs('whatsapp-web-gonder', p, 3 * 60 * 1000)
     const res = await gonder({ telefon: to, mesaj })
+    yardimciSonuc = res
     if (res?.ok) {
       return { ok: true, channel: 'whatsapp_web', otomatik: true, kaynak: hedefKaynak }
     }
@@ -406,16 +408,14 @@ export async function openWhatsAppWeb({ phone, message, kaynak = null }) {
   // goruntusune yol aciyordu.)
   if (hedefKaynak === 'vps') {
     // QR/giris gerekli ise fallback YAPMA (VPS Chrome'da taranmasi gerekir)
-    if (res?.reason === 'giris-gerekli') {
+    if (yardimciSonuc?.reason === 'giris-gerekli') {
       return {
         ok: false,
         channel: 'whatsapp_web',
         otomatik: false,
         kaynak: 'vps',
         reason: 'giris-gerekli',
-        not: res.not || (hedefKaynak === 'vps'
-          ? "Sunucudaki WhatsApp oturumu yok. Ayarlar > Iletisim bolumundeki 'QR Kodu Göster' ile QR kodu okutun."
-          : "Yardimci programin Chrome penceresinde WhatsApp'a bir kez QR ile giris yapin; sonraki gonderimler otomatik olacak.")
+        not: yardimciSonuc.not || "Sunucudaki WhatsApp oturumu yok. Ayarlar > İletişim bölümündeki 'QR Kodu Göster' ile QR kodu okutun."
       }
     }
     // Gonderim dogrulanamadi ise yerel tarayicida wa.me ile ac (kullanici elle GONDER'e basar)

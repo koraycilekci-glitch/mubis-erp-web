@@ -443,11 +443,25 @@ export default function MusteriBorcDokumu() {
         if (secili === 'whatsapp') throw new Error('Telefon numarası yok')
         hatalar.push('telefon yok')
       } else {
+        const durumlar = []
         for (const t of tel) {
           const r = await openWhatsAppWeb({ phone: t, message: mesaj })
-          if (r?.ok === false) throw new Error(r?.not || r?.reason || 'WhatsApp gönderilemedi')
+          if (r?.ok === false) {
+            const msg = r?.not || r?.reason || 'WhatsApp gönderilemedi'
+            if (secili === 'whatsapp') throw new Error(msg)
+            hatalar.push(msg)
+            durumlar.push(`${t}: ${msg}`)
+          } else {
+            const detay = r?.otomatik
+              ? `otomatik gönderildi (${r?.kaynak || 'VPS'})`
+              : (r?.sekmeAcildi
+                ? 'hazır mesaj açıldı — GÖNDER tuşuna siz basın'
+                : (r?.not || 'mesaj açıldı'))
+            durumlar.push(`${t}: ${detay}`)
+          }
         }
         yapilan.push(`WhatsApp (${tel.length})`)
+        yapilan._whatsappDetay = durumlar.join(' | ')
       }
     }
 
@@ -471,7 +485,9 @@ export default function MusteriBorcDokumu() {
     }
 
     if (!yapilan.length) throw new Error(hatalar.join(', ') || 'Gönderim yapılamadı')
-    return yapilan.join(' + ')
+    const ozet = yapilan.join(' + ')
+    const detay = yapilan._whatsappDetay
+    return detay ? `${ozet} — ${detay}` : ozet
   }
 
   const kanalEtiket = (k) => k === 'tercih' ? 'Müşteri tercihi' : k === 'email' ? 'E-posta' : k === 'ikisi' ? 'WhatsApp + E-posta' : 'WhatsApp'

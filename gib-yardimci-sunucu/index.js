@@ -15633,7 +15633,7 @@ const ISLER = {
       }
       const menuOk = await lucaMenuSec(page, etiket, "Hesap Plan\u0131 Listesi");
       if (!menuOk) throw new Error('"Hesap Plan\u0131 Listesi" menusu acilamadi (Luca hizli erisim/menuler degismis olabilir)');
-      await new Promise((r) => setTimeout(r, 5e3));
+      await new Promise((r) => setTimeout(r, 2e3));
       const norm = (s) => String(s || "").toLocaleLowerCase("tr").replace(/\s+/g, "");
       const tumFrame = () => [...page.frames()];
       const isaretleVeMerkez = async (frame, eslesme) => {

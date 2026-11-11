@@ -22048,7 +22048,7 @@ async function lucaBelgeleriIndir(page, etiket, durum, p = {}) {
       return "bekle";
     }
     if (durum.uttsAsama === "liste-bekle") {
-      if (Date.now() - (durum.uttsAsamaZaman || 0) < 5000) return "bekle";
+      if (Date.now() - (durum.uttsAsamaZaman || 0) < 1800) return "bekle";
       // 2.7.616: uyari diyaloğu aciksa once kapat
       if (await uttsUyariKapat()) { durum.uttsAsamaZaman = Date.now(); return "bekle"; }
       // 2.7.615: dogrulamali onay kutusu â€” tiklama sonrasi kutu gercekten
@@ -28654,6 +28654,14 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   const turLimiti = /^utts/.test(String(p.sorguTip || "")) ? 400 : 60;
   for (let tur = 0; tur < turLimiti; tur++) {
     if (LUCA_GETIR_IPTAL) throw new Error("KULLANICI_DURDURDU");
+    // 2.8.321: adaptif polling icin tur basi durum ozeti
+    const _turAdim = sDurum.adim;
+    const _turMusteri = musteriSecildi;
+    const _turYil = yilSecildi;
+    const _turMenu = menuSecildi;
+    const _turGibGetir = gibdenGetirildi;
+    const _turGibTik = gibdenTiklandi;
+    const _turIndirme = indirmeBitti;
     const sayfalar = await canliSayfalar();
     if (!sayfalar.length) {
       log("canli Luca sayfasi kalmadi, akis durduruldu");
@@ -28940,7 +28948,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
         if (bulundu) {
           log(`fatura modul linkine tiklandi: "${bulundu}" (${u})`);
           tiklandi = true;
-          await new Promise((r) => setTimeout(r, 3e3));
+          await new Promise((r) => setTimeout(r, 800));
           break;
         }
       } catch (e) {
@@ -28978,7 +28986,16 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
       } catch (e) {
       }
     }
-    await new Promise((r) => setTimeout(r, 1200));
+    // 2.8.321: ADAPTIF POLLING — aksiyon olan turda 350ms, bosta 900ms.
+    const _aksiyonVar = tiklandi
+      || sDurum.adim !== _turAdim
+      || musteriSecildi !== _turMusteri
+      || yilSecildi !== _turYil
+      || menuSecildi !== _turMenu
+      || gibdenGetirildi !== _turGibGetir
+      || gibdenTiklandi !== _turGibTik
+      || indirmeBitti !== _turIndirme;
+    await new Promise((r) => setTimeout(r, _aksiyonVar ? 350 : 900));
   }
   if (!indirmeBitti) log("akis " + turLimiti + " tur sonunda tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;

@@ -19979,6 +19979,17 @@ async function etebligatOtomatikGonder(clientId, belgeNo, dosyaAdi, tebligatlar)
   }
 }
 var etebligatCronCalisiyor = false;
+async function etebligatGonderimKontrol() {
+  try {
+    const r = await fetch("https://mubiserp.com/api/etebligat-gonderim-calistir?sunucu=1", { signal: AbortSignal.timeout(12e4) });
+    if (!r.ok) return;
+    const j = await r.json().catch(() => null);
+    if (j && j.vadesi) console.log("[etebligat-gonderim] vadesi geldi:", JSON.stringify(j));
+  } catch (e) {
+    console.log("[etebligat-gonderim] hata:", e?.message || e);
+  }
+}
+
 async function etebligatCronKontrol() {
   if (etebligatCronCalisiyor) return;
   let planlar = [];
@@ -20078,6 +20089,19 @@ setTimeout(() => {
   } catch {
   }
 }, 90 * 1e3);
+
+setInterval(() => {
+  try {
+    etebligatGonderimKontrol();
+  } catch {
+  }
+}, 60 * 1e3);
+setTimeout(() => {
+  try {
+    etebligatGonderimKontrol();
+  } catch {
+  }
+}, 45 * 1e3);
 // ---------------------------------------------------------------------------
 // 2.8.4: OTOMATIK FATURA SORGULAMA (VPS) + musteri "Fatura Guncelle Talebi"
 // mubiserp.com/api/fatura-cron?sunucu=1 60 sn'de bir yoklanir; plan vadesi

@@ -83,12 +83,89 @@ export default function Tebligatlar() {
   const [cronSaat, setCronSaat] = useState('09:00')
   const [cronTekrar, setCronTekrar] = useState(true)
   const [cronKaydediliyor, setCronKaydediliyor] = useState(false)
-  // 2.8.2: Kayitli planlarda toplu silme icin secim
-  const [cronPlanSecim, setCronPlanSecim] = useState(new Set())
+  // 2.8.320: Otomatik GONDERIM plani (fatura cron benzeri, tek global plan)
+  const [gonderimPanel, setGonderimPanel] = useState(false)
+  const [gonderimPlan, setGonderimPlan] = useState(null)
+  const [gonderimAktif, setGonderimAktif] = useState(false)
+  const [gonderimGunler, setGonderimGunler] = useState(new Set())
+  const [gonderimAyGunler, setGonderimAyGunler] = useState(new Set())
+  const [gonderimSaat, setGonderimSaat] = useState('09:00')
+  const [gonderimKanal, setGonderimKanal] = useState('tercih')
+  const [gonderimMusteriler, setGonderimMusteriler] = useState(new Set())
+  const [gonderimMusteriAcik, setGonderimMusteriAcik] = useState(false)
+  const [gonderimKaydediliyor, setGonderimKaydediliyor] = useState(false)
+  const [gonderimMesaj, setGonderimMesaj] = useState(null)
+
+  const gonderimYukle = useCallback(async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch('/api/etebligat-gonderim', { headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {} })
+      const j = await r.json().catch(() => null)
+      if (j?.ok && j.plan) {
+        const p = j.plan
+        setGonderimPlan(p)
+        setGonderimAktif(p.aktif !== false)
+        setGonderimGunler(new Set((p.gunler || []).filter(n => n >= 0 && n <= 6)))
+        setGonderimAyGunler(new Set((p.gunler || []).filter(n => n >= 101 && n <= 131).map(n => n - 100)))
+        setGonderimSaat(p.saat || '09:00')
+        setGonderimKanal(p.kanal || 'tercih')
+        setGonderimMusteriler(new Set((p.musteriler || []).map(Number)))
+        setGonderimMusteriAcik((p.musteriler || []).length > 0)
+      } else {
+        setGonderimPlan(null)
+      }
+    } catch { /* yoksay */ }
+  }, [])
+
+  const gonderimKaydet = async (aktifTercihi = gonderimAktif) => {
+    const oncekiAktif = gonderimAktif
+    const tumGunler = [...gonderimGunler, ...[...gonderimAyGunler].map(d => 100 + d)]
+    if (aktifTercihi && !tumGunler.length) { setGonderimMesaj({ ok: false, t: 'En az bir gün seçin.' }); return }
+    setGonderimAktif(aktifTercihi)
+    setGonderimKaydediliyor(true)
+    setGonderimMesaj(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch('/api/etebligat-gonderim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
+        body: JSON.stringify({
+          aktif: aktifTercihi,
+          gunler: tumGunler,
+          saat: gonderimSaat,
+          kanal: gonderimKanal,
+          musteriler: gonderimMusteriAcik && gonderimMusteriler.size ? [...gonderimMusteriler] : []
+        })
+      })
+      const j = await r.json()
+      if (j.ok) {
+        setGonderimPlan(j.plan)
+        await gonderimYukle()
+        setGonderimMesaj({ ok: true, t: aktifTercihi ? 'Otomatik gönderim planı kaydedildi. Seçilen gün/saatte seçili müşterilerin gönderilmemiş tebligatları otomatik gönderilecek.' : 'Otomatik gönderim kapatıldı.' })
+      } else {
+        setGonderimAktif(oncekiAktif)
+        setGonderimMesaj({ ok: false, t: j.error || 'Kaydedilemedi.' })
+      }
+    } catch {
+      setGonderimAktif(oncekiAktif)
+      setGonderimMesaj({ ok: false, t: 'Bağlantı hatası.' })
+    } finally { setGonderimKaydediliyor(false) }
+  }
+
+  const gonderimIptal = async () => {
+    if (!window.confirm('Otomatik gönderim planı silinecek. Emin misiniz?')) return
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch('/api/etebligat-gonderim', { method: 'DELETE', headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {} })
+      const j = await r.json()
+      if (j.ok) { setGonderimPlan(null); setGonderimMesaj({ ok: true, t: 'Plan iptal edildi.' }) }
+    } catch { /* yoksay */ }
+  }
 
   useEffect(() => {
     gibYardimciDurumu().then(setDurum).catch(() => setDurum('kurulu-degil'))
     getSettings().then(setSettings).catch(() => {})
+    gonderimYukle().catch(() => {})
   }, [])
 
   // Musteri degisince kayitli listeyi yukle
@@ -1255,6 +1332,136 @@ export default function Tebligatlar() {
           </div>
         </div>
       )}
+
+      {/* Otomatik Gonderim Planı */}
+      <div className="bg-blue-950/40 border border-blue-800/30 rounded-2xl p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-white font-semibold text-sm">Otomatik Gönderim Planı</h3>
+          <button
+            type="button"
+            onClick={() => setGonderimPanel(v => !v)}
+            className="text-xs text-cyan-300 hover:text-cyan-200"
+          >{gonderimPanel ? 'Gizle' : 'Göster'}</button>
+        </div>
+        {gonderimPanel && (
+          <>
+            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={gonderimAktif}
+                onChange={(e) => setGonderimAktif(e.target.checked)}
+                className="w-4 h-4 rounded border-blue-700/50 bg-blue-900/40 text-cyan-500"
+              />
+              Otomatik gönderim aktif
+            </label>
+            <div>
+              <label className="block text-[11px] uppercase tracking-wide text-gray-500 mb-1.5">Gönderim Kanalı</label>
+              <div className="inline-flex rounded-lg overflow-hidden border border-blue-700/50">
+                {[{ v: 'tercih', ad: 'Tercih' }, { v: 'whatsapp', ad: 'WhatsApp' }, { v: 'email', ad: 'E-posta' }, { v: 'ikisi', ad: 'İkisi' }].map(o => (
+                  <button
+                    key={o.v}
+                    type="button"
+                    onClick={() => setGonderimKanal(o.v)}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${gonderimKanal === o.v ? 'bg-emerald-500 text-white' : 'bg-blue-900/50 text-gray-400 hover:text-gray-200'}`}
+                  >{o.ad}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-[11px] uppercase tracking-wide text-gray-500 mb-1.5">Haftanın Günleri</label>
+              <div className="flex flex-wrap gap-1.5">
+                {['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'].map((ad, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setGonderimGunler(prev => { const y = new Set(prev); if (y.has(i)) y.delete(i); else y.add(i); return y })}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${gonderimGunler.has(i) ? 'bg-cyan-500/25 border-cyan-500/50 text-cyan-200' : 'bg-blue-900/60 border-blue-700/50 text-gray-400 hover:text-gray-200'}`}
+                  >{ad}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-[11px] uppercase tracking-wide text-gray-500 mb-1.5">Ayın Günleri (1-31)</label>
+              <div className="flex flex-wrap gap-1">
+                {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setGonderimAyGunler(prev => { const y = new Set(prev); if (y.has(d)) y.delete(d); else y.add(d); return y })}
+                    className={`w-7 h-7 rounded text-[10px] font-medium border transition-colors ${gonderimAyGunler.has(d) ? 'bg-amber-500/25 border-amber-500/50 text-amber-200' : 'bg-blue-900/60 border-blue-700/50 text-gray-400 hover:text-gray-200'}`}
+                  >{d}</button>
+                ))}
+              </div>
+            </div>
+            <div className="w-24">
+              <label className="block text-[11px] uppercase tracking-wide text-gray-500 mb-1.5">Saat</label>
+              <input
+                type="time"
+                value={gonderimSaat}
+                onChange={e => setGonderimSaat(e.target.value)}
+                className="w-full bg-blue-900/60 border border-blue-700/50 rounded-xl px-2.5 py-2 text-white text-sm"
+              />
+            </div>
+            <div>
+              <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer select-none mb-2">
+                <input
+                  type="checkbox"
+                  checked={gonderimMusteriAcik}
+                  onChange={(e) => setGonderimMusteriAcik(e.target.checked)}
+                  className="w-4 h-4 rounded border-blue-700/50 bg-blue-900/40 text-cyan-500"
+                />
+                Müşteri seç (işaretli değilse tüm aktif müşteriler)
+              </label>
+              {gonderimMusteriAcik && (
+                <div className="max-h-40 overflow-y-auto border border-blue-700/30 rounded-lg p-2 space-y-1">
+                  {musteriler.map(m => (
+                    <label key={m.id} className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={gonderimMusteriler.has(m.id)}
+                        onChange={() => setGonderimMusteriler(prev => { const y = new Set(prev); if (y.has(m.id)) y.delete(m.id); else y.add(m.id); return y })}
+                        className="w-3.5 h-3.5 rounded border-blue-700/50 bg-blue-900/40 text-cyan-500"
+                      />
+                      {m.name || m.company_name || `#${m.id}`}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => gonderimKaydet(true)}
+                disabled={gonderimKaydediliyor}
+                className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium disabled:opacity-50"
+              >
+                {gonderimKaydediliyor ? 'Kaydediliyor…' : (gonderimPlan ? 'Planı Güncelle' : 'Kaydet')}
+              </button>
+              {gonderimPlan && (
+                <button
+                  type="button"
+                  onClick={gonderimIptal}
+                  className="px-4 py-2 rounded-xl bg-blue-900/60 border border-blue-700/50 text-gray-300 hover:text-white text-sm"
+                >İptal Et</button>
+              )}
+              <button
+                type="button"
+                onClick={() => gonderimKaydet(false)}
+                disabled={gonderimKaydediliyor}
+                className="px-4 py-2 rounded-xl bg-blue-900/60 border border-blue-700/50 text-gray-300 hover:text-white text-sm disabled:opacity-50"
+              >Kapat</button>
+            </div>
+            {gonderimMesaj && (
+              <div className={`text-xs px-3 py-2 rounded-xl border ${gonderimMesaj.ok ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-200' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
+                {gonderimMesaj.t}
+              </div>
+            )}
+            <p className="text-[11px] text-gray-500">
+              Not: Plan aktifken cron sırasında otomatik gönderim devre dışı kalır; gönderim yalnızca bu planın zamanlamasına göre yapılır. Kanal “Tercih” ise müşterinin iletişim bilgilerindeki Tahakkuk Gönderim Şekli kullanılır.
+            </p>
+          </>
+        )}
+      </div>
 
       {/* Bos durum: musteri secilmemis */}
       {!seciliId && (

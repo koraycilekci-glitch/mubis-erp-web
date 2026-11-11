@@ -84,6 +84,16 @@ export async function onRequestPost({ request, env }) {
   const belgeNo = String(govde?.belge_no || '').trim()
   if (!clientId || !belgeNo) return json({ error: 'client_id ve belge_no zorunlu' }, 400)
 
+  // 2.8.320: Otomatik Gonderim paneli aktifse, cron sirasindaki otomatik
+  // gonderim devre disi (gonderim yalnizca panelin zamanlamasina gore yapilir).
+  try {
+    const { data: p } = await supabase.from('app_settings').select('value').eq('key', 'etebligat_gonderim_v1').limit(1).maybeSingle()
+    const plan = p?.value ? (typeof p.value === 'string' ? JSON.parse(p.value) : p.value) : null
+    if (plan?.aktif === true) {
+      return json({ ok: true, belge_no: belgeNo, atlandi: true, reason: 'panel-aktif' })
+    }
+  } catch { /* plan okunamadi — eski davranis (gonder) */ }
+
   // Yalnizca aktif otomatik sorgu plani olan musteri
   try {
     const r = await fetch(`${SB_URL}/rest/v1/etebligat_cron?client_id=eq.${clientId}&aktif=eq.true&select=id&limit=1`, { headers: SvcH })
@@ -149,8 +159,12 @@ export async function onRequestPost({ request, env }) {
   if (fileUrl) satir.file_url = fileUrl
 
   // ---- 3) Gonderim tercihi (tahakkuk gonderim sekli ile ayni) ----
+  // 2.8.320: etebligat-gonderim panelinden kanal override gelebilir
   const bd = client.beyan_durumlari || {}
-  const tercih = String(bd.tahakkukGonderim || 'yok').toLowerCase()
+  let tercih = String(bd.tahakkukGonderim || 'yok').toLowerCase()
+  const override = ['tercih', 'whatsapp', 'email', 'ikisi'].includes(govde?.kanal) ? govde.kanal : null
+  if (override && override !== 'tercih') tercih = override === 'email' ? 'mail' : override
+  if (override === 'tercih') tercih = String(bd.tahakkukGonderim || 'yok').toLowerCase()
   sonuc.tercih = tercih
   if (tercih === 'yok' || !tercih) {
     sonuc.atlandi = 'musteri tercihi: gonderme yok'

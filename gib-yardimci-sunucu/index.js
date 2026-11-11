@@ -511,6 +511,7 @@ async function tarayiciAl() {
   //   [tarayici] onceki oturumdan kalan Chrome kapatildi
   // Artik isConnected() kullanilir ve baslatma promise'i tarayici baglantisi
   // kopana kadar PAYLASILIR: surec basina tek Chrome acilir.
+  bostaKapatIptal()
   if (browser && typeof browser.isConnected === 'function' && browser.isConnected()) return browser
   if (!tarayiciBaslatmaPromise) {
     tarayiciBaslatmaPromise = tarayiciBaslat().catch(e => {
@@ -1450,6 +1451,26 @@ function klasorIzleyiciBaslat() {
 klasorIzleyiciBaslat()
 
 // Yardimcinin kendi tarayici ornegini (tum sekmeleriyle) kapatir
+// 2.8.321: HER IS SONUNDA Chrome'u kapatmak yerine BOSTA kapat.
+// VPS'te her is icin Chrome yeniden aciliyordu (~10-20 sn) + Luca girisi
+// tekrar yapiliyordu. Artik tarayici isler arasinda acik tutulur; yalnizca
+// BOSTA_KAPAT_MS boyunca is gelmezse kapatilir. Boylece ardisik sorgular
+// cok daha hizli tamamlanir.
+var bostaKapatTimer = null;
+var BOSTA_KAPAT_MS = Number(process.env.MUBIS_BOSTA_KAPAT_MS || 150000);
+function bostaKapatZamanla() {
+  try { if (bostaKapatTimer) clearTimeout(bostaKapatTimer); } catch (e) { }
+  bostaKapatTimer = setTimeout(() => {
+    bostaKapatTimer = null;
+    tarayiciyiKapat().catch(() => { });
+  }, BOSTA_KAPAT_MS);
+  if (bostaKapatTimer.unref) bostaKapatTimer.unref();
+}
+function bostaKapatIptal() {
+  try { if (bostaKapatTimer) clearTimeout(bostaKapatTimer); } catch (e) { }
+  bostaKapatTimer = null;
+}
+
 async function tarayiciyiKapat() {
   // 2.7.340: Elle yurutulen bir is (e-Arsiv/e-Fatura doldurma, GIB odeme) veya
   // XML->PDF donusumu surerken kapatma. Tam otomatik bir isin bitisi ayni
@@ -30180,14 +30201,14 @@ document.getElementById('gir').addEventListener('click', async () => {
                 aktifIsSayisi = Math.max(0, aktifIsSayisi - 1);
                 if (aktifIsSayisi === 0) { otomasyonSeansAktif = false; indirmeModuUygula(false).catch(() => {}); }
               }
-              if (OTOMATIK_ISLER.has(p.is) && !isParams.oturumKalsin && sonuc2?.pencereAcikBirak !== true) await tarayiciyiKapat();
+              if (OTOMATIK_ISLER.has(p.is) && !isParams.oturumKalsin && sonuc2?.pencereAcikBirak !== true) bostaKapatZamanla();
               IS_SONUCLARI.set(isId, { durum: "bitti", sonuc: sonuc2 || {}, bitti: Date.now() });
               console.log("[is-asenkron]", isId, p.is, "bitti");
             } catch (err2) {
               const mesaj2 = err2 && err2.message || String(err2);
               console.error("[is-asenkron-hata]", isId, p.is, mesaj2);
               try {
-                if (OTOMATIK_ISLER.has(p.is) && !isParams.oturumKalsin) await tarayiciyiKapat();
+                if (OTOMATIK_ISLER.has(p.is) && !isParams.oturumKalsin) bostaKapatZamanla();
               } catch (e) {
               }
               IS_SONUCLARI.set(isId, { durum: "hata", error: mesaj2, bitti: Date.now() });
@@ -30237,14 +30258,14 @@ document.getElementById('gir').addEventListener('click', async () => {
           // 2.8.16: gonderim asamasi is bitince temizlenir
           gonderimDurumu = null;
         }
-        if (OTOMATIK_ISLER.has(p.is) && !p.oturumKalsin && sonuc?.pencereAcikBirak !== true) await tarayiciyiKapat();
+        if (OTOMATIK_ISLER.has(p.is) && !p.oturumKalsin && sonuc?.pencereAcikBirak !== true) bostaKapatZamanla();
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: true, ...sonuc }));
       } catch (err) {
         const mesaj = err && err.message || String(err) || "Bilinmeyen hata";
         console.error("[is-hatasi]", mesaj, err && err.stack ? err.stack : "");
         try {
-          if (OTOMATIK_ISLER.has(p.is) && !p.oturumKalsin) await tarayiciyiKapat();
+          if (OTOMATIK_ISLER.has(p.is) && !p.oturumKalsin) bostaKapatZamanla();
         } catch (e) {
         }
         res.writeHead(500, { "Content-Type": "application/json" });

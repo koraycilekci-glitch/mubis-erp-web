@@ -17637,22 +17637,23 @@ const ISLER = {
       } else {
         console.log("[whatsapp-web-gonder] Gonder butonuna zaten tiklandi; tekrar tiklanmiyor (deneme " + deneme + ")");
       }
-      // Gonderim sonrasi dogrulama: mesaj sohbette gorunene veya kutu
-      // bosalarak gonder butonu kaybolana kadar bekle (mukerrer tiklama yok).
-      let dogrulandi = false;
-      for (let w = 0; w < 8 && !dogrulandi; w++) {
-        await bekle2(2000);
-        const sw = await durumOku();
-        if (!sw) break;
-        const mg = !!(sw?.sonMesajlar || []).some((t) => mesajParca && t.includes(mesajParca));
-        if (mg) { dogrulandi = true; break; }
-        if (sw.kutuVar && sw.kutuMetin.length === 0) { dogrulandi = true; break; }
-        if (!sw.kutuVar) { dogrulandi = true; break; }
-      }
-      if (dogrulandi) {
-        console.log("[whatsapp-web-gonder] gonderim dogrulandi");
+      // Gonderim sonrasi: send butonu basariyla tiklandiysa gonderildi say.
+      // (mukerrer gonderimi onlemek icin buton yalnizca bir kez tiklandi)
+      if (gonderTiklandi) {
+        console.log("[whatsapp-web-gonder] GONDER butonu tiklandi -> gonderildi kabul");
         gonderildi = true;
-        break;
+      } else {
+        await bekle2(3000);
+        const sw = await durumOku();
+        if (sw) {
+          const mg = !!(sw?.sonMesajlar || []).some((t) => mesajParca && t.includes(mesajParca));
+          if (mg || (sw.kutuVar && sw.kutuMetin.length === 0) || !sw.kutuVar) {
+            gonderildi = true;
+          }
+        }
+      }
+      if (gonderildi) {
+        console.log("[whatsapp-web-gonder] gonderim tamam:", telefon);
       }
       // Tekrar tiklama/clear YAPILMAZ (mukerrer gonderimi onler).
 

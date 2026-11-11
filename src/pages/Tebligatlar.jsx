@@ -1339,7 +1339,27 @@ export default function Tebligatlar() {
 
       {/* Otomatik Gonderim Planı */}
       <div className="bg-blue-950/40 border border-blue-800/30 rounded-2xl p-5 space-y-4">
-        <h3 className="text-white font-semibold text-sm">Otomatik Gönderim Planı</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-white font-semibold text-sm">Otomatik Gönderim Planı</h3>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => gonderimKaydet(!gonderimAktif)}
+              disabled={gonderimKaydediliyor}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${gonderimAktif ? 'bg-green-500/20 border-green-500/50 text-green-300 hover:bg-green-500/30' : 'bg-red-500/15 border-red-500/40 text-red-300 hover:bg-red-500/25'} disabled:opacity-50`}
+              title={gonderimAktif ? 'Otomatik gönderimi kapat' : 'Otomatik gönderimi aç'}
+            >
+              {gonderimAktif ? 'Açık' : 'Kapalı'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setGonderimPanel(v => !v)}
+              className="text-xs text-cyan-300 hover:text-cyan-200 px-2 py-1.5"
+            >{gonderimPanel ? 'Gizle' : 'Göster'}</button>
+          </div>
+        </div>
+        {gonderimPanel && (
+          <>
 
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer select-none">
               <input
@@ -1447,14 +1467,16 @@ export default function Tebligatlar() {
                 className="px-4 py-2 rounded-xl bg-blue-900/60 border border-blue-700/50 text-gray-300 hover:text-white text-sm disabled:opacity-50"
               >Kapat</button>
             </div>
-            {gonderimMesaj && (
-              <div className={`text-xs px-3 py-2 rounded-xl border ${gonderimMesaj.ok ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-200' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
-                {gonderimMesaj.t}
-              </div>
-            )}
             <p className="text-[11px] text-gray-500">
               Not: Plan aktifken cron sırasında otomatik gönderim devre dışı kalır; gönderim yalnızca bu planın zamanlamasına göre yapılır. Kanal “Tercih” ise müşterinin iletişim bilgilerindeki Tahakkuk Gönderim Şekli kullanılır.
             </p>
+          </>
+        )}
+        {gonderimMesaj && (
+          <div className={`text-xs px-3 py-2 rounded-xl border ${gonderimMesaj.ok ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-200' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
+            {gonderimMesaj.t}
+          </div>
+        )}
       </div>
 
 

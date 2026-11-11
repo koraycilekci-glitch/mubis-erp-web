@@ -521,6 +521,7 @@ export default function MusteriBorcDokumu() {
     let basarili = 0
     let atlanan = 0
     const hatalar = []
+    const detaylar = []
     for (const grup of hedefler) {
       const { client, sgk, vergi } = grup
       const muh = muhasebeDahil ? muhasebeBorc[String(client.id)] : null
@@ -529,16 +530,20 @@ export default function MusteriBorcDokumu() {
         const ozet = await kanalGonder(kanal, client, mesaj)
         if (ozet === 'gönderim tercihi yok') { atlanan++; continue }
         basarili++
-        setGonderimSonuc(`${basarili}/${hedefler.length} gönderildi…`)
+        detaylar.push(`${musteriAdi(client)}: ${ozet}`)
+        setGonderimSonuc(`${basarili}/${hedefler.length} gönderildi…\n${detaylar.join('\n')}`)
       } catch (e) {
         hatalar.push(`${musteriAdi(client)}: ${e?.message || 'hata'}`)
+        detaylar.push(`${musteriAdi(client)}: ${e?.message || 'hata'}`)
+        setGonderimSonuc(`${basarili}/${hedefler.length} gönderildi…\n${detaylar.join('\n')}`)
       }
     }
     setTopluGonderiyor(false)
     setGonderimSonuc(
       `Toplu gönderim tamamlandı: ${basarili} başarılı` +
       (atlanan ? `, ${atlanan} tercih "yok" (atlandı)` : '') +
-      (hatalar.length ? `, ${hatalar.length} hata (${hatalar.slice(0, 3).join(' · ')})` : '') + '.'
+      (hatalar.length ? `, ${hatalar.length} hata (${hatalar.slice(0, 3).join(' · ')})` : '') + '.' +
+      (detaylar.length ? '\n' + detaylar.join('\n') : '')
     )
   }
 
@@ -1035,7 +1040,7 @@ export default function MusteriBorcDokumu() {
               Toplu Gönder ({gonderilecekAdet})
             </button>
           </div>
-          {gonderimSonuc && <div className="basis-full text-[11px] text-gray-400">{gonderimSonuc}</div>}
+          {gonderimSonuc && <div className="basis-full text-[11px] text-gray-400 whitespace-pre-wrap break-words">{gonderimSonuc}</div>}
         </div>
       )}
 

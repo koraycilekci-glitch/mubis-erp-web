@@ -17614,28 +17614,40 @@ const ISLER = {
           await bekle2(800);
         }
       }
-      let s2 = await durumOku();
-      // b) GONDER butonuna bas — SADECE bir kez (mukerrer gonderimi onler)
+      // b) GONDER: Enter tusu ile gonder (WhatsApp Web'de en guvenilir yontem).
       if (!gonderTiklandi) {
-        if (s2?.gonderVar && s2.gonderKoordinat) {
-          gonderTiklandi = true;
-          try {
-            await page.mouse.click(s2.gonderKoordinat.x, s2.gonderKoordinat.y);
-            console.log("[whatsapp-web-gonder] GONDER butonuna tiklandi (deneme " + deneme + ")");
-          } catch (e) {
-            await page.keyboard.press("Enter").catch(() => {});
-          }
-        } else {
-          const kutuH = await page.$(kutuSecici);
-          if (kutuH) {
-            gonderTiklandi = true;
-            await kutuH.click().catch(() => {});
-            await page.keyboard.press("Enter").catch(() => {});
-            console.log("[whatsapp-web-gonder] Enter ile gonderim (deneme " + deneme + ")");
-          }
+        gonderTiklandi = true;
+        const kutuH = await page.$(kutuSecici);
+        if (kutuH) {
+          await kutuH.click().catch(() => { });
+          await bekle2(500);
         }
+        let sPre = await durumOku();
+        if (sPre && sPre.kutuVar && sPre.kutuMetin.length === 0) {
+          await page.keyboard.type(mesaj.replace(/\r?\n/g, " "), { delay: 10 });
+          await bekle2(1000);
+        }
+        await page.keyboard.press("Enter");
+        console.log("[whatsapp-web-gonder] Enter ile gonderim yapildi (deneme " + deneme + ")");
+        await bekle2(5000);
       } else {
         console.log("[whatsapp-web-gonder] Gonder butonuna zaten tiklandi; tekrar tiklanmiyor (deneme " + deneme + ")");
+        await bekle2(3000);
+      }
+      // Dogrulama
+      const s3 = await durumOku();
+      let dogrulandi = false;
+      if (s3) {
+        if (s3.kutuVar && s3.kutuMetin.length === 0) dogrulandi = true;
+        if (!s3.kutuVar) dogrulandi = true;
+        const mg = !!(s3?.sonMesajlar || []).some((t) => mesajParca && t.includes(mesajParca));
+        if (mg) dogrulandi = true;
+      }
+      if (dogrulandi) {
+        console.log("[whatsapp-web-gonder] gonderim dogrulandi");
+        gonderildi = true;
+      } else {
+        console.log("[whatsapp-web-gonder] gonderim dogrulanamadi - kutu hala dolu");
       }
       // Gonderim dogrulamasi: send butonu basariyla tiklandiysa gonderildi kabul.
       // (WhatsApp Web DOM surume gore degisebildigi icin mesajGorundu/kutu-bosalma

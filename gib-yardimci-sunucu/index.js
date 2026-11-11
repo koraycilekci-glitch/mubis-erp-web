@@ -21586,6 +21586,47 @@ async function lucaJqTopluIndir(page, etiket, p = {}) {
   log("HIZLI INDIRME tamam: ZIP acildi, XML/PDF dosyalari indirme klasorune dustu");
   return "tamam";
 }
+// 2.8.321: Luca'nin liste bildirim metnini okur:
+//   "125 adet fatura bulundu. (Sayfa No: 1)"
+// Boylece kac belge geldigini biliriz; 0 ise 45 sn bos bekleme yapmayiz,
+// >0 ise liste hazir demektir.
+async function lucaListeBilgisi(page) {
+  try {
+    for (const f of page.frames()) {
+      const r = await f.evaluate(() => {
+        const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+        const adaylar = document.querySelectorAll("div, span, td, p, b, strong");
+        let adet = null, sayfa = null;
+        for (let i = 0; i < adaylar.length; i++) {
+          const t = norm(adaylar[i].innerText || adaylar[i].textContent || "");
+          if (!t || t.length > 220) continue;
+          const m = t.match(/(\d+)\s+adet\s+(?:fatura|belge)\s+bulundu/i);
+          if (m) adet = Number(m[1]);
+          const ms = t.match(/\(Sayfa\s*No\s*:\s*(\d+)\)/i);
+          if (ms) sayfa = Number(ms[1]);
+          if (adet !== null) break;
+        }
+        const gorunur = (el) => el.getClientRects().length > 0;
+        let satir = 0;
+        const kutular = document.querySelectorAll('input[type="checkbox"]');
+        for (let i = 0; i < kutular.length; i++) {
+          const cb = kutular[i];
+          if (!gorunur(cb) || cb.disabled) continue;
+          if (cb.closest("th") || cb.closest("thead")) continue;
+          satir++;
+        }
+        return { adet, sayfa, satir };
+      }).catch(() => null);
+      if (r && (r.adet !== null || r.satir > 0)) return r;
+      if (r && r.adet === null && r.satir === 0) {
+        // devam: diger frame'lerde olabilir
+        continue;
+      }
+    }
+  } catch (e) { /* yoksay */ }
+  return null;
+}
+
 async function lucaBelgeleriIndir(page, etiket, durum, p = {}) {
   const log = (m, ek) => console.log(`[${etiket}] ${m}`, ek === void 0 ? "" : ek);
   gibBosDinleyiciKur(page);
@@ -21638,7 +21679,11 @@ async function lucaBelgeleriIndir(page, etiket, durum, p = {}) {
       const uttsMi = /^utts/.test(sorguTipStr0);
       const ilk = durum.bosListeIlk || (durum.bosListeIlk = Date.now());
       const gecenSn = Math.round((Date.now() - ilk) / 1e3);
-      if (!uttsMi || gecenSn >= 45) {
+      // 2.8.321: liste bildirimi "0 adet ... bulundu" diyorsa kesin bos -> bekleme yok
+      const lb0 = await lucaListeBilgisi(page);
+      const kesinBos = !!(lb0 && lb0.adet === 0 && lb0.satir === 0);
+      if (kesinBos) log(`liste bildirimi: 0 belge -> kesin bos (${sorguTipStr0})`);
+      if (!uttsMi || kesinBos || gecenSn >= 45) {
         log(`bos liste tespit edildi (${sorguTipStr0}, ${gecenSn} sn, satir=0) - diyologlar kapatilip akis bitiriliyor`);
         try {
           for (const f of page.frames()) {
@@ -28933,6 +28978,14 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
     }
     if (gibdenGetirildi && !indirmeBitti) {
       adim("belge-sec-indir");
+      // 2.8.321: liste bildiriminden belge sayisini oku (tanilama + erken karar)
+      if (!durum.listeBilgisiLog) {
+        const lb = await lucaListeBilgisi(aktif).catch(() => null);
+        if (lb && (lb.adet !== null || lb.satir > 0)) {
+          durum.listeBilgisiLog = true;
+          log(`liste bilgisi: adet=${lb.adet === null ? "?" : lb.adet}, satir=${lb.satir}, sayfa=${lb.sayfa === null ? "?" : lb.sayfa}`);
+        }
+      }
       if (sDurum.faz !== "zip-paketleniyor") {
         sDurum.faz = "zip-paketleniyor";
         sDurum.zaman = Date.now();

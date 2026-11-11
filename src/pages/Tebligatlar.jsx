@@ -12,6 +12,7 @@ import {
 } from '../services/etebligatService'
 import { sendDocumentViaWhatsAppChannel, sendEmail } from '../services/whatsappService'
 import { getSettings } from '../services/settingsService'
+import { supabase } from '../lib/supabase'
 
 // Tebligat tarihi filtreleri icin yardimci: "18.09.2026" / "2026-09-18" gibi
 // metinleri Date'e cevirir; cozemezse null dondurur.

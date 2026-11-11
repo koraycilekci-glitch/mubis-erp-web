@@ -1339,16 +1339,8 @@ export default function Tebligatlar() {
 
       {/* Otomatik Gonderim Planı */}
       <div className="bg-blue-950/40 border border-blue-800/30 rounded-2xl p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-white font-semibold text-sm">Otomatik Gönderim Planı</h3>
-          <button
-            type="button"
-            onClick={() => setGonderimPanel(v => !v)}
-            className="text-xs text-cyan-300 hover:text-cyan-200"
-          >{gonderimPanel ? 'Gizle' : 'Göster'}</button>
-        </div>
-        {gonderimPanel && (
-          <>
+        <h3 className="text-white font-semibold text-sm">Otomatik Gönderim Planı</h3>
+
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -1463,8 +1455,6 @@ export default function Tebligatlar() {
             <p className="text-[11px] text-gray-500">
               Not: Plan aktifken cron sırasında otomatik gönderim devre dışı kalır; gönderim yalnızca bu planın zamanlamasına göre yapılır. Kanal “Tercih” ise müşterinin iletişim bilgilerindeki Tahakkuk Gönderim Şekli kullanılır.
             </p>
-          </>
-        )}
       </div>
 
 

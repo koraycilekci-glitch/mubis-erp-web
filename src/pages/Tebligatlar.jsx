@@ -1341,16 +1341,17 @@ export default function Tebligatlar() {
       <div className="bg-blue-950/40 border border-blue-800/30 rounded-2xl p-5 space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-white font-semibold text-sm">Otomatik Gönderim Planı</h3>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => gonderimKaydet(!gonderimAktif)}
               disabled={gonderimKaydediliyor}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${gonderimAktif ? 'bg-green-500/20 border-green-500/50 text-green-300 hover:bg-green-500/30' : 'bg-red-500/15 border-red-500/40 text-red-300 hover:bg-red-500/25'} disabled:opacity-50`}
-              title={gonderimAktif ? 'Otomatik gönderimi kapat' : 'Otomatik gönderimi aç'}
+              className={`relative w-11 h-6 rounded-full transition-colors disabled:opacity-50 shrink-0 ${gonderimAktif ? 'bg-green-500' : 'bg-blue-800/80'}`}
+              title={gonderimAktif ? 'Otomatik gönderim açık' : 'Otomatik gönderim kapalı'}
             >
-              {gonderimAktif ? 'Açık' : 'Kapalı'}
+              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${gonderimAktif ? 'left-[22px]' : 'left-0.5'}`} />
             </button>
+            <span className={`text-xs font-medium ${gonderimAktif ? 'text-green-300' : 'text-red-300'}`}>{gonderimAktif ? 'Açık' : 'Kapalı'}</span>
             <button
               type="button"
               onClick={() => setGonderimPanel(v => !v)}
@@ -1361,15 +1362,6 @@ export default function Tebligatlar() {
         {gonderimPanel && (
           <>
 
-            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={gonderimAktif}
-                onChange={(e) => setGonderimAktif(e.target.checked)}
-                className="w-4 h-4 rounded border-blue-700/50 bg-blue-900/40 text-cyan-500"
-              />
-              Otomatik gönderim aktif
-            </label>
             <div>
               <label className="block text-[11px] uppercase tracking-wide text-gray-500 mb-1.5">Gönderim Kanalı</label>
               <div className="inline-flex rounded-lg overflow-hidden border border-blue-700/50">

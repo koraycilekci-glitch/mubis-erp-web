@@ -17637,36 +17637,22 @@ const ISLER = {
       } else {
         console.log("[whatsapp-web-gonder] Gonder butonuna zaten tiklandi; tekrar tiklanmiyor (deneme " + deneme + ")");
       }
-      await bekle2(3500);
-      const s3 = await durumOku();
-      // c) Dogrulama: sohbette son giden mesaj bizim metnimizi iceriyor mu?
-      const mesajGorundu = !!(s3?.sonMesajlar || []).some((t) => mesajParca && t.includes(mesajParca));
-      if (mesajGorundu) {
-        console.log("[whatsapp-web-gonder] gonderim sohbette dogrulandi");
+      // Gonderim sonrasi dogrulama: mesaj sohbette gorunene veya kutu
+      // bosalarak gonder butonu kaybolana kadar bekle (mukerrer tiklama yok).
+      let dogrulandi = false;
+      for (let w = 0; w < 8 && !dogrulandi; w++) {
+        await bekle2(2000);
+        const sw = await durumOku();
+        if (!sw) break;
+        const mg = !!(sw?.sonMesajlar || []).some((t) => mesajParca && t.includes(mesajParca));
+        if (mg) { dogrulandi = true; break; }
+        if (sw.kutuVar && sw.kutuMetin.length === 0) { dogrulandi = true; break; }
+        if (!sw.kutuVar) { dogrulandi = true; break; }
+      }
+      if (dogrulandi) {
+        console.log("[whatsapp-web-gonder] gonderim dogrulandi");
         gonderildi = true;
         break;
-      }
-      // d) Kutu bosaldiysa mesaj GONDERILDI say (orijinal calisan sinyal).
-      //    mukerrer gonderimi onlemek icin gonder butonu yalnizca bir kez tiklandi;
-      //    burada sadece dogrulama yapilir, tekrar tiklama/clear yok.
-      if (s3 && s3.kutuVar && s3.kutuMetin.length === 0) {
-        await bekle2(2000);
-        const s4 = await durumOku();
-        const mesajGorundu2 = !!(s4?.sonMesajlar || []).some((t) => mesajParca && t.includes(mesajParca));
-        if (mesajGorundu2 || (s4 && s4.kutuVar && s4.kutuMetin.length === 0)) {
-          console.log("[whatsapp-web-gonder] gonderim (kutu bosaldi) dogrulandi");
-          gonderildi = true;
-          break;
-        }
-      }
-      if (s3 && !s3.kutuVar) {
-        await bekle2(2000);
-        const s4 = await durumOku();
-        const mesajGorundu2 = !!(s4?.sonMesajlar || []).some((t) => mesajParca && t.includes(mesajParca));
-        if (mesajGorundu2 || (s4 && !s4.kutuVar)) {
-          gonderildi = true;
-          break;
-        }
       }
       // Tekrar tiklama/clear YAPILMAZ (mukerrer gonderimi onler).
 

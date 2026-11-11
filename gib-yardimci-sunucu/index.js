@@ -17598,6 +17598,7 @@ const ISLER = {
       };
     }
     let gonderildi = false;
+    let gonderTiklandi = false;
     const mesajParca = mesaj.replace(/\r?\n/g, " ").trim().slice(0, 24);
     const kutuSecici = 'div[contenteditable="true"][data-tab], footer div[contenteditable="true"], div[contenteditable="true"][role="textbox"]';
     for (let deneme = 1; deneme <= 5 && !gonderildi; deneme++) {
@@ -17614,21 +17615,27 @@ const ISLER = {
         }
       }
       let s2 = await durumOku();
-      // b) GONDER butonuna bas (koordinat -> DOM click -> Enter)
-      if (s2?.gonderVar && s2.gonderKoordinat) {
-        try {
-          await page.mouse.click(s2.gonderKoordinat.x, s2.gonderKoordinat.y);
-          console.log("[whatsapp-web-gonder] GONDER butonuna tiklandi (deneme " + deneme + ")");
-        } catch (e) {
-          await page.keyboard.press("Enter").catch(() => {});
+      // b) GONDER butonuna bas — SADECE bir kez (mukerrer gonderimi onler)
+      if (!gonderTiklandi) {
+        if (s2?.gonderVar && s2.gonderKoordinat) {
+          gonderTiklandi = true;
+          try {
+            await page.mouse.click(s2.gonderKoordinat.x, s2.gonderKoordinat.y);
+            console.log("[whatsapp-web-gonder] GONDER butonuna tiklandi (deneme " + deneme + ")");
+          } catch (e) {
+            await page.keyboard.press("Enter").catch(() => {});
+          }
+        } else {
+          const kutuH = await page.$(kutuSecici);
+          if (kutuH) {
+            gonderTiklandi = true;
+            await kutuH.click().catch(() => {});
+            await page.keyboard.press("Enter").catch(() => {});
+            console.log("[whatsapp-web-gonder] Enter ile gonderim (deneme " + deneme + ")");
+          }
         }
       } else {
-        const kutuH = await page.$(kutuSecici);
-        if (kutuH) {
-          await kutuH.click().catch(() => {});
-          await page.keyboard.press("Enter").catch(() => {});
-          console.log("[whatsapp-web-gonder] Enter ile gonderim (deneme " + deneme + ")");
-        }
+        console.log("[whatsapp-web-gonder] Gonder butonuna zaten tiklandi; tekrar tiklanmiyor (deneme " + deneme + ")");
       }
       await bekle2(3500);
       const s3 = await durumOku();
@@ -17665,8 +17672,9 @@ const ISLER = {
           break;
         }
       }
-      // e) Kutu hala dolu ise metni temizle ve tekrar dene
-      if (s3?.kutuMetin && s3.kutuMetin.length > 0) {
+      // e) Kutu hala dolu ise metni temizle ve tekrar dene (sadece gonder
+      //    butonuna henuz tiklanmadiysa; aksi halde mukerrer gonderim olur)
+      if (!gonderTiklandi && s3?.kutuMetin && s3.kutuMetin.length > 0) {
         await page.keyboard.down("Control");
         await page.keyboard.press("KeyA").catch(() => {});
         await page.keyboard.up("Control");

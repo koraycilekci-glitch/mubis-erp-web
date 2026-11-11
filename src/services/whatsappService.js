@@ -405,14 +405,34 @@ export async function openWhatsAppWeb({ phone, message, kaynak = null }) {
   // ver. (Eskiden sessizce wa.me sekmesi aciliyor, "yerel WhatsApp acildi"
   // goruntusune yol aciyordu.)
   if (hedefKaynak === 'vps') {
+    // QR/giris gerekli ise fallback YAPMA (VPS Chrome'da taranmasi gerekir)
+    if (res?.reason === 'giris-gerekli') {
+      return {
+        ok: false,
+        channel: 'whatsapp_web',
+        otomatik: false,
+        kaynak: 'vps',
+        reason: 'giris-gerekli',
+        not: res.not || (hedefKaynak === 'vps'
+          ? "Sunucudaki WhatsApp oturumu yok. Ayarlar > Iletisim bolumundeki 'QR Kodu Göster' ile QR kodu okutun."
+          : "Yardimci programin Chrome penceresinde WhatsApp'a bir kez QR ile giris yapin; sonraki gonderimler otomatik olacak.")
+      }
+    }
+    // Gonderim dogrulanamadi ise yerel tarayicida wa.me ile ac (kullanici elle GONDER'e basar)
+    const encoded = encodeURIComponent(mesaj)
+    const url = `https://wa.me/${to}?text=${encoded}`
+    let sekmeAcildi = false
+    try { sekmeAcildi = !!window.open(url, '_blank', 'noopener,noreferrer') } catch (e) { /* popup engellendi */ }
     return {
-      ok: false,
+      ok: true,
       channel: 'whatsapp_web',
       otomatik: false,
-      kaynak: 'vps',
-      reason: 'vps-gonderemedi',
-      not: 'Sunucudaki WhatsApp gönderimi başarısız: ' + (yardimciHata || 'yanıt alınamadı') +
-        '. Ayarlar > İletişim bölümünden QR ile bağlantıyı kontrol edin.'
+      kaynak: 'vps-fallback',
+      link: url,
+      sekmeAcildi,
+      not: sekmeAcildi
+        ? 'Sunucu otomatik gönderimi doğrulanamadı; hazır mesaj tarayıcınızda açıldı — GÖNDER tuşuna siz basın.'
+        : 'Sunucu otomatik gönderimi doğrulanamadı ve tarayıcı yeni sekmeyi engelledi. Bu linki açarak gönderebilirsiniz: ' + url
     }
   }
 

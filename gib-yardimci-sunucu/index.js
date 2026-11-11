@@ -17646,19 +17646,15 @@ const ISLER = {
         gonderildi = true;
         break;
       }
-      // d) Kutu bosaldiysa mesaj GONDERILDI say — mukerrer gonderimi onler.
-      // SADECE mesaj gorunduyse basari say; kutu bosalmasi tek basina
-      // (hata/temizleme) basari sayilmaz — yanlis "gonderildi" bildirimi onler.
-      // (Eskiden gonder butonunun de kaybolmasi sartti; buton kalinca
-      //  ikinci kez tikliyor ve ayni mesaj iki kere gidiyordu.)
-      if (s3 && s3.kutuVar && s3.kutuMetin.length === 0 && s3.gonderVar === false) {
-        // Kutu bosaldi VE gonder butonu kayboldu -> gercekten gonderildi
-        // olabilir; ek bir bekleme ile sonMesajlar'i tekrar kontrol et.
+      // d) Kutu bosaldiysa mesaj GONDERILDI say (orijinal calisan sinyal).
+      //    mukerrer gonderimi onlemek icin gonder butonu yalnizca bir kez tiklandi;
+      //    burada sadece dogrulama yapilir, tekrar tiklama/clear yok.
+      if (s3 && s3.kutuVar && s3.kutuMetin.length === 0) {
         await bekle2(2000);
         const s4 = await durumOku();
         const mesajGorundu2 = !!(s4?.sonMesajlar || []).some((t) => mesajParca && t.includes(mesajParca));
-        if (mesajGorundu2) {
-          console.log("[whatsapp-web-gonder] gonderim (gecikmeli) dogrulandi");
+        if (mesajGorundu2 || (s4 && s4.kutuVar && s4.kutuMetin.length === 0)) {
+          console.log("[whatsapp-web-gonder] gonderim (kutu bosaldi) dogrulandi");
           gonderildi = true;
           break;
         }
@@ -17667,19 +17663,13 @@ const ISLER = {
         await bekle2(2000);
         const s4 = await durumOku();
         const mesajGorundu2 = !!(s4?.sonMesajlar || []).some((t) => mesajParca && t.includes(mesajParca));
-        if (mesajGorundu2) {
+        if (mesajGorundu2 || (s4 && !s4.kutuVar)) {
           gonderildi = true;
           break;
         }
       }
-      // e) Kutu hala dolu ise metni temizle ve tekrar dene (sadece gonder
-      //    butonuna henuz tiklanmadiysa; aksi halde mukerrer gonderim olur)
-      if (!gonderTiklandi && s3?.kutuMetin && s3.kutuMetin.length > 0) {
-        await page.keyboard.down("Control");
-        await page.keyboard.press("KeyA").catch(() => {});
-        await page.keyboard.up("Control");
-        await page.keyboard.press("Backspace").catch(() => {});
-      }
+      // Tekrar tiklama/clear YAPILMAZ (mukerrer gonderimi onler).
+
     }
     if (!gonderildi) {
       console.log("[whatsapp-web-gonder] gonderim dogrulanamadi - sayfa acik birakildi");

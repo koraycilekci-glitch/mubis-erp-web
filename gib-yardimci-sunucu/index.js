@@ -21823,7 +21823,7 @@ async function lucaBelgeleriIndir(page, etiket, durum, p = {}) {
       }
       if (durum.uttsAsama === "gib-getir") {
         if (!durum.uttsGibGetirZ) durum.uttsGibGetirZ = Date.now();
-        else if (Date.now() - durum.uttsGibGetirZ > 12e4) {
+        else if (Date.now() - durum.uttsGibGetirZ > 6e4) {
           log("UTTS: GIB'den Getir tiklamasi dogrulanamadi (120 sn) â€” yine de Belge Ara'ya geciliyor");
           durum.uttsAsama = "belgeara-ac";
           durum.uttsAsamaZaman = Date.now();
@@ -21856,7 +21856,7 @@ async function lucaBelgeleriIndir(page, etiket, durum, p = {}) {
         if (sorguBitti) log("UTTS: Islem Takip 'sorgulamalar tamamlandi' yazisi gorundu â€” ESC gonderiliyor");
         else if (Date.now() - (durum.uttsEscLogZ || 0) > 10e3) { durum.uttsEscLogZ = Date.now(); log("UTTS: Islem Takip bekleniyor... (" + Math.round(gecEsc / 1000) + " sn)"); }
       }
-      if (sorguBitti || gecEsc > 15e4) {
+      if (sorguBitti || gecEsc > 6e4) {
         try {
           const tum = await browser.pages().catch(() => [aktif]);
           for (const sp of tum) {

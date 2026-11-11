@@ -872,6 +872,7 @@ export default function Settings() {
       const j = await r.json()
       if (j.ok) {
         setBorcCronPlan(j.plan)
+        await borcCronYukle()
         setBorcCronMesaj({ ok: true, t: 'Otomatik borç sorgulama planı kaydedildi. İstanbul sunucusu belirlediğiniz gün/saatte tüm aktif müşterilerin vergi ve SGK borcunu sorgulayıp kaydeder.' })
       } else setBorcCronMesaj({ ok: false, t: j.error === 'yetkisiz' ? 'Yönetici yetkisi gerekir.' : (j.error || 'Kaydedilemedi.') })
     } catch { setBorcCronMesaj({ ok: false, t: 'Bağlantı hatası.' }) }
@@ -1021,6 +1022,7 @@ export default function Settings() {
       const j = await r.json()
       if (j.ok) {
         setDvsCronPlan(j.plan)
+        await dvsCronYukle()
         setDvsCronMesaj({ ok: true, t: 'Otomatik POS/KDV döküm planı kaydedildi. İstanbul sunucusu her sorgu türü için belirlediğiniz gün ve saatte tüm aktif müşterilerin Dijitaş DVS sorgusunu yapıp sonuçları sisteme kaydeder.' })
       } else setDvsCronMesaj({ ok: false, t: j.error === 'yetkisiz' ? 'Yönetici yetkisi gerekir.' : (j.error || 'Kaydedilemedi.') })
     } catch { setDvsCronMesaj({ ok: false, t: 'Bağlantı hatası.' }) }

@@ -600,6 +600,7 @@ export default function MusteriBorcDokumu() {
       })
       const j = await r.json().catch(() => null)
       if (!j?.ok) throw new Error(j?.error || 'Kaydedilemedi')
+      await borcPlanYukle()
       setBorcPlanMesaj('Otomatik borç sorgulama planı kaydedildi.')
     } catch (e) {
       setBorcPlanMesaj('Kaydedilemedi: ' + (e?.message || e))

@@ -111,47 +111,81 @@ function DetayKutu({ baslik, tutar, satirlar, ts, renk = 'sky', bos = false }) {
 // Haftalık dilimler tek satır olarak kalır. (Ortak util: utils/planDilim.js)
 
 function borcMesaji(client, sgk, vergi, muhasebe = null) {
-  const ad = client?.company || client?.name || 'Değerli Müşterimiz'
+  const ad = (client?.company || client?.name || 'Değerli Müşterimiz').toLocaleUpperCase('tr-TR')
   const tarih = bugunTR()
   const satirlar = [
-    `*Konu: ${tarih} Tarihli Borç Bilgilendirmesi*`,
+    '📢 *MUBİS – BORÇ BİLGİLENDİRMESİ*',
     '',
-    `Sayın ${ad},`,
+    `📅 *Tarih: ${tarih}*`,
+    '',
+    `Sayın *${ad}*,`,
     '',
     `${tarih} tarihi itibarıyla sistemimizde kayıtlı borç durumunuz aşağıdaki gibidir:`
   ]
 
-  if (sgk) {
-    const detay = borcDetaySatirlari(sgk)
-    const gecmis = sayi(detay[0]?.deger)
-    const guncel = sayi(detay[1]?.deger)
-    const toplam = sayi(sgk.toplam) || (gecmis + guncel)
-    satirlar.push('', '*SGK borcu*', `- Geçmiş dönem: ${paraYaz(gecmis)} TL`, `- Güncel dönem: ${paraYaz(guncel)} TL`, `- *Toplam: ${paraYaz(toplam)} TL*`)
-  }
-  if (vergi) {
-    const detay = borcDetaySatirlari(vergi)
-    const gecmis = sayi(detay[0]?.deger)
-    const guncel = sayi(detay[1]?.deger)
-    const toplam = sayi(vergi.toplam) || (gecmis + guncel)
-    satirlar.push('', '*Vergi borcu*', `- Geçmiş dönem: ${paraYaz(gecmis)} TL`, `- Güncel dönem: ${paraYaz(guncel)} TL`, `- *Toplam: ${paraYaz(toplam)} TL*`)
+  const sgkDetay = sgk ? borcDetaySatirlari(sgk) : null
+  const vergiDetay = vergi ? borcDetaySatirlari(vergi) : null
+  const sgkGecmis = sgkDetay ? sayi(sgkDetay[0]?.deger) : 0
+  const sgkGuncel = sgkDetay ? sayi(sgkDetay[1]?.deger) : 0
+  const sgkToplam = sgk ? (sayi(sgk.toplam) || (sgkGecmis + sgkGuncel)) : 0
+
+  const vergiGecmis = vergiDetay ? sayi(vergiDetay[0]?.deger) : 0
+  const vergiGuncel = vergiDetay ? sayi(vergiDetay[1]?.deger) : 0
+  const vergiToplam = vergi ? (sayi(vergi.toplam) || (vergiGecmis + vergiGuncel)) : 0
+
+  let muhasebeGecmis = 0, muhasebeGuncel = 0, muhasebeToplam = 0
+  if (muhasebe && sayi(muhasebe.kalanBorc) > 0) {
+    muhasebeToplam = sayi(muhasebe.kalanBorc)
+    muhasebeGecmis = sayi(muhasebe.gecmisDonem)
+    muhasebeGuncel = sayi(muhasebe.guncelDonem ?? (muhasebeToplam - muhasebeGecmis))
   }
 
+  const genelToplam = sgkToplam + vergiToplam + muhasebeToplam
+
+  if (sgk) {
+    satirlar.push(
+      '',
+      '🔹 *SGK BORCU*',
+      `• Geçmiş Dönem: ${paraYaz(sgkGecmis)} TL`,
+      `• Güncel Dönem: ${paraYaz(sgkGuncel)} TL`,
+      `• *TOPLAM: ${paraYaz(sgkToplam)} TL*`
+    )
+  }
+  if (vergi) {
+    satirlar.push(
+      '',
+      '🔹 *VERGİ BORCU*',
+      `• Geçmiş Dönem: ${paraYaz(vergiGecmis)} TL`,
+      `• Güncel Dönem: ${paraYaz(vergiGuncel)} TL`,
+      `• *TOPLAM: ${paraYaz(vergiToplam)} TL*`
+    )
+  }
   if (muhasebe && sayi(muhasebe.kalanBorc) > 0) {
-    const toplam = sayi(muhasebe.kalanBorc)
-    const gecmis = sayi(muhasebe.gecmisDonem)
-    const guncel = sayi(muhasebe.guncelDonem ?? (toplam - gecmis))
-    satirlar.push('', '*Muhasebe borcu*', `- Geçmiş dönem: ${paraYaz(gecmis)} TL`, `- Güncel dönem: ${paraYaz(guncel)} TL`, `- *Toplam: ${paraYaz(toplam)} TL*`)
+    satirlar.push(
+      '',
+      '🔹 *MUHASEBE ÜCRETİ*',
+      `• Geçmiş Dönem: ${paraYaz(muhasebeGecmis)} TL`,
+      `• Güncel Dönem: ${paraYaz(muhasebeGuncel)} TL`,
+      `• *TOPLAM: ${paraYaz(muhasebeToplam)} TL*`
+    )
   }
 
   satirlar.push(
     '',
-    'Olası gecikme ve yasal yaptırımlarla karşılaşmamak için vadesi gelen ödemelerinizi zamanında yapmanızı rica ederiz. Borç bilgilerinizle ilgili sorularınız için bizimle iletişime geçebilirsiniz.',
+    '━━━━━━━━━━━━━━',
+    `💰 *GENEL TOPLAM: ${paraYaz(genelToplam)} TL*`,
+    '━━━━━━━━━━━━━━',
+    '',
+    '⚠️ Vadesi gelen ödemelerinizi zamanında gerçekleştirmenizi rica ederiz. Gecikme faizi, olası cezalar ve diğer yasal yaptırımlarla karşılaşmamanız için ödeme durumunuzu kontrol etmenizi önemle hatırlatırız.',
+    '',
+    'Borç bilgileriniz veya ödeme detayları hakkında bilgi almak için bizimle iletişime geçebilirsiniz.',
     '',
     'Saygılarımızla,',
-    '*SMMM Aziz Koray Çilekci*',
-    '_MUBiS Borç Takip Sistemi_',
     '',
-    '_Bu mesaj MUBiS Borç Takip Sistemi tarafından otomatik olarak gönderilmiştir._'
+    '*Smmm Aziz Koray Çilekci*',
+    '*MUBİS ERP – Muhasebe Bizim İşimiz*',
+    '',
+    '_Bu mesaj MUBİS ERP Borç Takip Sistemi tarafından otomatik olarak gönderilmiştir._'
   )
   return satirlar.join('\n')
 }

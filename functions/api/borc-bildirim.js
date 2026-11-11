@@ -88,90 +88,127 @@ function detaylar(kayit) {
 }
 
 function mesajUret(musteriAdi, tarih, sgk, vergi, muhasebe = null) {
-  const ad = musteriAdi || 'Değerli Müşterimiz'
+  const ad = (musteriAdi || 'Değerli Müşterimiz').toLocaleUpperCase('tr-TR')
   const satirlar = [
-    `Konu: ${tarih} Tarihli Borç Bilgilendirmesi`,
+    '📢 *MUBİS – BORÇ BİLGİLENDİRMESİ*',
     '',
-    `Sayın ${ad},`,
+    `📅 *Tarih: ${tarih}*`,
+    '',
+    `Sayın *${ad}*,`,
     '',
     `${tarih} tarihi itibarıyla sistemimizde kayıtlı borç durumunuz aşağıdaki gibidir:`
   ]
+
+  const s = sgk ? detaylar(sgk) : null
+  const v = vergi ? detaylar(vergi) : null
+  const sgkGecmis = s ? sayi(s.gecmis) : 0
+  const sgkGuncel = s ? sayi(s.guncel) : 0
+  const sgkToplam = sgk ? (sayi(sgk.toplam) || (sgkGecmis + sgkGuncel)) : 0
+
+  const vergiGecmis = v ? sayi(v.gecmis) : 0
+  const vergiGuncel = v ? sayi(v.guncel) : 0
+  const vergiToplam = vergi ? (sayi(vergi.toplam) || (vergiGecmis + vergiGuncel)) : 0
+
+  let muhasebeGecmis = 0, muhasebeGuncel = 0, muhasebeToplam = 0
+  if (muhasebe && sayi(muhasebe.kalanBorc) > 0) {
+    muhasebeToplam = sayi(muhasebe.kalanBorc)
+    muhasebeGecmis = sayi(muhasebe.gecmisDonem)
+    muhasebeGuncel = sayi(muhasebe.guncelDonem ?? (muhasebeToplam - muhasebeGecmis))
+  }
+
+  const genelToplam = sgkToplam + vergiToplam + muhasebeToplam
+
   if (sgk) {
-    const s = detaylar(sgk)
     satirlar.push(
       '',
-      'SGK borcu',
-      `- Geçmiş dönem: ${para(s.gecmis)} TL`,
-      `- Güncel dönem: ${para(s.guncel)} TL`,
-      `- Toplam: ${para(s.toplam)} TL`
+      '🔹 *SGK BORCU*',
+      `• Geçmiş Dönem: ${para(sgkGecmis)} TL`,
+      `• Güncel Dönem: ${para(sgkGuncel)} TL`,
+      `• *TOPLAM: ${para(sgkToplam)} TL*`
     )
   }
   if (vergi) {
-    const v = detaylar(vergi)
     satirlar.push(
       '',
-      'Vergi borcu',
-      `- Geçmiş dönem: ${para(v.gecmis)} TL`,
-      `- Güncel dönem: ${para(v.guncel)} TL`,
-      `- Toplam: ${para(v.toplam)} TL`
+      '🔹 *VERGİ BORCU*',
+      `• Geçmiş Dönem: ${para(vergiGecmis)} TL`,
+      `• Güncel Dönem: ${para(vergiGuncel)} TL`,
+      `• *TOPLAM: ${para(vergiToplam)} TL*`
     )
   }
   if (muhasebe && sayi(muhasebe.kalanBorc) > 0) {
-    const m = sayi(muhasebe.kalanBorc)
     satirlar.push(
       '',
-      'Muhasebe borcu',
-      `- Geçmiş dönem: ${para(muhasebe.gecmisDonem)} TL`,
-      `- Güncel dönem: ${para(muhasebe.guncelDonem ?? m - sayi(muhasebe.gecmisDonem))} TL`,
-      `- Toplam: ${para(m)} TL`
+      '🔹 *MUHASEBE ÜCRETİ*',
+      `• Geçmiş Dönem: ${para(muhasebeGecmis)} TL`,
+      `• Güncel Dönem: ${para(muhasebeGuncel)} TL`,
+      `• *TOPLAM: ${para(muhasebeToplam)} TL*`
     )
   }
+
   satirlar.push(
     '',
-    'Olası gecikme ve yasal yaptırımlarla karşılaşmamak için vadesi gelen ödemelerinizi zamanında yapmanızı rica ederiz. Borç bilgilerinizle ilgili sorularınız için bizimle iletişime geçebilirsiniz.',
+    '━━━━━━━━━━━━━━',
+    `💰 *GENEL TOPLAM: ${para(genelToplam)} TL*`,
+    '━━━━━━━━━━━━━━',
+    '',
+    '⚠️ Vadesi gelen ödemelerinizi zamanında gerçekleştirmenizi rica ederiz. Gecikme faizi, olası cezalar ve diğer yasal yaptırımlarla karşılaşmamanız için ödeme durumunuzu kontrol etmenizi önemle hatırlatırız.',
+    '',
+    'Borç bilgileriniz veya ödeme detayları hakkında bilgi almak için bizimle iletişime geçebilirsiniz.',
     '',
     'Saygılarımızla,',
-    'SMMM Aziz Koray Çilekci',
-    'MUBiS Borç Takip Sistemi',
     '',
-    'Bu e-posta MUBiS Borç Takip Sistemi tarafından otomatik olarak gönderilmiştir. Lütfen bu mesajı yanıtlamayınız.'
+    '*Smmm Aziz Koray Çilekci*',
+    '*MUBİS ERP – Muhasebe Bizim İşimiz*',
+    '',
+    '_Bu mesaj MUBiS ERP Borç Takip Sistemi tarafından otomatik olarak gönderilmiştir._'
   )
   return satirlar.join('\n')
 }
 
-// Aynı içeriğin HTML karşılığı (e-posta istemcileri için biçimli görünüm)
 function mesajHtmlUret(musteriAdi, tarih, sgk, vergi, muhasebe = null) {
-  const ad = musteriAdi || 'Değerli Müşterimiz'
+  const ad = (musteriAdi || 'Değerli Müşterimiz').toLocaleUpperCase('tr-TR')
   const blok = (baslik, d) => `
     <h3 style="margin:18px 0 6px;font-size:15px;color:#111;">${baslik}</h3>
     <table style="border-collapse:collapse;font-size:14px;color:#333;">
-      <tr><td style="padding:2px 12px 2px 0;">Geçmiş dönem:</td><td style="padding:2px 0;text-align:right;">${para(d.gecmis)} TL</td></tr>
-      <tr><td style="padding:2px 12px 2px 0;">Güncel dönem:</td><td style="padding:2px 0;text-align:right;">${para(d.guncel)} TL</td></tr>
-      <tr><td style="padding:6px 12px 2px 0;font-weight:700;border-top:1px solid #ddd;">Toplam:</td><td style="padding:6px 0 2px;text-align:right;font-weight:700;border-top:1px solid #ddd;">${para(d.toplam)} TL</td></tr>
+      <tr><td style="padding:2px 12px 2px 0;">Geçmiş Dönem:</td><td style="padding:2px 0;text-align:right;">${para(d.gecmis)} TL</td></tr>
+      <tr><td style="padding:2px 12px 2px 0;">Güncel Dönem:</td><td style="padding:2px 0;text-align:right;">${para(d.guncel)} TL</td></tr>
+      <tr><td style="padding:6px 12px 2px 0;font-weight:700;border-top:1px solid #ddd;">TOPLAM:</td><td style="padding:6px 0 2px;text-align:right;font-weight:700;border-top:1px solid #ddd;">${para(d.toplam)} TL</td></tr>
     </table>`
 
   let govde = ''
-  if (sgk) govde += blok('SGK borcu', detaylar(sgk))
-  if (vergi) govde += blok('Vergi borcu', detaylar(vergi))
+  if (sgk) govde += blok('🔹 SGK BORCU', detaylar(sgk))
+  if (vergi) govde += blok('🔹 VERGİ BORCU', detaylar(vergi))
   if (muhasebe && sayi(muhasebe.kalanBorc) > 0) {
     const m = sayi(muhasebe.kalanBorc)
     const gecmis = sayi(muhasebe.gecmisDonem)
-    govde += blok('Muhasebe borcu', { gecmis, guncel: sayi(muhasebe.guncelDonem ?? m - gecmis), toplam: m })
+    govde += blok('🔹 MUHASEBE ÜCRETİ', { gecmis, guncel: sayi(muhasebe.guncelDonem ?? m - gecmis), toplam: m })
   }
+
+  const sgkD = sgk ? detaylar(sgk) : null
+  const vergiD = vergi ? detaylar(vergi) : null
+  const sgkToplam = sgk ? (sayi(sgk.toplam) || (sayi(sgkD?.gecmis) + sayi(sgkD?.guncel))) : 0
+  const vergiToplam = vergi ? (sayi(vergi.toplam) || (sayi(vergiD?.gecmis) + sayi(vergiD?.guncel))) : 0
+  const muhasebeToplam = (muhasebe && sayi(muhasebe.kalanBorc) > 0) ? sayi(muhasebe.kalanBorc) : 0
+  const genelToplam = sgkToplam + vergiToplam + muhasebeToplam
 
   return `<!doctype html><html><body style="margin:0;padding:0;background:#f5f6f8;">
   <div style="max-width:640px;margin:0 auto;padding:24px 20px;font-family:Arial,Helvetica,sans-serif;color:#222;background:#fff;">
-    <h2 style="margin:0 0 4px;font-size:18px;color:#0b2a4a;">Konu: ${tarih} Tarihli Borç Bilgilendirmesi</h2>
+    <h2 style="margin:0 0 4px;font-size:18px;color:#0b2a4a;">📢 MUBİS – BORÇ BİLGİLENDİRMESİ</h2>
+    <p style="margin:0 0 12px;font-size:14px;color:#555;">📅 Tarih: ${tarih}</p>
     <p style="margin:18px 0 8px;font-size:14px;">Sayın <strong>${ad}</strong>,</p>
     <p style="margin:0 0 6px;font-size:14px;line-height:1.6;">${tarih} tarihi itibarıyla sistemimizde kayıtlı borç durumunuz aşağıdaki gibidir:</p>
     ${govde}
+    <p style="margin:18px 0 0;font-size:16px;font-weight:700;color:#0b2a4a;">💰 GENEL TOPLAM: ${para(genelToplam)} TL</p>
     <p style="margin:22px 0 0;font-size:14px;line-height:1.6;color:#333;">
-      Olası gecikme ve yasal yaptırımlarla karşılaşmamak için vadesi gelen ödemelerinizi zamanında yapmanızı rica ederiz.
-      Borç bilgilerinizle ilgili sorularınız için bizimle iletişime geçebilirsiniz.
+      ⚠️ Vadesi gelen ödemelerinizi zamanında gerçekleştirmenizi rica ederiz. Gecikme faizi, olası cezalar ve diğer yasal yaptırımlarla karşılaşmamanız için ödeme durumunuzu kontrol etmenizi önemle hatırlatırız.
     </p>
-    <p style="margin:22px 0 0;font-size:14px;line-height:1.6;">Saygılarımızla,<br /><strong>SMMM Aziz Koray Çilekci</strong><br /><em>MUBiS Borç Takip Sistemi</em></p>
+    <p style="margin:8px 0 0;font-size:14px;line-height:1.6;color:#333;">
+      Borç bilgileriniz veya ödeme detayları hakkında bilgi almak için bizimle iletişime geçebilirsiniz.
+    </p>
+    <p style="margin:22px 0 0;font-size:14px;line-height:1.6;">Saygılarımızla,<br /><strong>Smmm Aziz Koray Çilekci</strong><br /><em>MUBİS ERP – Muhasebe Bizim İşimiz</em></p>
     <p style="margin:18px 0 0;padding-top:12px;border-top:1px solid #e5e7eb;font-size:11px;color:#888;">
-      Bu e-posta MUBiS Borç Takip Sistemi tarafından otomatik olarak gönderilmiştir. Lütfen bu mesajı yanıtlamayınız.
+      Bu e-posta MUBİS ERP Borç Takip Sistemi tarafından otomatik olarak gönderilmiştir. Lütfen bu mesajı yanıtlamayınız.
     </p>
   </div>
 </body></html>`

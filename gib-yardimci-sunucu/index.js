@@ -21824,30 +21824,54 @@ var zipYakalamaKurFn = () => {
         }).then(async (r) => {
           const buf = new Uint8Array(await r.arrayBuffer());
           state.boyut = buf.length;
-          if (!(buf.length > 4 && buf[0] === 80 && buf[1] === 75)) {
-            try {
-              const blob = new Blob([buf], { type: r.headers.get("content-type") || "application/octet-stream" });
-              const u = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              a.href = u;
-              a.download = state.ad || "belge";
-              document.body.appendChild(a);
-              a.click();
-              a.remove();
-              setTimeout(() => URL.revokeObjectURL(u), 6e4);
-            } catch (e2) {
-              try {
-                orijinal.call(L, action, params, target, method);
-              } catch (e3) {
-              }
-            }
-            state.faz = "baypas";
+          state.ct = String(r.headers.get("content-type") || "");
+          // (1) Dogrudan ZIP ikili veri mi?
+          if (buf.length > 4 && buf[0] === 80 && buf[1] === 75) {
+            let bin = "";
+            for (let o = 0; o < buf.length; o += 32768) bin += String.fromCharCode.apply(null, buf.subarray(o, o + 32768));
+            state.base64 = btoa(bin);
+            state.faz = "hazir";
             return;
           }
-          let bin = "";
-          for (let o = 0; o < buf.length; o += 32768) bin += String.fromCharCode.apply(null, buf.subarray(o, o + 32768));
-          state.base64 = btoa(bin);
-          state.faz = "hazir";
+          // (2) 2.8.59: Luca ZIP'i JSON icinde base64 donduruyor:
+          //     {"data":{"zip":"UEsDBBQ..."}}  (canli loglarda 4.5 MB)
+          //     Onceki kod bunu "baypas" sayip 2 dakika bos bekliyordu.
+          try {
+            const metin = new TextDecoder().decode(buf);
+            const j = JSON.parse(metin);
+            const aday = j && (j.data && (j.data.zip || j.data.base64 || j.data.dosya)) || j.zip || j.base64 || "";
+            if (typeof aday === "string" && aday.length > 200) {
+              const b64 = aday.replace(/^data:[^,]*,/, "").replace(/\s+/g, "");
+              // ZIP imzasi base64'te "UEsDB" ile baslar
+              if (/^UEsDB/.test(b64)) {
+                state.base64 = b64;
+                state.boyut = Math.floor(b64.length * 3 / 4);
+                state.faz = "hazir";
+                return;
+              }
+            }
+            // JSON ama ZIP yok: anlamli hata mesajini tasi
+            const mesaj = String((j && (j.error || j.message || j.data && j.data.error)) || metin).replace(/\s+/g, " ").slice(0, 300);
+            if (mesaj) state.hata = mesaj;
+          } catch (e4) { /* JSON degil */ }
+          // (3) Bilinmeyen yanit: yedek indirme yolu
+          try {
+            const blob = new Blob([buf], { type: r.headers.get("content-type") || "application/octet-stream" });
+            const u = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = u;
+            a.download = state.ad || "belge";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(u), 6e4);
+          } catch (e2) {
+            try {
+              orijinal.call(L, action, params, target, method);
+            } catch (e3) {
+            }
+          }
+          state.faz = "baypas";
         }).catch((e) => {
           state.hata = String(e && e.message || e);
           state.faz = "hata";
@@ -22076,6 +22100,10 @@ function lucaZipAgIzleyici(browser, hedefKlasor) {
       const u = String(r.url() || "").toLowerCase();
       if (ct.includes("zip") || ct.includes("octet-stream")) return true;
       if (/toplu|zip|indir/.test(u) && r.request().method() !== "GET") return true;
+      // 2.8.59: Luca toplu ZIP'i JSON olarak donduruyor
+      // ({"data":{"zip":"UEsDBBQ..."}} ~4.5 MB). JSON yanitlarini da izle;
+      // govde kontrolu isleyici icinde yapilir.
+      if (ct.includes("json") && /toplu|zip|indir|fatura/.test(u)) return true;
       return false;
     } catch {
       return false;
@@ -22095,18 +22123,46 @@ function lucaZipAgIzleyici(browser, hedefKlasor) {
         const buf = await r.buffer();
         durum.len = buf ? buf.length : 0;
         if (!buf || buf.length < 4) { durum.hata = "govde-yok"; return; }
-        if (buf[0] !== 0x50 || buf[1] !== 0x4b) {
-          try { durum.hata = "imza-pk-degil | " + String(buf.toString("utf8")).replace(/\s+/g, " ").slice(0, 240); }
-          catch { durum.hata = "imza-pk-degil"; }
+        // (1) Dogrudan ZIP ikili veri
+        if (buf[0] === 0x50 && buf[1] === 0x4b) {
+          try { fs.mkdirSync(hedefKlasor, { recursive: true }); } catch { }
+          const yol = path.join(hedefKlasor, "luca-toplu-" + Date.now() + ".zip");
+          fs.writeFileSync(yol, buf);
+          yakalanan.push(yol);
+          durum.dosya = yol;
+          durum.boyut = buf.length;
+          durum.faz = "hazir";
           return;
         }
-        try { fs.mkdirSync(hedefKlasor, { recursive: true }); } catch { }
-        const yol = path.join(hedefKlasor, "luca-toplu-" + Date.now() + ".zip");
-        fs.writeFileSync(yol, buf);
-        yakalanan.push(yol);
-        durum.dosya = yol;
-        durum.boyut = buf.length;
-        durum.faz = "hazir";
+        // (2) 2.8.59: JSON icinde base64 ZIP  {"data":{"zip":"UEsDBBQ..."}}
+        try {
+          const metin = buf.toString("utf8");
+          const j = JSON.parse(metin);
+          const aday = (j && j.data && (j.data.zip || j.data.base64 || j.data.dosya)) || j.zip || j.base64 || "";
+          if (typeof aday === "string" && aday.length > 200) {
+            const b64 = aday.replace(/^data:[^,]*,/, "").replace(/\s+/g, "");
+            if (/^UEsDB/.test(b64)) {
+              const zipBuf = Buffer.from(b64, "base64");
+              if (zipBuf.length > 4 && zipBuf[0] === 0x50 && zipBuf[1] === 0x4b) {
+                try { fs.mkdirSync(hedefKlasor, { recursive: true }); } catch { }
+                const yol = path.join(hedefKlasor, "luca-toplu-" + Date.now() + ".zip");
+                fs.writeFileSync(yol, zipBuf);
+                yakalanan.push(yol);
+                durum.dosya = yol;
+                durum.boyut = zipBuf.length;
+                durum.faz = "hazir";
+                console.log("[izleyici] JSON icindeki base64 ZIP cozuldu (" + Math.round(zipBuf.length / 1024) + " KB)");
+                return;
+              }
+            }
+          }
+          const mesaj = String((j && (j.error || j.message || (j.data && j.data.error))) || metin).replace(/\s+/g, " ").slice(0, 240);
+          if (mesaj) durum.hata = mesaj;
+        } catch (e2) {
+          try { durum.hata = "imza-pk-degil | " + buf.toString("utf8").replace(/\s+/g, " ").slice(0, 240); }
+          catch { durum.hata = "imza-pk-degil"; }
+        }
+        return;
       } catch (e) {
         durum.hata = String(e && e.message || e);
       }
@@ -22347,7 +22403,9 @@ async function lucaGorunurTopluZip(frame, etiket, p = {}, page = null) {
   }
 
   // 6) ZIP hazir olana kadar bekle (hangi cercevede tetiklenirse)
-  const beklemeSon = Date.now() + Math.max(120000, (satir.adet * 5000) + 60000);
+  // 2.8.59: ZIP genelde 10-30 sn icinde geliyor; 2 dk bos bekleme yerine 45 sn
+  // (yetersizse tekil paralel indirmeye duser, orada zaten hizliyiz).
+  const beklemeSon = Date.now() + Math.max(45000, (satir.adet * 1500) + 30000);
   let durum = null;
   let sonLog = 0;
   while (Date.now() < beklemeSon) {
@@ -22359,6 +22417,12 @@ async function lucaGorunurTopluZip(frame, etiket, p = {}, page = null) {
     durum = await zipDurumuOku();
     if (durum?.faz === "hazir" && durum.boyut > 0) break;
     if (durum?.faz === "hata") throw new Error("Luca toplu ZIP hatasi: " + (durum.hata || "bilinmeyen"));
+    // 2.8.59: ag yaniti kesin bir Luca hatasi tasiyorsa bekleme (GIB bilgileri vb.)
+    if (agIzleyici && agIzleyici.durum.hata && /bulunamad|kontrol edin|yetki|hata olustu|hata oluştu/i.test(agIzleyici.durum.hata)) {
+      log("gorunur toplu ZIP: Luca hata bildirdi -> tekil indirmeye geciliyor (" + agIzleyici.durum.hata.slice(0, 90) + ")");
+      try { agIzleyici.durdur(); } catch { /* yoksay */ }
+      return null;
+    }
     if (durum?.faz === "baypas") { log("gorunur toplu indirme: ZIP yerine baska yanit geldi, yedege geciliyor"); return null; }
     if (!sonLog || Date.now() - sonLog >= 10000) {
       sonLog = Date.now();

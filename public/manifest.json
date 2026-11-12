@@ -1,0 +1,17 @@
+{
+  "name": "MUBİS ERP",
+  "short_name": "MUBİS ERP",
+  "description": "Mali Müşavirin Dijital Çalışma Masası — e-Fatura/e-Arşiv sorgulama, e-Beyanname, müşteri portalı ve ücretsiz mali hesaplama araçları.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b2a4a",
+  "theme_color": "#0b2a4a",
+  "lang": "tr",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/logo-icon.png", "sizes": "256x256", "type": "image/png", "purpose": "any" }
+  ]
+}

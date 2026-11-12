@@ -84,7 +84,16 @@ export async function addClient(clientData) {
   const { data: { user } } = await supabase.auth.getUser()
   const ofis = await getMyOffice()
 
-  const username = clientData.type === 'company' ? (clientData.vkn || '') : (clientData.tc || '')
+  // 2.8.52: Portal giris kimligi — gercek kisiler TC, sirketler/adi ortakliklar
+  // VKN ile girer. Eskiden yalniz `type === 'company'` kontrolu vardi; "adi
+  // ortaklik" gibi turler ve TC/VKN'den biri bos olan kayitlar rastgele
+  // `client_<zaman>@mubis.app` hesabiyla aciliyordu (musteri giris yapamiyordu).
+  const sirketTuru = String(clientData.companyType || '').toLocaleLowerCase('tr')
+  const sirketMi = clientData.type === 'company'
+    || /ltd|limited|anonim|a\.?ş|adi|kollektif|komandit|koop|ortakl/.test(sirketTuru)
+  const username = sirketMi
+    ? (clientData.vkn || clientData.tc || '')
+    : (clientData.tc || clientData.vkn || '')
   const authEmail = username
     ? buildClientLoginEmail(username, ofis)
     : (clientData.email || `client_${Date.now()}@mubis.app`)
@@ -433,6 +442,12 @@ export async function updateClient(id, updateData) {
     services: 'services',
     documents: 'documents',
     parentClientId: 'parent_client_id',
+    // 2.8.52 DUZELTME: phoneNumbers / emails alan eslemesinde YOKTU.
+    // Musteri kartinda ikinci telefon giriliyor, updateClient bu alani
+    // "bilinmeyen alan" sayip atiyordu; bu yuzden kaydedilse bile
+    // gorunmuyordu. DB kolonlari: phonenumbers / emails (JSONB).
+    phoneNumbers: 'phonenumbers', phonenumbers: 'phonenumbers',
+    emails: 'emails',
     tecilli_tahsilat: 'tecilli_tahsilat', tecilliTahsilat: 'tecilli_tahsilat',
     tecilli_plan: 'tecilli_plan', tecilliPlan: 'tecilli_plan',
     cariHesapModulu: 'cari_hesap_modulu',

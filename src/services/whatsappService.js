@@ -418,16 +418,21 @@ export async function openWhatsAppWeb({ phone, message, kaynak = null }) {
         not: yardimciSonuc.not || "Sunucudaki WhatsApp oturumu yok. Ayarlar > İletişim bölümündeki 'QR Kodu Göster' ile QR kodu okutun."
       }
     }
-    // Gonderim dogrulanamadi ise wa.me linkini mesajda ver (otomatik sekme acma)
+    // Gonderim dogrulanamadi ise tarayicida wa.me ile ac (kullanici elle GONDER'e basar)
     const encoded = encodeURIComponent(mesaj)
     const url = `https://wa.me/${to}?text=${encoded}`
+    let sekmeAcildi = false
+    try { sekmeAcildi = !!window.open(url, '_blank', 'noopener,noreferrer') } catch (e) { /* popup engellendi */ }
     return {
-      ok: false,
+      ok: true,
       channel: 'whatsapp_web',
       otomatik: false,
-      kaynak: 'vps',
-      reason: 'gonderilemedi',
-      not: 'Sunucu otomatik gönderimi doğrulanamadı. Hazır mesajı açmak için: ' + url
+      kaynak: 'vps-fallback',
+      link: url,
+      sekmeAcildi,
+      not: sekmeAcildi
+        ? 'Sunucu otomatik gönderimi doğrulanamadı; hazır mesaj tarayıcınızda açıldı — GÖNDER tuşuna siz basın.'
+        : 'Sunucu otomatik gönderimi doğrulanamadı ve tarayıcı yeni sekmeyi engelledi. Bu linki açarak gönderebilirsiniz: ' + url
     }
   }
 
@@ -634,3 +639,5 @@ export async function sendTemplateMessage({ phone, templateParams = [], settings
   if (!res.ok) throw new Error(data.error?.message || 'Sablon mesaj gonderilemedi')
   return data
 }
+
+// UNIQUE_MARKER_12345

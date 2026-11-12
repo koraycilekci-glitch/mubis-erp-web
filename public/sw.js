@@ -1,8 +1,6 @@
 // MUBiS ERP — PWA Service Worker
-const CACHE_NAME = 'mubis-erp-v1'
+const CACHE_NAME = 'mubis-erp-v2'
 const PRECACHE = [
-  '/',
-  '/index.html',
   '/manifest.json',
   '/icon-192.png',
   '/icon-512.png',
@@ -29,16 +27,14 @@ self.addEventListener('fetch', (event) => {
   const req = event.request
   if (req.method !== 'GET') return
   const url = new URL(req.url)
-  // API / functions: her zaman network (cache'leme)
+  // API / functions: her zaman network
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/functions/')) return
-  // Navigasyon: network-first, offline'da cache
+  // Navigasyon: her zaman network-first (cache kullanma, güncel HTML al)
   if (req.mode === 'navigate') {
     event.respondWith(
       fetch(req).then((res) => {
-        const copy = res.clone()
-        caches.open(CACHE_NAME).then((c) => c.put(req, copy)).catch(() => {})
         return res
-      }).catch(() => caches.match(req).then((r) => r || caches.match('/')))
+      }).catch(() => caches.match('/').then((r) => r || new Response('Offline', { status: 503 })))
     )
     return
   }

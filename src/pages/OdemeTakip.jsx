@@ -830,6 +830,11 @@ export default function OdemeTakip() {
           className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 pl-9 pr-3 text-white text-sm focus:outline-none focus:border-yellow-400" />
       </div>
 
+      {/* Telefonda isim sütunu sabitlenmez; aylar yatay kaydırmayla görünür */}
+      <p className="lg:hidden text-[11px] text-gray-400 mb-2">
+        Ayları ve borç sütunlarını görmek için tabloyu sağa/sola kaydırın.
+      </p>
+
       {/* Matris tablo — fareyle tutup sürükleyerek kaydırılabilir */}
       <div className="bg-blue-800/20 rounded-2xl border border-blue-700/30 overflow-hidden">
         <div ref={tabloRef} className="overflow-x-auto cursor-grab active:cursor-grabbing select-none"
@@ -838,18 +843,18 @@ export default function OdemeTakip() {
           <table className="w-full text-sm">
             <thead className="bg-blue-900/30">
               <tr className="text-gray-400 text-xs whitespace-nowrap">
-                <th className="sticky left-0 z-20 bg-[#274a8f] px-3 py-3 text-left w-12">#</th>
-                <th className="sticky z-20 bg-[#274a8f] px-3 py-3 text-left min-w-[180px]" style={{ left: 48 }}>
+                <th className="lg:sticky left-0 z-20 bg-[#274a8f] px-3 py-3 text-left w-12">#</th>
+                <th className="lg:sticky z-20 bg-[#274a8f] px-3 py-3 text-left min-w-[180px]" style={{ left: 48 }}>
                   <span className="flex items-center gap-2">
                     <input type="checkbox" checked={rows.length > 0 && selectedIds.length === rows.length} onChange={tumunuSec}
                       className="accent-yellow-400 w-3.5 h-3.5 cursor-pointer" title="Tümünü seç / kaldır" />
                     Adı Soyadı
                   </span>
                 </th>
-                <th className="sticky z-10 bg-[#274a8f] px-3 py-3 text-right min-w-[110px]" style={{ left: 228 }}>Aylık Ücret</th>
-                <th className="sticky z-10 bg-[#274a8f] px-3 py-3 text-right min-w-[110px]" style={{ left: 338 }}>Defter Tasdik</th>
-                <th className="sticky z-10 bg-[#274a8f] px-3 py-3 text-right min-w-[110px]" style={{ left: 448 }}>Önceki Dönem</th>
-                <th className="sticky z-10 bg-[#274a8f] px-3 py-3 text-right min-w-[110px] shadow-[6px_0_10px_-4px_rgba(0,0,0,0.45)]" style={{ left: 558 }}>Toplam Borç</th>
+                <th className="lg:sticky z-10 bg-[#274a8f] px-3 py-3 text-right min-w-[110px]" style={{ left: 228 }}>Aylık Ücret</th>
+                <th className="lg:sticky z-10 bg-[#274a8f] px-3 py-3 text-right min-w-[110px]" style={{ left: 338 }}>Defter Tasdik</th>
+                <th className="lg:sticky z-10 bg-[#274a8f] px-3 py-3 text-right min-w-[110px]" style={{ left: 448 }}>Önceki Dönem</th>
+                <th className="lg:sticky z-10 bg-[#274a8f] px-3 py-3 text-right min-w-[110px] shadow-[6px_0_10px_-4px_rgba(0,0,0,0.45)]" style={{ left: 558 }}>Toplam Borç</th>
                 {AYLER.map((ay, i) => (
                   <th key={ay} className={`px-2 py-3 text-center ${buAyVurgu && yil === nowY && i + 1 === nowM ? 'bg-yellow-500/10 text-yellow-400 ring-1 ring-inset ring-yellow-500/30' : ''}`}>{ay}</th>
                 ))}
@@ -865,8 +870,8 @@ export default function OdemeTakip() {
               ) : (
                 rows.map((r, i) => (
                   <tr key={r.id} className="border-t border-blue-700/20 hover:bg-blue-800/10 transition-colors">
-                    <td className="sticky left-0 z-10 bg-[#1f3d78] px-3 py-2 text-gray-500 w-12">{i + 1}</td>
-                    <td className="sticky z-10 bg-[#1f3d78] px-3 py-2 whitespace-nowrap min-w-[180px]" style={{ left: 48 }}>
+                    <td className="lg:sticky left-0 z-10 bg-[#1f3d78] px-3 py-2 text-gray-500 w-12">{i + 1}</td>
+                    <td className="lg:sticky z-10 bg-[#1f3d78] px-3 py-2 whitespace-nowrap min-w-[180px]" style={{ left: 48 }}>
                       <div className="flex items-center gap-2">
                         <input type="checkbox" checked={selectedIds.includes(r.id)} onChange={() => toggleSecim(r.id)}
                           className="accent-yellow-400 w-3.5 h-3.5 cursor-pointer shrink-0" />
@@ -879,14 +884,14 @@ export default function OdemeTakip() {
                         )}
                       </div>
                     </td>
-                    <td className="sticky z-10 bg-[#1f3d78] px-3 py-2 text-right text-gray-300 whitespace-nowrap min-w-[110px]" style={{ left: 228 }}>
+                    <td className="lg:sticky z-10 bg-[#1f3d78] px-3 py-2 text-right text-gray-300 whitespace-nowrap min-w-[110px]" style={{ left: 228 }}>
                       <button type="button" onClick={() => openFeeModal(r, 'aylik_ucret')} title="Aylık ücreti düzenle"
                         className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-blue-700/40 hover:text-white transition-colors">
                         {r.aylikUcret > 0 ? `₺ ${fmt(r.aylikUcret)}` : <span className="text-gray-600">-</span>}
                         <Pencil className="w-3 h-3 text-blue-300/70" />
                       </button>
                     </td>
-                    <td className="sticky z-10 bg-[#1f3d78] px-3 py-2 text-right whitespace-nowrap min-w-[110px]" style={{ left: 338 }}>
+                    <td className="lg:sticky z-10 bg-[#1f3d78] px-3 py-2 text-right whitespace-nowrap min-w-[110px]" style={{ left: 338 }}>
                       {(() => {
                         const durum = kalemDurum(r, 'Defter Tasdik')
                         if (durum !== 'yok') {
@@ -914,7 +919,7 @@ export default function OdemeTakip() {
                         <Pencil className="w-3 h-3" />
                       </button>
                     </td>
-                    <td className="sticky z-10 bg-[#1f3d78] px-3 py-2 text-right whitespace-nowrap min-w-[110px]" style={{ left: 448 }}>
+                    <td className="lg:sticky z-10 bg-[#1f3d78] px-3 py-2 text-right whitespace-nowrap min-w-[110px]" style={{ left: 448 }}>
                       {(() => {
                         const durum = kalemDurum(r, 'Onceki Donem')
                         if (durum !== 'yok') {
@@ -942,7 +947,7 @@ export default function OdemeTakip() {
                         <Pencil className="w-3 h-3" />
                       </button>
                     </td>
-                    <td className="sticky z-10 bg-[#1f3d78] px-3 py-2 text-right text-yellow-400 font-medium whitespace-nowrap min-w-[110px] shadow-[6px_0_10px_-4px_rgba(0,0,0,0.45)]" style={{ left: 558 }}>₺ {fmt(r.toplamBorc)}</td>
+                    <td className="lg:sticky z-10 bg-[#1f3d78] px-3 py-2 text-right text-yellow-400 font-medium whitespace-nowrap min-w-[110px] shadow-[6px_0_10px_-4px_rgba(0,0,0,0.45)]" style={{ left: 558 }}>₺ {fmt(r.toplamBorc)}</td>
                     {AYLER.map((_, mi) => {
                       const m = mi + 1
                       const durum = monthStatus(r, m)

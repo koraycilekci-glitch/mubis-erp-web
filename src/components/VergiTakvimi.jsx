@@ -4,7 +4,7 @@ import { getFormattedBeyanDeadline, getFormattedSgkOdemeGunu, getMonthName, getB
 import { getTahakkukList, sumTahakkukTutar, oluTahakkukTemizle } from '../utils/tahakkukUtils'
 import { tahakkuklariKesfet, tahakkukDonemi } from '../services/documentService'
 import { supabase } from '../lib/supabase'
-import { sendEmail, sendDocumentViaWhatsAppChannel, getWhatsAppChannel } from '../services/whatsappService'
+import { sendEmail, sendDocumentViaWhatsAppChannel } from '../services/whatsappService'
 import { getSettings } from '../services/settingsService'
 import { analyzeDocument } from '../services/documentIntelligenceEngine'
 import { useAuth } from '../context/AuthContext'
@@ -13,6 +13,19 @@ import { tecilliPlanGetir, tecilliPlanPdfIndir, tecilliTaksitOdendi } from '../s
 import { YARDIMCI_EXE_URL } from '../config/indirmeLinkleri'
 
 const GIB_ODEME_URL = 'https://dijital.gib.gov.tr/hizliOdemeler/belgeNumarasiIleOdeme'
+
+const GIB_PANEL_BASLIKLARI = {
+  'tahakkuk-yok': 'Tahakkuk fiş numarası bulunamadı',
+  captcha: 'GİB güvenlik kodu çözülemedi',
+  'gib-uyari': 'GİB borç sorgusu',
+  'secim-gerekli': 'GİB ödeme şekli seçimi gerekiyor',
+  'odeme-formu-yok': 'Ödeme formu oluşturulamadı',
+  'popup-engel': 'Ödeme ekranı hazır',
+  'vps-hata': 'Ödeme ekranı hazırlanamadı',
+  'erisim-engelli': 'Yardımcı programın sürümü eski',
+  'edevlet-sifre-yok': 'e-Devlet şifresi bulunamadı',
+  'kurulu-degil': 'Yardımcı program çalışmıyor'
+}
 
 export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDurumlari, onBeyanDurumlariUpdate }) {
   const now = new Date()
@@ -33,7 +46,10 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
   const [showGibPanel, setShowGibPanel] = useState(false)
   const [gibBilgi, setGibBilgi] = useState({ vkn: '', tahakkukNo: '', il: '', vergiDairesi: '' })
   const [gibHelperDurum, setGibHelperDurum] = useState('')
-  const [gibRapor, setGibRapor] = useState(null)
+  // VPS'in hazirladigi GIB odeme formu (spos.gib.gov.tr'ye POST eder).
+  // HTML burada tutulur; popup engellenirse "Odeme ekranini ac" ile acilir.
+  const [gibOdemeFormu, setGibOdemeFormu] = useState('')
+  const [gibOdemeMesaji, setGibOdemeMesaji] = useState('')
   // Tecilli Tahsilat odeme plani (admin yukler; musteri burada taksitleri oder)
   const [tecilli, setTecilli] = useState(null)
   const [tecilliDurum, setTecilliDurum] = useState(null) // { tip, metin }
@@ -457,7 +473,7 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
       const caption = `${selectedTahakkuk.name} tahakkuk dokumaniniz hazirdir.\n\nSaygilarimizla,\nMUBiS ERP`
       const documentName = `${selectedTahakkuk.name || 'tahakkuk'}.pdf`
 
-      await sendDocumentViaWhatsAppChannel({
+      const sonuc = await sendDocumentViaWhatsAppChannel({
         phone: client.phone,
         documentUrl,
         documentName,
@@ -467,7 +483,11 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
         settings
       })
 
-      alert(getWhatsAppChannel(settings) === 'web' ? 'WhatsApp penceresi acildi. Mesaji WhatsApp uzerinden gonderin.' : 'WhatsApp mesaji gonderildi.')
+      if (sonuc?.ok === false) {
+        alert(sonuc?.not || 'WhatsApp gonderimi yapilamadi. Sunucudaki/yerel yardimci programin WhatsApp oturumunu kontrol edin.')
+        return
+      }
+      alert(sonuc?.otomatik ? 'WhatsApp mesaji gonderildi.' : 'WhatsApp mesaji hazirlandi; gonderimi kontrol edin.')
     } catch (err) {
       alert('Gonderim hatasi: ' + err.message)
     }
@@ -496,11 +516,27 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
     }
   }
 
-  // GIB Dijital Vergi Dairesi - belge numarasi ile odeme
-  // 1) Yerel yardimci servis kuruluysa (baslat.bat) Chrome/Edge'i acip
-  //    formu OTOMATIK doldurur (guvenlik kodu haric).
-  // 2) Kurulu degilse GIB sayfasini yeni sekmede acar, bilgiler panelde
-  //    kopyalanabilir olarak sunulur.
+  // GIB "Belge Numarasi Ile Odeme" - VPS tabanli akis (2.8.58):
+  // 1) Kullanici tiklar; pencere HEMEN acilir (popup engeli asilir).
+  // 2) VPS formu doldurur, captcha'yi cozer, borclari secer ve GIB'in
+  //    urettigi odeme formunu HTML olarak dondurur.
+  // 3) Form HTML'i pencerede calistirilir; yalnizca spos.gib.gov.tr odeme
+  //    ekrani acilir. Telefonda/bilgisayarda yardimci program GEREKMEZ.
+  const gibOdemePenceresineYaz = (pencere, html) => {
+    if (!pencere || pencere.closed) return false
+    try {
+      pencere.document.open()
+      pencere.document.write(html)
+      pencere.document.close()
+      try { pencere.focus() } catch { /* yoksay */ }
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  const GIB_ODEME_BEKLEME_HTML = `<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GİB Ödeme Hazırlanıyor</title><style>body{margin:0;background:#0f172a;color:#e2e8f0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px}.k{width:38px;height:38px;border:3px solid #334155;border-top-color:#2dd4bf;border-radius:50%;animation:d 1s linear infinite;margin:0 auto 18px}@keyframes d{to{transform:rotate(360deg)}}p{font-size:14px;line-height:1.6;color:#94a3b8;max-width:320px;margin:10px auto 0}b{font-size:16px}</style></head><body><div><div class="k"></div><b>GİB ödeme ekranı hazırlanıyor</b><p>Vergi dairesi sorgusu yapılıyor. Bu pencere otomatik olarak ödeme ekranına geçecek; kapatmayın.</p></div></body></html>`
+
   const handleGibOdeme = async () => {
     const statusKey = selectedTahakkuk?.statusKey || ''
     // Panelde elle yazilmis degerler oncelikli (kullanici il/vergi dairesi
@@ -531,13 +567,42 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
     const sonuc = await gibYardimciIleDoldur(bilgi)
     if (sonuc.ok) {
       setGibHelperDurum('ok')
-      setGibRapor(sonuc.rapor || null)
       return
     }
     // Yardimci program yok/calistirilamiyor: GIB sayfasini acma, kurulum
     // uyari goster. Kurulum servisi hemen baslattigi icin bu uyari bir
     // daha cikmaz; "Ode" butonu odeme sayfasini dogrudan acar.
     setGibHelperDurum('kurulu-degil')
+  }
+
+  // Popup engellendiyse / pencere kapatildiysa: form HTML'ini yeni pencerede ac
+  const handleGibOdemeFormuAc = () => {
+    if (!gibOdemeFormu) return
+    const w = window.open('', '_blank')
+    if (!w) {
+      setGibOdemeMesaji('Tarayıcı yeni pencereyi engelledi. Lütfen bu site için açılır pencerelere izin verin.')
+      return
+    }
+    try { w.opener = null } catch { /* yoksay */ }
+    if (gibOdemePenceresineYaz(w, gibOdemeFormu)) {
+      setGibHelperDurum('ok')
+      setGibOdemeMesaji('')
+    }
+  }
+
+  const handleGibBilgiKopyala = async () => {
+    const metin = [
+      `VKN/TCKN: ${gibBilgi.vkn || ''}`,
+      `Belge No: ${gibBilgi.tahakkukNo || ''}`,
+      `İl: ${gibBilgi.il || ''}`,
+      `Vergi Dairesi: ${gibBilgi.vergiDairesi || ''}`
+    ].join('\n')
+    try {
+      await navigator.clipboard.writeText(metin)
+      alert('GİB bilgileri kopyalandı.')
+    } catch {
+      alert(metin)
+    }
   }
 
   // Yardimci program olmadan elle devam etmek isteyen icin
@@ -1060,56 +1125,78 @@ export default function VergiTakvimi({ clientId, beyanDurumlari: propBeyanDuruml
                     {selectedTahakkuk.type === 'sgk' ? 'SGK Primi Öde (e-Devlet)' : 'Dijital Vergi Dairesi&apos;nde Ode'}
                   </button>
 
-                  {/* Odeme geri bildirimi: sade tutulur, sadece Ode + gerekirse kurulum uyari */}
+                  {/* Odeme geri bildirimi: VPS odeme formu / hata / manuel GIB */}
                   {showGibPanel && (
                     <div className="space-y-2">
                       {gibHelperDurum === 'ok' && (
                         <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 text-xs text-green-300">
                           {selectedTahakkuk?.type === 'sgk'
                             ? 'e-Devlet giris ekrani acildi ve bilgiler dolduruldu. Guvenlik kodunu girip GIRIS\'e basin; sonrasinda uygulama acilip sorgu secimleri otomatik yapilir, Borc Sorgula\'ya basilir.'
-                            : 'GIB odeme sayfasi acildi ve form otomatik dolduruldu. Guvenlik kodunu girip SORGULA\'ya basin.'}
+                            : 'GİB ödeme ekranı açıldı. Ödemeyi açılan pencerede tamamlayabilirsiniz.'}
                         </div>
                       )}
-                          {gibHelperDurum === 'deniyor' && (
-                            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300">
-                              GIB odeme sayfasi hazirlaniyor...
-                            </div>
+                      {gibHelperDurum === 'deniyor' && (
+                        <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300">
+                          GİB ödeme ekranı hazırlanıyor... (form doldurma + güvenlik kodu sorgusu)
+                        </div>
+                      )}
+                      {gibHelperDurum && !['ok', 'deniyor'].includes(gibHelperDurum) && (
+                        <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-3 text-xs text-orange-300 space-y-2">
+                          <p className="font-medium">
+                            {GIB_PANEL_BASLIKLARI[gibHelperDurum] || 'Ödeme ekranı hazırlanamadı'}
+                          </p>
+                          <p className="leading-relaxed">
+                            {gibOdemeMesaji || (gibHelperDurum === 'edevlet-sifre-yok'
+                              ? 'Musteri kaydinda e-Devlet sifresi bulunamadi. Musteri profilinde "e-Devlet Sifresi" alanini doldurup kaydedin.'
+                              : 'GİB ödeme ekranı hazırlanamadı. Aşağıdaki bağlantıdan GİB sayfasına devam edebilirsiniz.')}
+                          </p>
+
+                          {/* Popup engellendiyse hazir formu yeni pencerede ac */}
+                          {gibOdemeFormu && (
+                            <button
+                              onClick={handleGibOdemeFormuAc}
+                              className="w-full flex items-center justify-center gap-2 bg-teal-500/20 hover:bg-teal-500/30 text-teal-200 py-2.5 rounded-lg font-semibold text-sm transition-colors"
+                            >
+                              <CreditCard className="w-4 h-4" />
+                              Ödeme ekranını aç
+                            </button>
                           )}
-                          {gibHelperDurum && !['ok', 'deniyor'].includes(gibHelperDurum) && (
-                            <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-3 text-xs text-orange-300 space-y-2">
-                              <p className="font-medium">
-                                {gibHelperDurum === 'erisim-engelli'
-                                  ? 'Yardimci programin surumu eski. Lutfen yeniden kurun.'
-                                  : gibHelperDurum === 'edevlet-sifre-yok'
-                                    ? 'Musteri kaydinda e-Devlet sifresi bulunamadi. Musteri profilinde "e-Devlet Sifresi" alanini doldurup kaydedin.'
-                                    : 'Yardimci program bilgisayarinizda kurulu degil.'}
-                              </p>
-                              {gibHelperDurum !== 'edevlet-sifre-yok' && (
-                                <>
-                                  <p className="leading-relaxed">
-                                    Odeme formunun otomatik doldurulmasi icin yardimci programi kurun. Kurulumdan sonra bu uyari bir daha cikmaz; &quot;Ode&quot; butonu odeme sayfasini dogrudan acar.
-                                  </p>
-                                  <a
-                                    href={YARDIMCI_EXE_URL}
-                                    download
-                                    className="w-full flex items-center justify-center gap-2 bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 py-2 rounded-lg font-medium text-sm transition-colors"
-                                  >
-                                    <Download className="w-4 h-4" />
-                                    Yardimci Programi Kur (Windows)
-                                  </a>
-                                  <p className="text-[10px] text-gray-400 leading-relaxed">
-                                    Indirdikten sonra cift tiklayin; kurulum kendiliginden yapilir.
-                                  </p>
-                                </>
-                              )}
+
+                          {selectedTahakkuk?.type !== 'sgk' && (
+                            <>
+                              <div className="rounded-lg bg-black/20 p-2 font-mono text-[10px] leading-relaxed text-orange-200/90 select-all">
+                                <div>VKN/TCKN: {gibBilgi.vkn || '-'}</div>
+                                <div>Belge No: {gibBilgi.tahakkukNo || '-'}</div>
+                                <div>İl: {gibBilgi.il || '-'} / VD: {gibBilgi.vergiDairesi || '-'}</div>
+                              </div>
                               <button
-                                onClick={handleGibManuelAc}
+                                onClick={handleGibBilgiKopyala}
                                 className="text-[11px] text-blue-300 hover:text-blue-200 underline"
                               >
-                                {selectedTahakkuk?.type === 'sgk' ? 'Yardimci program olmadan SGK odeme sayfasini ac' : 'Yardimci program olmadan GIB sayfasini ac'}
+                                GİB bilgilerini kopyala
                               </button>
-                            </div>
+                            </>
                           )}
+
+                          {(['kurulu-degil', 'erisim-engelli'].includes(gibHelperDurum) || selectedTahakkuk?.type === 'sgk') && gibHelperDurum !== 'edevlet-sifre-yok' && (
+                            <a
+                              href={YARDIMCI_EXE_URL}
+                              download
+                              className="w-full flex items-center justify-center gap-2 bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 py-2 rounded-lg font-medium text-sm transition-colors"
+                            >
+                              <Download className="w-4 h-4" />
+                              Yardımcı Programı Kur (Windows)
+                            </a>
+                          )}
+
+                          <button
+                            onClick={handleGibManuelAc}
+                            className="text-[11px] text-blue-300 hover:text-blue-200 underline"
+                          >
+                            {selectedTahakkuk?.type === 'sgk' ? 'SGK ödeme sayfasını aç' : 'GİB ödeme sayfasını aç'}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
 

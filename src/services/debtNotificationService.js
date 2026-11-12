@@ -238,8 +238,12 @@ export async function sendDebtNotification(clientId, channel, settings = null) {
       for (const phone of waNumbers) {
         try {
           if (waChannel === 'web') {
-            // Kullanicinin kendi WhatsApp'i uzerinden hazir mesaj acar
-            openWhatsAppWeb({ phone, message })
+            // VPS/yerel yardimci uzerinden otomatik gonderim. Basarisizsa
+            // basarili sayma; tarayicida wa.me acilmaz.
+            const waSonuc = await openWhatsAppWeb({ phone, message })
+            if (waSonuc?.ok === false) {
+              throw new Error(waSonuc?.not || waSonuc?.reason || 'WhatsApp gonderilemedi')
+            }
           } else {
             await sendWhatsAppText({
               phone,

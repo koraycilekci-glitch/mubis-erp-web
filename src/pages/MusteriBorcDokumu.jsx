@@ -920,13 +920,6 @@ export default function MusteriBorcDokumu() {
           renk="violet"
           soluk={!muhasebeDahil}
         />
-        <KpiKart
-          baslik="Genel Toplam"
-          tutar={`${paraYaz(toplamlar.toplam)} TL`}
-          alt={muhasebeDahil ? 'Muhasebe dahil' : 'SGK + Vergi'}
-          ikon={Wallet}
-          renk="cyan"
-        />
       </div>
 
       {/* Filtreler */}
@@ -1124,7 +1117,6 @@ export default function MusteriBorcDokumu() {
                   <th className="w-[12%] px-3 py-3 text-right font-semibold">SGK</th>
                   <th className="w-[12%] px-3 py-3 text-right font-semibold">Vergi (GİB)</th>
                   {muhasebeDahil && <th className="w-[11%] px-3 py-3 text-right font-semibold">Muhasebe</th>}
-                  <th className="w-[13%] px-3 py-3 text-right font-semibold">Toplam</th>
                   <th className="w-[11%] px-3 py-3 text-center font-semibold">Son Sorgu</th>
                   <th className="w-[10%] px-3 py-3 text-right font-semibold pr-4">İşlem</th>
                 </tr>
@@ -1169,9 +1161,6 @@ export default function MusteriBorcDokumu() {
                             {muh ? `${paraYaz(muh.kalanBorc)} TL` : '—'}
                           </td>
                         )}
-                        <td className={`px-3 py-2.5 text-right font-semibold tabular-nums ${toplam > 0 ? 'text-cyan-200' : 'text-gray-500'}`}>
-                          {paraYaz(toplam)} TL
-                        </td>
                         <td className="px-3 py-2.5 text-center">
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${sonTs ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-blue-900/40 border-blue-700/40 text-gray-500'}`}>
                             <Clock className="w-3 h-3" /> {gunEtiket(sonTs)}
@@ -1210,7 +1199,7 @@ export default function MusteriBorcDokumu() {
                       </tr>
                       {acikMi && (
                         <tr>
-                          <td colSpan={muhasebeDahil ? 8 : 7} className="p-0 border-t border-blue-800/30">{detayKart(grup)}</td>
+                          <td colSpan={muhasebeDahil ? 7 : 6} className="p-0 border-t border-blue-800/30">{detayKart(grup)}</td>
                         </tr>
                       )}
                     </Fragment>
@@ -1246,7 +1235,6 @@ export default function MusteriBorcDokumu() {
                         </div>
                       </button>
                       <div className="text-right shrink-0">
-                        <div className={`text-sm font-semibold tabular-nums ${toplam > 0 ? 'text-cyan-200' : 'text-gray-500'}`}>{paraYaz(toplam)} TL</div>
                         {!muhasebeDahil && sayi(muhasebeBorc[id]?.kalanBorc) > 0 && (
                           <div className="text-[9px] text-gray-500">muhasebe hariç</div>
                         )}

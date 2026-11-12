@@ -79,18 +79,70 @@ export async function onRequest({ env, request }) {
     if (request.method === 'POST' && path === 'is' && !url.search) {
       let body
       try { body = await request.json() } catch { return yanit('Geçersiz sorgu', 400) }
-      musteriId = Number(body?.clientId)
-      const yil = Number(body?.yil)
-      const ay = Number(body?.ay)
-      if (body?.is !== 'dvs-sorgula' || body?.asenkron !== true || !Number.isSafeInteger(musteriId) || musteriId <= 0 || !Number.isInteger(yil) || yil < 2000 || yil > 2100 || !Number.isInteger(ay) || ay < 1 || ay > 12 || !['pos', '109', '110'].includes(body?.tur)) return yanit('Geçersiz sorgu', 400)
-      let client, clientError
-      try {
-        ;({ data: client, error: clientError } = await supabase.from('clients').select('id,office_id,dvs_username,dvs_password').eq('id', musteriId).eq('auth_user_id', userData.user.id).maybeSingle())
-      } catch { return yanit('Müşteri doğrulanamadı', 503) }
-      if (clientError) return yanit('Müşteri doğrulanamadı', 503)
-      if (!client || String(client.office_id) !== officeId) return yanit('Bu müşteri için yetkiniz yok', 403)
-      if (!client.dvs_username || !client.dvs_password) return yanit('Müşteri DVS kullanıcı adı/şifresi kayıtlı değil', 400)
-      istekGovdesi = JSON.stringify({ is: 'dvs-sorgula', asenkron: true, kullaniciKodu: client.dvs_username, parola: client.dvs_password, yil, ay, tur: body.tur })
+      // GİB ödeme formu hazırlama işi: musteri kendi vergi borcu için
+      // ödeme ekranı hazırlayabilir. DVS kimlik bilgisi gerekmez.
+      if (body?.is === 'gib-odeme-form' && body?.asenkron === true) {
+        musteriId = Number(body?.clientId)
+        if (!Number.isSafeInteger(musteriId) || musteriId <= 0) return yanit('Geçersiz sorgu', 400)
+        let client, clientError
+        try {
+          ;({ data: client, error: clientError } = await supabase.from('clients').select('id,office_id').eq('id', musteriId).eq('auth_user_id', userData.user.id).maybeSingle())
+        } catch { return yanit('Müşteri doğrulanamadı', 503) }
+        if (clientError) return yanit('Müşteri doğrulanamadı', 503)
+        if (!client || String(client.office_id) !== officeId) return yanit('Bu müşteri için yetkiniz yok', 403)
+        istekGovdesi = JSON.stringify({ is: 'gib-odeme-form', asenkron: true, ...body })
+        try {
+          const temiz = JSON.parse(istekGovdesi)
+          delete temiz.clientId
+          istekGovdesi = JSON.stringify(temiz)
+        } catch { /* yoksay */ }
+      } else if (body?.is === 'gib-borc-sorgula' && body?.asenkron === true) {
+        musteriId = Number(body?.clientId)
+        if (!Number.isSafeInteger(musteriId) || musteriId <= 0) return yanit('Geçersiz sorgu', 400)
+        let client, clientError
+        try {
+          ;({ data: client, error: clientError } = await supabase.from('clients').select('id,office_id,dvs_username,dvs_password').eq('id', musteriId).eq('auth_user_id', userData.user.id).maybeSingle())
+        } catch { return yanit('Müşteri doğrulanamadı', 503) }
+        if (clientError) return yanit('Müşteri doğrulanamadı', 503)
+        if (!client || String(client.office_id) !== officeId) return yanit('Bu müşteri için yetkiniz yok', 403)
+        if (!client.dvs_username || !client.dvs_password) return yanit('Müşteri DVS kullanıcı adı/şifresi kayıtlı değil', 400)
+        istekGovdesi = JSON.stringify({ is: 'gib-borc-sorgula', asenkron: true, kullaniciKodu: client.dvs_username, parola: client.dvs_password })
+      } else if (body?.is === 'sgk-borc-sorgula' && body?.asenkron === true) {
+        musteriId = Number(body?.clientId)
+        if (!Number.isSafeInteger(musteriId) || musteriId <= 0) return yanit('Geçersiz sorgu', 400)
+        let client, clientError
+        try {
+          ;({ data: client, error: clientError } = await supabase.from('clients').select('id,office_id,sgk_user,sgk_sistem_sifre,sgk_isyeri_sifre,sgk_isyeri_kodu').eq('id', musteriId).eq('auth_user_id', userData.user.id).maybeSingle())
+        } catch { return yanit('Müşteri doğrulanamadı', 503) }
+        if (clientError) return yanit('Müşteri doğrulanamadı', 503)
+        if (!client || String(client.office_id) !== officeId) return yanit('Bu müşteri için yetkiniz yok', 403)
+        if (!client.sgk_user || !client.sgk_sistem_sifre || !client.sgk_isyeri_sifre) return yanit('Müşteri SGK bilgileri eksik', 400)
+        istekGovdesi = JSON.stringify({ is: 'sgk-borc-sorgula', asenkron: true, kullaniciAdi: client.sgk_user, sistemSifre: client.sgk_sistem_sifre, isyeriSifre: client.sgk_isyeri_sifre, isyeriKodu: client.sgk_isyeri_kodu || '' })
+      } else if (body?.is === 'vergi-etebligat-sorgula' && body?.asenkron === true) {
+        musteriId = Number(body?.clientId)
+        if (!Number.isSafeInteger(musteriId) || musteriId <= 0) return yanit('Geçersiz sorgu', 400)
+        let client, clientError
+        try {
+          ;({ data: client, error: clientError } = await supabase.from('clients').select('id,office_id,dvs_username,dvs_password').eq('id', musteriId).eq('auth_user_id', userData.user.id).maybeSingle())
+        } catch { return yanit('Müşteri doğrulanamadı', 503) }
+        if (clientError) return yanit('Müşteri doğrulanamadı', 503)
+        if (!client || String(client.office_id) !== officeId) return yanit('Bu müşteri için yetkiniz yok', 403)
+        if (!client.dvs_username || !client.dvs_password) return yanit('Müşteri DVS kullanıcı adı/şifresi kayıtlı değil', 400)
+        istekGovdesi = JSON.stringify({ is: 'vergi-etebligat-sorgula', asenkron: true, kullaniciKodu: client.dvs_username, parola: client.dvs_password, belgeleriIndir: body?.belgeleriIndir, ...(body?.kayitliBelgeler ? { kayitliBelgeler: body.kayitliBelgeler } : {}) })
+      } else {
+        musteriId = Number(body?.clientId)
+        const yil = Number(body?.yil)
+        const ay = Number(body?.ay)
+        if (body?.is !== 'dvs-sorgula' || body?.asenkron !== true || !Number.isSafeInteger(musteriId) || musteriId <= 0 || !Number.isInteger(yil) || yil < 2000 || yil > 2100 || !Number.isInteger(ay) || ay < 1 || ay > 12 || !['pos', '109', '110'].includes(body?.tur)) return yanit('Geçersiz sorgu', 400)
+        let client, clientError
+        try {
+          ;({ data: client, error: clientError } = await supabase.from('clients').select('id,office_id,dvs_username,dvs_password').eq('id', musteriId).eq('auth_user_id', userData.user.id).maybeSingle())
+        } catch { return yanit('Müşteri doğrulanamadı', 503) }
+        if (clientError) return yanit('Müşteri doğrulanamadı', 503)
+        if (!client || String(client.office_id) !== officeId) return yanit('Bu müşteri için yetkiniz yok', 403)
+        if (!client.dvs_username || !client.dvs_password) return yanit('Müşteri DVS kullanıcı adı/şifresi kayıtlı değil', 400)
+        istekGovdesi = JSON.stringify({ is: 'dvs-sorgula', asenkron: true, kullaniciKodu: client.dvs_username, parola: client.dvs_password, yil, ay, tur: body.tur })
+      }
     } else if (request.method === 'GET' && path === 'is-sonuc' && [...url.searchParams.keys()].length === 1) {
       musteriIsKimligi = url.searchParams.get('id')
       const bilgi = await isKimligiDogrula(key, userData.user.id, musteriIsKimligi)

@@ -115,12 +115,17 @@ export async function etebligatlariSorgula(client, giris = null, { belgeleriIndi
 
   // 2.8.5: e-Tebligat sorgusu HER ZAMAN Istanbul sunucusundan — ofis
   // bilgisayari/yerel yardimci kapali olsa bile sorgulama calisir.
+  // 2.8.60: yerel yedek kapatildi; VPS'e ulasilamazsa acik hata doner.
   const res = await yardimciIsSunucu('vergi-etebligat-sorgula', {
+    clientId: client.id,
     kullaniciKodu: bilgiler.dvs_username,
     parola: bilgiler.dvs_password,
     belgeleriIndir,
     ...(kayitliBelgeler ? { kayitliBelgeler } : {})
-  }, belgeleriIndir ? 25 * 60 * 1000 : undefined)
+  }, belgeleriIndir ? 25 * 60 * 1000 : undefined, undefined, {
+    yerelYedek: false,
+    yerelYedekKapaliMesaj: 'İstanbul sunucusuna (VPS) ulaşılamadı; e-Tebligat sorgusu yerel bilgisayardan yapılmaz. Lütfen birkaç dakika sonra tekrar deneyin.'
+  })
   if (!res.ok) return res
 
   const yeni = (res.tebligatlar || []).map(t => satirNormalize(client, t))

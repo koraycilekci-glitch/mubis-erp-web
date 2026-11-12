@@ -231,12 +231,16 @@ export default function KiraStopajRaporu({ client, showRecipientActions = true }
       return
     }
     const normalizedPhone = phone.startsWith('0') ? `90${phone.slice(1)}` : phone
-    openWhatsAppWeb({ phone: normalizedPhone, message: getReportText() })
+    const waSonuc = await openWhatsAppWeb({ phone: normalizedPhone, message: getReportText() })
+    if (waSonuc?.ok === false) {
+      window.alert(waSonuc?.not || waSonuc?.reason || 'WhatsApp gönderilemedi.')
+      return
+    }
     logWhatsAppWebSend({
       clientId: client?.id,
       documentType: 'kira_stopaj',
       target: normalizedPhone,
-      status: 'pending'
+      status: waSonuc?.otomatik ? 'sent' : 'pending'
     }).catch(() => {})
   }
 

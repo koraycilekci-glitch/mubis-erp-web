@@ -1324,212 +1324,338 @@ async function sayfadaDoldur(page, esle) {
 }
 
 // ------------------------------------------------------------
-// GIB odeme formunu bekle + doldur
+// GIB "Belge Numarasi Ile Odeme" formu alanlari (sabit kimlikler):
+//   #vkntckn, #odemePlaniBelgeNumarasiOrTahakkukFisNumarasi,
+//   #il, #vergiDairesi, #securityCode, #submit
+// Il / Vergi Dairesi MUI Autocomplete'tir. Yalniz value yazmak React
+// state'ini degistirmiyordu; kutuya tiklanip [role=option] listesinden
+// secenek secilir. Boylece GIB formu gercekten dolu gonderilir.
 // ------------------------------------------------------------
-async function gibOdemeDoldur(page, bilgi) {
-  await page.goto('https://dijital.gib.gov.tr/hizliOdemeler/belgeNumarasiIleOdeme', {
-    waitUntil: 'domcontentloaded', timeout: 60000
-  })
-  // Angular gec render edebilir: en az 2 input olusana kadar bekle (max 20 sn)
+async function gibAlanlariDogrula(page, bilgi) {
+  return page.evaluate((b) => {
+    const norm = (s) => String(s || '').toLocaleUpperCase('tr').replace(/İ/g, 'I').replace(/\s+/g, ' ').trim()
+    const oku = (sel) => {
+      const el = document.querySelector(sel)
+      return el ? String(el.value || '') : null
+    }
+    const vkn = oku('#vkntckn')
+    const belge = oku('#odemePlaniBelgeNumarasiOrTahakkukFisNumarasi')
+    const il = oku('#il')
+    const daire = oku('#vergiDairesi')
+    const rakam = (s) => String(s || '').replace(/\D/g, '')
+    const vknTamam = !b.vkn || (vkn !== null && rakam(vkn) === rakam(b.vkn))
+    const belgeTamam = !b.tahakkukNo || (belge !== null && rakam(belge) === rakam(b.tahakkukNo))
+    const ilTamam = !b.il || (il !== null && norm(il).includes(norm(b.il)))
+    const daireTamam = !b.vergiDairesi || (daire !== null && norm(daire).includes(norm(b.vergiDairesi)))
+    return {
+      tamam: vknTamam && belgeTamam && ilTamam && daireTamam,
+      vkn, belge, il, daire,
+      vknTamam, belgeTamam, ilTamam, daireTamam
+    }
+  }, bilgi).catch(() => ({ tamam: false }))
+}
+
+async function gibAlanlariDoldur(page, bilgi) {
+  const b = {
+    vkn: String(bilgi?.vkn || '').trim(),
+    tahakkukNo: String(bilgi?.tahakkukNo || '').trim(),
+    il: String(bilgi?.il || '').trim(),
+    vergiDairesi: String(bilgi?.vergiDairesi || '').trim()
+  }
+  const rapor = { yontem: {}, notlar: [] }
+
+  // GIB SPA'si ilk anda bos iskelet render eder; React hydration bitmeden
+  // yazilan degerler sifirlanabiliyor. Form alanlari + React fiber isareti
+  // olusana kadar bekle.
   try {
     await page.waitForFunction(
-      () => document.querySelectorAll('input[type=text],input:not([type])').length >= 2,
+      () => !!document.querySelector('#vkntckn') && !!document.querySelector('#odemePlaniBelgeNumarasiOrTahakkukFisNumarasi'),
       { timeout: 20000 }
     )
-  } catch (e) { /* yine de doldurmayi dene */ }
-  await new Promise(r => setTimeout(r, 2000))
+  } catch { rapor.notlar.push('GIB form alanlari zamaninda olusmadi') }
+  try {
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#vkntckn')
+      if (!el) return false
+      return Object.keys(el).some(k => k.startsWith('__reactFiber$') || k.startsWith('__reactProps$'))
+    }, { timeout: 15000 })
+  } catch { rapor.notlar.push('React hydration isareti gorulmedi') }
+  await new Promise(r => setTimeout(r, 500))
 
-  return page.evaluate(async (b) => {
-    const rapor = { yontem: {}, notlar: [] }
-    const bekle = (ms) => new Promise(r => setTimeout(r, ms))
-
-    // Angular/React gibi frameworklerin de Algilayacagi Sekilde Deger Yaz
-    function yaz(el, v) {
-      const proto = el instanceof HTMLTextAreaElement
-        ? HTMLTextAreaElement.prototype
-        : HTMLInputElement.prototype
-      const setter = Object.getOwnPropertyDescriptor(proto, 'value').set
-      if (setter) setter.call(el, v)
-      else el.value = v
-      // React/Angular ve diger framework'ler icin gercek kullanici olay zinciri
-      const etkinlikler = ['focus', 'input', 'change', 'blur']
-      etkinlikler.forEach(et => {
+  const yaz = async (sel, deger) => {
+    if (!deger) return false
+    const el = await page.$(sel)
+    if (!el) return false
+    // GERCEK (trusted) klavye olaylariyla yaz: React state'i de guncellenir;
+    // yalniz value setter + olaylar kullanilirsa sayfa yeniden render
+    // edildiginde (captcha yazimi vb.) alanlar sifirlaniyordu.
+    await el.click({ clickCount: 3 }).catch(() => {})
+    await page.keyboard.down('Control'); await page.keyboard.press('KeyA'); await page.keyboard.up('Control').catch(() => {})
+    await page.keyboard.press('Backspace').catch(() => {})
+    await el.type(deger, { delay: 20 }).catch(() => {})
+    const son = await el.evaluate(n => String(n.value || '')).catch(() => '')
+    if (son === deger) {
+      await el.evaluate(n => { n.dataset.gibdolu = '1' }).catch(() => {})
+      return true
+    }
+    // Yedek: setter + olaylar
+    const ok = await page.evaluate((sel, deger) => {
+      const el = document.querySelector(sel)
+      if (!el) return false
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      if (setter) setter.call(el, deger)
+      else el.value = deger
+      ;['focus', 'input', 'change', 'blur'].forEach(et => {
         if (et === 'focus') el.dispatchEvent(new FocusEvent('focus', { bubbles: true }))
         else if (et === 'blur') el.dispatchEvent(new FocusEvent('blur', { bubbles: true }))
         else el.dispatchEvent(new Event(et, { bubbles: true }))
       })
-      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }))
-      el.dispatchEvent(new KeyboardEvent('keypress', { key: 'a', bubbles: true }))
-      el.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', bubbles: true }))
       el.dataset.gibdolu = '1'
-    }
+      return el.value === deger
+    }, sel, deger).catch(() => false)
+    return ok
+  }
 
-    function gorunur(el) {
-      return el.offsetParent !== null || el.getClientRects().length > 0
-    }
+  // MUI Autocomplete: kutuya tikla -> [role=option] listesinden esleseni sec.
+  // Secenek bulunamazsa yazarak filtrele (uzun vergi dairesi listesi).
+  const autocompleteSec = async (sel, deger, etiket) => {
+    const norm = (s) => String(s || '').toLocaleUpperCase('tr').replace(/İ/g, 'I').replace(/\s+/g, ' ').trim()
+    const istenen = norm(deger)
+    if (!istenen) return false
+    for (let deneme = 0; deneme < 3; deneme++) {
+      const el = await page.$(sel)
+      if (!el) return false
+      const mevcut = await el.evaluate(n => String(n.value || '')).catch(() => '')
+      if (norm(mevcut).includes(istenen)) return true
 
-    function etiketMetni(el) {
-      const parcalar = []
-      // 1) label[for=id]
-      if (el.id) {
-        const lb = document.querySelector(`label[for="${window.__cssEscape ? window.__cssEscape(el.id) : el.id}"]`)
-        if (lb) parcalar.push(lb.textContent)
-      }
-      // 2) en yakin label / aria-label / placeholder
-      if (el.getAttribute('aria-label')) parcalar.push(el.getAttribute('aria-label'))
-      if (el.placeholder) parcalar.push(el.placeholder)
-      let n = el.closest('label')
-      if (n) parcalar.push(n.textContent)
-      // 3) parent zincirinde ilerle, kisa metin topla (tum formu tek seferde almamak icin)
-      n = el.parentElement
-      for (let i = 0; i < 5 && n; i++) {
-        const kendiMetni = Array.from(n.childNodes)
-          .filter(x => x.nodeType === 3)
-          .map(x => x.textContent)
-          .join(' ')
-        if (kendiMetni.trim()) parcalar.push(kendiMetni)
-        const lbl = n.querySelector(':scope > label, :scope > span, :scope > div > label')
-        if (lbl) parcalar.push(lbl.textContent)
-        n = n.parentElement
-      }
-      return parcalar.join(' ').toLocaleLowerCase('tr')
-    }
-
-    function sec(sl, want) {
-      want = String(want || '').toLocaleUpperCase('tr').trim()
-      if (!want) return false
-      const norm = (s) => String(s).toLocaleUpperCase('tr').replace(/[İI]/g, 'I').replace(/\s+/g, ' ')
-      const op = Array.from(sl.options).find(o =>
-        norm(o.text).includes(norm(want)) || norm(want).includes(norm(o.text).trim())
-      )
-      if (op) {
-        sl.value = op.value
-        sl.dispatchEvent(new Event('change', { bubbles: true }))
-        sl.dispatchEvent(new Event('input', { bubbles: true }))
-        sl.dataset.gibdolu = '1'
-        return true
-      }
-      return false
-    }
-
-    const inputs = Array.from(document.querySelectorAll('input[type=text],input:not([type])')).filter(gorunur)
-    const selects = Array.from(document.querySelectorAll('select')).filter(gorunur)
-
-    // ---- 1. Asama: etiketle eslestir ----
-    inputs.forEach(inp => {
-      if (inp.dataset.gibdolu || inp.value) return
-      const l = etiketMetni(inp)
-      if (/kimlik/.test(l)) { yaz(inp, b.vkn || ''); rapor.yontem.vkn = 'etiket' }
-      else if (/takip|tahakkuk|belge|fis/.test(l)) { yaz(inp, b.tahakkukNo || ''); rapor.yontem.belge = 'etiket' }
-    })
-
-    // ---- 2. Asama: eslesmeyenleri siraya gore doldur (yedek) ----
-    const bosInputs = inputs.filter(i => !i.dataset.gibdolu && !i.value && !/guvenlik|captcha/i.test(etiketMetni(i)))
-    if (!rapor.yontem.vkn && bosInputs[0] && b.vkn) { yaz(bosInputs[0], b.vkn); rapor.yontem.vkn = 'sira' }
-    if (!rapor.yontem.belge && bosInputs[0] && b.tahakkukNo) { yaz(bosInputs[0], b.tahakkukNo); rapor.yontem.belge = 'sira' }
-
-    // ---- 3. Asama: acilir listeler (il once, vergi dairesi sonra) ----
-    // GIB'in il/vergi dairesi alanlari gercek <select> DEGIL, Angular ozel
-    // bileşeni (tiklayinca acilan liste). Oncelik native select denenir,
-    // bulunamazsa ozel bileşene tiklanip secenekte tiklanir.
-    const normDeger = (s) => String(s || '').toLocaleUpperCase('tr').replace(/İ/g, 'I').replace(/\s+/g, ' ').trim()
-
-    function tikla(el) {
-      const rect = el.getBoundingClientRect()
-      const x = rect.left + rect.width / 2
-      const y = rect.top + rect.height / 2
-      ;['mousedown', 'focus', 'mouseup', 'click'].forEach(et => {
-        el.dispatchEvent(new MouseEvent(et, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }))
-      })
-      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.focus()
-    }
-
-    // Etiket metnine yakin tiklanabilir kontrol bulur (input, combobox, ng-select...)
-    function kontrolBul(desen) {
-      const etiketler = Array.from(document.querySelectorAll('label, span, div, td, th'))
-        .filter(el => el.children.length === 0 && desen.test(el.textContent.trim().toLocaleLowerCase('tr')) && gorunur(el))
-      for (const t of etiketler) {
-        let n = t.parentElement
-        for (let i = 0; i < 5 && n; i++) {
-          const kontrol = n.querySelector('input, [role=combobox], [role=listbox], .ng-select-container, .mat-select-trigger, button, .dropdown-toggle, .select2, [class*=select]')
-          if (kontrol && gorunur(kontrol)) return kontrol
-          n = n.parentElement
-        }
-      }
-      return null
-    }
-
-    // Ozel bileşen: tetikleyiciye tikla -> acilan listeden eslesen secenekte tikla
-    async function ozelSec(desen, want) {
-      want = normDeger(want)
-      if (!want) return false
-      const trigger = kontrolBul(desen)
-      if (!trigger) return false
-      tikla(trigger)
-      await bekle(800)
-      const secenekler = Array.from(document.querySelectorAll(
-        '.ng-option, .mat-option, [role=option], .dropdown-menu .dropdown-item, .dropdown-menu li, [class*=option], [class*=menu-item] li'
-      )).filter(gorunur)
-      const hedef = secenekler.find(el => normDeger(el.textContent).includes(want))
-      if (!hedef) {
-        // Listeyi kapat
+      // Onceki acik listeyi kapat (tiklamak acik listeyi kapatabilir)
+      await page.keyboard.press('Escape').catch(() => {})
+      await page.evaluate(() => {
         document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
         document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      }).catch(() => {})
+      await new Promise(r => setTimeout(r, 300))
+      await el.click().catch(() => {})
+      try {
+        await page.waitForFunction(() => [...document.querySelectorAll('[role=option]')]
+          .some(o => o.offsetParent !== null || o.getClientRects().length > 0), { timeout: 6000 })
+      } catch { await new Promise(r => setTimeout(r, 800)) }
+
+      const secenekTikla = async (istenen) => {
+        const bulundu = await page.evaluate((istenen) => {
+          const norm = (s) => String(s || '').toLocaleUpperCase('tr').replace(/İ/g, 'I').replace(/\s+/g, ' ').trim()
+          const secenekler = [...document.querySelectorAll('[role=option], .MuiAutocomplete-option')]
+            .filter(o => o.offsetParent !== null || o.getClientRects().length > 0)
+          const hedef = secenekler.find(o => norm(o.textContent) === istenen)
+            || secenekler.find(o => norm(o.textContent).includes(istenen))
+            || secenekler.find(o => istenen.includes(norm(o.textContent)))
+          if (!hedef) return false
+          window.__gibHedefSecenek = hedef
+          return true
+        }, istenen).catch(() => false)
+        if (!bulundu) return false
+        const handle = await page.evaluateHandle(() => window.__gibHedefSecenek).catch(() => null)
+        if (handle) {
+          await handle.click().catch(async () => {
+            await page.evaluate(() => {
+              const h = window.__gibHedefSecenek
+              if (!h) return
+              const rect = h.getBoundingClientRect()
+              ;['mousedown', 'mouseup', 'click'].forEach(et => {
+                h.dispatchEvent(new MouseEvent(et, { bubbles: true, cancelable: true, view: window, clientX: rect.left + 10, clientY: rect.top + 10 }))
+              })
+            }).catch(() => {})
+          })
+          return true
+        }
         return false
       }
-      tikla(hedef)
-      await bekle(400)
+
+      let tiklandi = await secenekTikla(istenen)
+      if (!tiklandi) {
+        // Listede gorunmuyorsa yazarak filtrele
+        await el.click().catch(() => {})
+        await page.keyboard.down('Control'); await page.keyboard.press('KeyA'); await page.keyboard.up('Control').catch(() => {})
+        await page.keyboard.press('Backspace').catch(() => {})
+        await page.keyboard.type(deger, { delay: 35 }).catch(() => {})
+        await new Promise(r => setTimeout(r, 900))
+        tiklandi = await secenekTikla(istenen)
+      }
+      if (!tiklandi) { await new Promise(r => setTimeout(r, 500)); continue }
+      await new Promise(r => setTimeout(r, 700))
+      const son = await el.evaluate(n => String(n.value || '')).catch(() => '')
+      if (!norm(son).includes(istenen)) rapor.notlar.push(`${etiket}: secim dogrulanamadi (kutu: "${son}")`)
       return true
     }
+    return false
+  }
 
-    function ilSelectiniBul() {
-      const etiketle = selects.find(sl => /(^|[^a-z])il([^a-z]|$)|iller/.test(etiketMetni(sl)))
-      return etiketle || null
-    }
-    function daireSelectiniBul() {
-      const etiketle = selects.find(sl => /dairesi|daire/.test(etiketMetni(sl)))
-      return etiketle || null
-    }
+  if (await yaz('#vkntckn', b.vkn)) rapor.yontem.vkn = 'kimlik'
+  if (await yaz('#odemePlaniBelgeNumarasiOrTahakkukFisNumarasi', b.tahakkukNo)) rapor.yontem.belge = 'kimlik'
+  if (b.il && await autocompleteSec('#il', b.il, 'il')) rapor.yontem.il = 'autocomplete'
+  if (b.vergiDairesi && await autocompleteSec('#vergiDairesi', b.vergiDairesi, 'vergi dairesi')) rapor.yontem.daire = 'autocomplete'
 
-    let ilSecildi = false, daireSecildi = false
-    for (let deneme = 0; deneme < 12; deneme++) {
-      // Native select varsa once onu dene
-      if (!ilSecildi && b.il) {
-        const sl = ilSelectiniBul()
-        if (sl && sec(sl, b.il)) { ilSecildi = true; rapor.yontem.il = 'liste' }
+  if (!b.vkn) rapor.notlar.push('vkn degeri BOS geldi')
+  if (!b.tahakkukNo) rapor.notlar.push('tahakkukNo degeri BOS geldi')
+  if (!b.il) rapor.notlar.push('il degeri BOS geldi (musteri kaydinda il yok)')
+  if (!b.vergiDairesi) rapor.notlar.push('vergiDairesi degeri BOS geldi (musteri kaydinda vergi dairesi yok)')
+
+  const dogrulama = await gibAlanlariDogrula(page, b)
+  rapor.dogrulama = dogrulama
+  rapor.notlar.push(`Form dogrulama: ${dogrulama.tamam ? 'TAMAM' : 'EKSIK'}`)
+  return rapor
+}
+
+async function gibOdemeDoldur(page, bilgi) {
+  await page.goto('https://dijital.gib.gov.tr/hizliOdemeler/belgeNumarasiIleOdeme', {
+    waitUntil: 'domcontentloaded', timeout: 60000
+  })
+  let rapor = null
+  for (let tur = 1; tur <= 3; tur++) {
+    rapor = await gibAlanlariDoldur(page, bilgi)
+    if (rapor?.dogrulama?.tamam) break
+    console.log(`[gib-odeme] form dogrulanamadi (tur ${tur}):`, JSON.stringify(rapor?.dogrulama || {}))
+    await new Promise(r => setTimeout(r, 800))
+  }
+  return rapor
+}
+
+// ------------------------------------------------------------
+// Belge numarasi ile odeme: SORGULA sonrasi borc listesindeki tum
+// secilebilir satirlari isaretler, "ODE"ye basar ve GIB'in urettigi odeme
+// formunu (iframe#idframe srcdoc) dondurur. Form HTML'i istemcide ayni
+// sekilde calistirilinca odeme ekrani (spos.gib.gov.tr) kullanicinin
+// cihazinda acilir; telefonda yardimci program gerekmez.
+// ------------------------------------------------------------
+async function gibOdemeFormuCikar(page, etiket = "gib-odeme-form") {
+  const bekle = (ms) => new Promise((r) => setTimeout(r, ms))
+  const log = (m, ek) => console.log(`[${etiket}] ${m}`, ek === undefined ? "" : ek)
+
+  const oku = () => page.evaluate(() => {
+    const gorunur = (el) => !!el && (el.offsetParent !== null || el.getClientRects().length > 0)
+    const temiz = (s) => String(s || "").replace(/\s+/g, " ").trim()
+    const iframe = document.getElementById("idframe")
+    const iframeHtml = iframe ? String(iframe.getAttribute("srcdoc") || "") : ""
+    const ode = document.getElementById("odeButton")
+    const satirlar = [...document.querySelectorAll('[role="row"], .MuiDataGrid-row')].filter(gorunur)
+    const kutular = [...document.querySelectorAll('.MuiDataGrid-row input[type=checkbox], table tbody tr input[type=checkbox]')].filter((c) => gorunur(c) && !c.disabled)
+    const uyarilar = [...new Set(
+      [...document.querySelectorAll('[role="alert"], .MuiAlert-message, .MuiSnackbar-root, [class*="snackbar" i], [class*="alert" i], [class*="hata" i], [class*="error" i]')]
+        .filter(gorunur)
+        .map((e) => temiz(e.innerText))
+        .filter((t) => t.length > 4 && t.length < 300)
+    )]
+    return {
+      iframeHtml,
+      odeVar: !!ode && gorunur(ode),
+      satirSayisi: satirlar.length,
+      kutuSayisi: kutular.length,
+      seciliSayisi: kutular.filter((c) => c.checked).length,
+      uyarilar: uyarilar.slice(0, 5),
+      govde: temiz(document.body ? document.body.innerText : "").slice(0, 600)
+    }
+  }).catch(() => null)
+
+  // 1) Sorgu sonucu ekranini bekle (captcha sonrasi sayfa yeniden kurulur)
+  let d = null
+  for (let i = 0; i < 60; i++) {
+    await bekle(1000)
+    d = await oku()
+    if (!d) continue
+    if (d.iframeHtml.length > 500) return { ok: true, html: d.iframeHtml }
+    if (d.odeVar) break
+    if (d.uyarilar.length) break
+  }
+  if (!d) return { ok: false, neden: "sonuc-okunamadi", mesaj: "GIB sorgu sonucu okunamadi. Lutfen tekrar deneyin." }
+  if (!d.odeVar) {
+    const mesaj = d.uyarilar[0] || "GIB sorgu sonucunda odeme secenegi bulunamadi. Belge numarasi/vergi dairesi bilgilerini kontrol edin."
+    return { ok: false, neden: "gib-uyari", mesaj, uyarilar: d.uyarilar, govde: d.govde }
+  }
+  log("sorgu sonucu:", JSON.stringify({ satir: d.satirSayisi, kutu: d.kutuSayisi, uyari: d.uyarilar }))
+
+  // 2) Tum secilebilir borc satirlarini isaretle
+  const secim = await page.evaluate(() => {
+    const gorunur = (el) => !!el && (el.offsetParent !== null || el.getClientRects().length > 0)
+    const adaylar = [...document.querySelectorAll('.MuiDataGrid-row input[type=checkbox], table tbody tr input[type=checkbox]')].filter((c) => gorunur(c) && !c.disabled)
+    let tiklanan = 0
+    for (const c of adaylar) {
+      if (!c.checked) {
+        c.click()
+        tiklanan++
       }
-      if (ilSecildi && !daireSecildi && b.vergiDairesi) {
-        const sl = daireSelectiniBul()
-        if (sl && sec(sl, b.vergiDairesi)) { daireSecildi = true; rapor.yontem.daire = 'liste' }
-      }
-      // Native yoksa Angular ozel bileşeni dene
-      if (!ilSecildi && b.il) {
-        if (await ozelSec(/^il$|(^|\s)il(\s|$)|iller/, b.il)) { ilSecildi = true; rapor.yontem.il = 'ozel' }
-      }
-      if (ilSecildi && !daireSecildi && b.vergiDairesi) {
-        if (await ozelSec(/dairesi|daire/, b.vergiDairesi)) { daireSecildi = true; rapor.yontem.daire = 'ozel' }
-      }
-      if ((ilSecildi || !b.il) && (daireSecildi || !b.vergiDairesi)) break
-      await bekle(1000)
     }
+    return { toplam: adaylar.length, tiklanan, secili: adaylar.filter((c) => c.checked).length }
+  }).catch(() => null)
+  log("borc secimi:", JSON.stringify(secim))
+  if (!secim || secim.toplam === 0) {
+    return { ok: false, neden: "borc-yok", mesaj: "Secilebilir borc satiri bulunamadi (borc odenmis veya dijital ortamda odeye uygun degil)." }
+  }
+  if (secim.secili === 0) {
+    return { ok: false, neden: "secim-yapilamadi", mesaj: "Borc satirlari isaretlenemedi. Lutfen GIB sayfasindan elle deneyin." }
+  }
+  await bekle(1500)
 
-    // Eslesmeyenlerde sebep raporlanir
-    if (!ilSecildi) {
-      if (!b.il) rapor.notlar.push('il degeri BOS geldi (musteri kaydinda il yok)')
-      else rapor.notlar.push(`il secilemedi. Gelen: "${b.il}" (metin kutulari: ${inputs.length})`)
+  // 3) ODE
+  const tiklandi = await page.evaluate(() => {
+    const b = document.getElementById("odeButton")
+    if (!b) return false
+    b.scrollIntoView({ block: "center" })
+    b.click()
+    return true
+  }).catch(() => false)
+  log("ODE butonu:", tiklandi)
+  if (!tiklandi) return { ok: false, neden: "ode-yok", mesaj: "GIB odeme butonu bulunamadi." }
+
+  // 4) Iframe / onay / hata
+  for (let i = 0; i < 40; i++) {
+    await bekle(1000)
+    const r = await page.evaluate(() => {
+      const gorunur = (el) => !!el && (el.offsetParent !== null || el.getClientRects().length > 0)
+      const temiz = (s) => String(s || "").replace(/\s+/g, " ").trim()
+      const iframe = document.getElementById("idframe")
+      const html = iframe ? String(iframe.getAttribute("srcdoc") || "") : ""
+      if (html.length > 500) return { html }
+      const dialoglar = [...document.querySelectorAll('[role="dialog"], .MuiDialog-root')].filter(gorunur)
+      if (dialoglar.length) {
+        const dlg = dialoglar[dialoglar.length - 1]
+        const butonlar = [...dlg.querySelectorAll("button")].filter(gorunur)
+        return {
+          dialogMetni: temiz(dlg.innerText).slice(0, 500),
+          butonlar: butonlar.map((b) => temiz(b.innerText)).filter(Boolean).slice(0, 8)
+        }
+      }
+      const uyarilar = [...new Set(
+        [...document.querySelectorAll('[role="alert"], .MuiAlert-message, .MuiSnackbar-root, [class*="snackbar" i], [class*="alert" i], [class*="hata" i], [class*="error" i]')]
+          .filter(gorunur)
+          .map((e) => temiz(e.innerText))
+          .filter((t) => t.length > 4 && t.length < 300)
+      )]
+      return { uyarilar: uyarilar.slice(0, 5) }
+    }).catch(() => null)
+    if (!r) continue
+    if (r.html) return { ok: true, html: r.html, secim }
+    if (r.dialogMetni) {
+      const onaylandi = await page.evaluate(() => {
+        const gorunur = (el) => !!el && (el.offsetParent !== null || el.getClientRects().length > 0)
+        const temiz = (s) => String(s || "").replace(/\s+/g, " ").trim()
+        const dialoglar = [...document.querySelectorAll('[role="dialog"], .MuiDialog-root')].filter(gorunur)
+        if (!dialoglar.length) return false
+        const dlg = dialoglar[dialoglar.length - 1]
+        const butonlar = [...dlg.querySelectorAll("button")].filter(gorunur)
+        const onay = butonlar.find((b) => /TAMAM|EVET|ONAY|DEVAM|DEFATEN|PE[SS]IN/i.test(temiz(b.innerText)))
+        if (!onay) return false
+        onay.click()
+        return true
+      }).catch(() => false)
+      log("onay modali:", onaylandi, r.dialogMetni)
+      if (onaylandi) continue
+      return { ok: false, neden: "secim-gerekli", mesaj: r.dialogMetni, butonlar: r.butonlar }
     }
-    if (!daireSecildi) {
-      if (!b.vergiDairesi) rapor.notlar.push('vergiDairesi degeri BOS geldi (musteri kaydinda vergi dairesi yok)')
-      else rapor.notlar.push(`vergi dairesi secilemedi. Gelen: "${b.vergiDairesi}"`)
+    if (r.uyarilar && r.uyarilar.length) {
+      return { ok: false, neden: "gib-uyari", mesaj: r.uyarilar[0], uyarilar: r.uyarilar }
     }
-
-    // Guvenlik kodu alanina odaklan
-    const guv = inputs.find(i => /guvenlik|captcha/i.test(etiketMetni(i))) || inputs[inputs.length - 1]
-    if (guv) guv.focus()
-
-    rapor.notlar.push(`Metin kutusu: ${inputs.length}, Acilir liste: ${selects.length}`)
-    return rapor
-  }, bilgi)
+  }
+  return { ok: false, neden: "odeme-formu-yok", mesaj: "GIB odeme formu olusmadi. Lutfen GIB sayfasindan tekrar deneyin." }
 }
 
 // ------------------------------------------------------------
@@ -2189,6 +2315,10 @@ async function girisSonrasiDevam(page, isAdi) {
 // ------------------------------------------------------------
 async function guvenlikKoduDoldur(page, etiket, secenekler = {}) {
   const butonTur = secenekler.buton || 'sorgula'
+  // butonaBas() oncesi son kontrol kancasi (opsiyonel). GIB odeme formunda
+  // sayfa gec render/hydration ile alanlari sifirlayabiliyor; SORGULA'ya
+  // basmadan hemen once eksik alanlar yeniden doldurulur.
+  const onceKontrol = typeof secenekler.onceKontrol === 'function' ? secenekler.onceKontrol : null
   const log = (m, ek) => console.log(`[${etiket}] ${m}`, ek === undefined ? '' : ek)
 
   // 1) Captcha inputu + resim kaynagini bul (Angular gec render edebilir)
@@ -2459,6 +2589,27 @@ async function guvenlikKoduDoldur(page, etiket, secenekler = {}) {
         n.dispatchEvent(new Event('input', { bubbles: true }))
         n.dispatchEvent(new Event('change', { bubbles: true }))
       }, String(cozum.kod)).catch(() => {})
+    }
+
+    // SORGULA'ya basmadan hemen once: form alanlari sifirlanmis olabilir.
+    // (GIB SPA hydration'u gec tamamlaninca alanlar bosaliyor.) Kanca ile
+    // VKN/belge/il/vergi dairesi son kez doldurulur; captcha kutusu da
+    // sifirlandiysa ayni kod tekrar yazilir.
+    if (onceKontrol) {
+      try { await onceKontrol() } catch (e) { log('onceKontrol hatasi: ' + (e?.message || e)) }
+      const mevcutKod = await page.evaluate((sel) => {
+        const inp = sel ? document.querySelector(sel) : null
+        return inp ? String(inp.value || '') : null
+      }, alan.inputSel).catch(() => null)
+      if (mevcutKod !== null && mevcutKod !== String(cozum.kod)) {
+        const el2 = await page.$(alan.inputSel || 'input[type=text]')
+        if (el2) {
+          await el2.click().catch(() => {})
+          await page.keyboard.down('Control'); await page.keyboard.press('KeyA'); await page.keyboard.up('Control').catch(() => {})
+          await page.keyboard.press('Backspace').catch(() => {})
+          await el2.type(String(cozum.kod), { delay: 70 })
+        }
+      }
     }
 
     // Butona bas; guvenlik kutusu ekrandan kalktiysa basarili say
@@ -12571,7 +12722,15 @@ const ISLER = {
     try {
       const rapor = await gibOdemeDoldur(page, p);
       console.log("Form dolduruldu:", JSON.stringify(rapor));
-      const captchaSonuc = await guvenlikKoduDoldur(page, "gib-odeme", { buton: "sorgula" }).catch((e) => ({ ok: false, neden: "hata: " + (e?.message || e) }));
+      const captchaSonuc = await guvenlikKoduDoldur(page, "gib-odeme", {
+        buton: "sorgula",
+        onceKontrol: async () => {
+          const durum = await gibAlanlariDogrula(page, p);
+          if (durum.tamam) return;
+          console.log("[gib-odeme] SORGULA oncesi form eksik, yeniden dolduruluyor:", JSON.stringify(durum));
+          await gibAlanlariDoldur(page, p);
+        }
+      }).catch((e) => ({ ok: false, neden: "hata: " + (e?.message || e) }));
       return {
         rapor,
         captchaOtomatik: captchaSonuc.ok,
@@ -12580,6 +12739,44 @@ const ISLER = {
     } catch (err) {
       console.error("gib-odeme hatasi:", err.message);
       throw new Error("Sayfa doldurulamadi: " + err.message);
+    }
+  },
+  // Telefonda/bilgisayarda yardimci program olmadan odeme: VPS formu doldurur,
+  // captcha'yi cozer, sorgular, tum borclari secer ve GIB'in urettigi odeme
+  // formunu HTML olarak dondurur. Istemci bu HTML'i yeni pencerede acar;
+  // boylece yalnizca vergi dairesi odeme ekrani gorunur.
+  "gib-odeme-form": async (p) => {
+    const page = await sayfaAc();
+    try {
+      const rapor = await gibOdemeDoldur(page, p);
+      console.log("[gib-odeme-form] form dolduruldu:", JSON.stringify(rapor));
+      const captcha = await guvenlikKoduDoldur(page, "gib-odeme-form", {
+        buton: "sorgula",
+        // SORGULA oncesi formu son kez dogrula; GIB sayfasi alanlari
+        // sifirladiysa yeniden doldur (gercek testlerde yasandi).
+        onceKontrol: async () => {
+          const durum = await gibAlanlariDogrula(page, p);
+          if (durum.tamam) return;
+          console.log("[gib-odeme-form] SORGULA oncesi form eksik, yeniden dolduruluyor:", JSON.stringify(durum));
+          const yeni = await gibAlanlariDoldur(page, p);
+          console.log("[gib-odeme-form] yeniden doldurma raporu:", JSON.stringify(yeni));
+        }
+      }).catch((e) => ({ ok: false, neden: "hata: " + (e?.message || e) }));
+      if (!captcha.ok) {
+        return {
+          ok: false,
+          neden: "captcha",
+          mesaj: "GIB guvenlik kodu otomatik cozulemedi. GIB sayfasini acip kodu elle girebilirsiniz.",
+          rapor
+        };
+      }
+      const form = await gibOdemeFormuCikar(page, "gib-odeme-form");
+      if (!form.ok) return { ...form, rapor };
+      const html = String(form.html || "").replace(/<meta\s+http-equiv=["']Content-Security-Policy["'][^>]*>/gi, "");
+      return { ok: true, html, secim: form.secim, rapor, captchaOtomatik: true };
+    } catch (err) {
+      console.error("[gib-odeme-form] hata:", err.message);
+      throw new Error("Odeme formu hazirlanamadi: " + err.message);
     }
   },
   // ----- 1b) Tecilli tahsilat taksitli odeme (belge numarasi ile) -----
@@ -13782,9 +13979,12 @@ const ISLER = {
       });
       await page.keyboard.press("Backspace").catch(() => {
       });
-      await guvenlikEl.type(String(kod), { delay: 80 });
+      // SGK guvenlik kodu B U Y U K harflerle girilir; okunan kod kucuk
+      // harf icerebilir. Hem yazim hem duzeltme karsilastirmasi buyuk harf.
+      const kodYaz = String(kod).toUpperCase();
+      await guvenlikEl.type(kodYaz, { delay: 80 });
       const yazilan = await guvenlikEl.evaluate((el) => el.value).catch(() => "");
-      if (yazilan !== String(kod)) {
+      if (String(yazilan || "").trim().toUpperCase() !== kodYaz) {
         console.log(`[sgk-borc-sorgula] captcha input duzeltiliyor (okunan yazim: "${yazilan}")`);
         await guvenlikEl.evaluate((el, k) => {
           const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -13794,7 +13994,7 @@ const ISLER = {
           else el.value = k;
           el.dispatchEvent(new Event("input", { bubbles: true }));
           el.dispatchEvent(new Event("change", { bubbles: true }));
-        }, String(kod)).catch(() => {
+        }, kodYaz).catch(() => {
         });
       }
       const formDurumu = await page.evaluate(() => {
@@ -27183,7 +27383,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis " + turLimiti + " tur sonunda tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.319";
+var SURUM = "2.8.322";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

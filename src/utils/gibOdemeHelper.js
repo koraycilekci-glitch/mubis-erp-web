@@ -271,7 +271,7 @@ export async function gibYardimciGuncelleBaslat() {
 // otomatik YEREL yardimciya dusulur; yerel yoksa sunucu hatasi doner.
 const LUCA_ENGEL_DESEN = /luca giris sayfasi acilamadi|net::err_name_not_resolved.*(luca|turmob)|erisim.*(luca|turmob)/i
 
-async function yerelYardimciUygunMu() {
+export async function yerelYardimciUygunMu() {
   try {
     const r = await yardimciFetch('http://127.0.0.1:8765/ping', { signal: AbortSignal.timeout(2500) })
     if (!r.ok) return false
@@ -283,7 +283,7 @@ async function yerelYardimciUygunMu() {
 // 2.8.5: Sunucuya is gonderen ortak akis (asenkron + /is-sonuc yoklamasi +
 // Luca engelinde yerel yedege dusme). gibYardimciIs (sunucu modu) ve
 // yardimciIsSunucu (her zaman sunucu) bu cekirdegi paylasir.
-async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 1000, onDurum) {
+async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 1000, onDurum, secenekler = {}) {
   // 2.8.6: Her zaman ayni-origin proxy kullan (/api/yardimci) — bu akis
   // yalnizca sunucuya is gondermek icindir; sunucu modu toggle'indan
   // bagimsiz calisir (yardimciIsSunucu cagrilari toggle kapaliyken de
@@ -291,7 +291,13 @@ async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 100
   // VPS erisim kesintisi (521/502/timeout) durumunda isi dogrudan yerel
   // yardimciya gonder — sunucu kapaliyken fatura sorgulama tamamen
   // kilitlenmesin. Yerel yardimci da yoksa anlasilir hata doner.
+  // secenekler.yerelYedek === false: yerel yardimciya ASLA dusme (SGK/vergi
+  // borcu gibi musteri sorgulari yalnizca VPS uzerinden calisir).
+  const yerelYedekAktif = secenekler?.yerelYedek !== false
   const yerelYedek = async () => {
+    if (!yerelYedekAktif) {
+      return { ok: false, reason: secenekler?.yerelYedekKapaliMesaj || SUNUCU_KAPALI_MESAJ }
+    }
     if (!await yerelYardimciUygunMu()) {
       return { ok: false, reason: SUNUCU_KAPALI_MESAJ }
     }
@@ -299,7 +305,10 @@ async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 100
     const sonuc = await yardimciIsYerel(isAdi, params, zamanAsimiMs)
     return sonuc?.ok ? { ...sonuc, yerelYedek: true } : sonuc
   }
-  if (sunucuBeklemede()) return yerelYedek()
+  // Yerel yedek kapali islerde (SGK/vergi borcu) sunucu bekleme bayragi
+  // atlanir: VPS yeni bir istekle yeniden denenir, aksi halde 60 sn boyunca
+  // sorgu hatali gorunur.
+  if (sunucuBeklemede() && yerelYedekAktif) return yerelYedek()
   let r0
   try {
     r0 = await yardimciFetch('/api/yardimci/is', {
@@ -340,7 +349,9 @@ async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 100
     if (j1.durum === 'bitti') return { ok: true, ...j1 }
     if (j1.durum === 'hata') {
       // Luca yurtdisi IP engeli: yerel yardimci varsa onunla dene
+      // (yerel yedek kapali islerde bu yol da kapalidir)
       if (LUCA_ENGEL_DESEN.test(String(j1.error || ''))) {
+        if (!yerelYedekAktif) return { ok: false, reason: secenekler?.yerelYedekKapaliMesaj || SUNUCU_KAPALI_MESAJ }
         const yerelVar = await yerelYardimciUygunMu()
         if (yerelVar) { yerelYedegeDus = true; break }
         return { ok: false, reason: 'Sunucudan Luca\'ya erisilemiyor (yurtdisi IP engeli) ve yerel yardimci program da kapali. Luca isleri icin yardimci programi acin.' }
@@ -348,7 +359,12 @@ async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 100
       return { ok: false, reason: j1.error || 'is-hatasi' }
     }
   }
-  if (!yerelYedegeDus) return { ok: false, reason: 'servis-yanit-vermedi' }
+  if (!yerelYedegeDus) {
+    return {
+      ok: false,
+      reason: yerelYedekAktif ? 'servis-yanit-vermedi' : (secenekler?.yerelYedekKapaliMesaj || SUNUCU_KAPALI_MESAJ)
+    }
+  }
   // Yerel yedek: ayni is yerel yardimciye gider (senkron)
   return yerelYedek()
 }
@@ -398,9 +414,9 @@ export async function gibYardimciIs(isAdi, params = {}, zamanAsimiMs = 10 * 60 *
 // 2.8.5: e-Tebligat sorgu/indirme gibi isler HER ZAMAN Istanbul sunucusundan
 // calisir — ofis bilgisayari/yerel yardimci kapali olsa bile. Luca engelinde
 // yine yerel yedege duser (sunucuyaIsGonder icinde).
-export async function yardimciIsSunucu(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 1000, onDurum) {
+export async function yardimciIsSunucu(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 1000, onDurum, secenekler = {}) {
   try {
-    return await sunucuyaIsGonder(isAdi, params, zamanAsimiMs, onDurum)
+    return await sunucuyaIsGonder(isAdi, params, zamanAsimiMs, onDurum, secenekler)
   } catch (e) {
     return { ok: false, reason: e?.name === 'TimeoutError' ? 'servis-yanit-vermedi' : 'servis-hatasi' }
   }
@@ -469,6 +485,46 @@ export async function gibYardimciIleDoldur(bilgi) {
   })
 }
 
+// Vergi odeme ekrani: VPS formu doldurur, captcha'yi cozer, borclari secer ve
+// GIB'in urettigi odeme formunu HTML olarak dondurur. Istemci bu HTML'i yeni
+// pencerede acinca yalnizca spos.gib.gov.tr odeme ekrani gorunur; telefonda
+// yardimci program gerekmez. VPS'e erisilemezse sunucuyaIsGonder yerel
+// yardimciya duser; eski surumde is yoksa cagiran taraf gibYardimciIleDoldur'a
+// geri doner.
+export async function gibOdemeFormuAl(bilgi) {
+  // 1) Yardimci program bilgisayarda kurulu mu? Kuruluysa her zaman
+  //    yerel yardimci uzerinden yap (telefonda yardimci yoktur).
+  const yerelVar = await yerelYardimciUygunMu()
+  if (yerelVar) {
+    const sonuc = await gibYardimciIs('gib-odeme-form', {
+      vkn: bilgi.vkn || '',
+      tahakkukNo: bilgi.tahakkukNo || '',
+      il: bilgi.il || '',
+      vergiDairesi: bilgi.vergiDairesi || ''
+    }, 6 * 60 * 1000)
+    if (sonuc.ok) {
+      const html = String(sonuc.html || '').replace(/<meta\s+http-equiv=["']Content-Security-Policy["'][^>]*>/gi, '')
+      if (html.length >= 500) return { ...sonuc, html }
+      return { ok: false, reason: 'odeme-formu-yok', mesaj: sonuc.mesaj || 'GİB ödeme formu alınamadı.' }
+    }
+    // Yerel yardimci var ama basarisiz olursa (eski surum vb.) VPS'e dus
+  }
+
+  // 2) Yardimci yoksa veya yerel basarisizsa: VPS (telefon/bilgisayar).
+  const sonuc = await yardimciIsSunucu('gib-odeme-form', {
+    vkn: bilgi.vkn || '',
+    tahakkukNo: bilgi.tahakkukNo || '',
+    il: bilgi.il || '',
+    vergiDairesi: bilgi.vergiDairesi || ''
+  }, 6 * 60 * 1000)
+  if (!sonuc.ok) return sonuc
+  const html = String(sonuc.html || '').replace(/<meta\s+http-equiv=["']Content-Security-Policy["'][^>]*>/gi, '')
+  if (html.length < 500) {
+    return { ok: false, reason: 'odeme-formu-yok', mesaj: sonuc.mesaj || 'GİB ödeme formu alınamadı.' }
+  }
+  return { ...sonuc, html, yerelYedek: sonuc.yerelYedek }
+}
+
 // GIB Dijital Vergi Dairesi'nden musterinin vadesi gecmis vergi borcunu canli sorgular.
 // Yardimci program: https://dijital.gib.gov.tr/portal/login acar, kullanici kodu/parola
 // doldurur, guvenlik kodu kullaniciya birakilir, giris sonrasi "Vadesi Gecmis Borclar"
@@ -482,13 +538,16 @@ export async function gibBorcSorgula(clientId) {
     return { ok: false, reason: 'gib-sifre-eksik' }
   }
   const params = {
+    clientId,
     kullaniciKodu: giris.dvs_username,
     parola: giris.dvs_password
   }
-  let res = await yardimciIsSunucu('gib-borc-sorgula', params)
-  if (!res.ok && /servis-hatasi|servis-yanit-vermedi/.test(res.reason || '')) {
-    res = await gibYardimciIs('gib-borc-sorgula', params)
-  }
+  // 2.8.60: Musteri vergi borcu sorgusu YALNIZCA VPS uzerinden calisir;
+  // yerel yardimciya yedeklenmez. VPS'e ulasilamazsa acik hata doner.
+  const res = await yardimciIsSunucu('gib-borc-sorgula', params, 10 * 60 * 1000, undefined, {
+    yerelYedek: false,
+    yerelYedekKapaliMesaj: 'İstanbul sunucusuna (VPS) ulaşılamadı; vergi borcu sorgusu yerel bilgisayardan yapılmaz. Lütfen birkaç dakika sonra tekrar deneyin.'
+  })
   if (!res.ok) return res
   return {
     ok: true,
@@ -500,8 +559,8 @@ export async function gibBorcSorgula(clientId) {
   }
 }
 
-// SGK e-Bildirge'den isveren borcunu canli sorgular — 2.8.5'ten itibaren
-// HER ZAMAN Istanbul sunucusundan; altyapı hatasinda yerel yedege duser.
+// SGK e-Bildirge'den isveren borcunu canli sorgular — 2.8.60: YALNIZCA
+// Istanbul sunucusundan (VPS); yerel yardimciya yedeklenmez.
 export async function sgkBorcSorgula(clientId) {
   const giris = await musteriGirisBilgileriGetir(clientId)
   const eksikler = []
@@ -512,18 +571,23 @@ export async function sgkBorcSorgula(clientId) {
     return { ok: false, reason: 'sgk-sifre-eksik', detail: 'Eksik alanlar: ' + eksikler.join(', ') }
   }
   const params = {
+    clientId,
     kullaniciAdi: giris.sgk_username,
     sistemSifre: giris.sgk_password,
     isyeriSifre: giris.sgk_work_password,
     isyeriKodu: giris.sgkIsyeriKodu || ''
   }
-  let res = await yardimciIsSunucu('sgk-borc-sorgula', params)
-  if (!res.ok && /servis-hatasi|servis-yanit-vermedi/.test(res.reason || '')) {
-    res = await gibYardimciIs('sgk-borc-sorgula', params)
-  }
+  // 2.8.60: SGK borcu sorgusu YALNIZCA VPS (YBS) uzerinden yapilir.
+  // yerelYedek:false -> sunucuBeklemede/5xx/timeout/Luca engeli durumlarinda
+  // dahi yerel yardimciya dusulmez (kullanici istegi).
+  const res = await yardimciIsSunucu('sgk-borc-sorgula', params, 10 * 60 * 1000, undefined, {
+    yerelYedek: false,
+    yerelYedekKapaliMesaj: 'İstanbul sunucusuna (VPS) ulaşılamadı; SGK borcu sorgusu yerel bilgisayardan yapılmaz. Lütfen birkaç dakika sonra tekrar deneyin.'
+  })
   if (!res.ok) return res
   return {
     ok: true,
+    kaynak: 'vps',
     sadeceBorclar: Number(res.sadeceBorclar) || 0,
     gecikmeZammi: Number(res.gecikmeZammi) || 0,
     toplam: Number(res.toplam) || 0,

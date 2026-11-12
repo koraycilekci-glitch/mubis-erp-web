@@ -466,8 +466,21 @@ export default function OdemeTakip() {
       const settings = await getSettings().catch(() => null)
       const channel = getWhatsAppChannel(settings)
       if (channel === 'web') {
-        openWhatsAppWeb({ phone, message: fullMessage })
-        await logWhatsAppWebSend({ clientId: selectedClient.id, target: phone, status: 'pending' })
+        const waSonuc = await openWhatsAppWeb({ phone, message: fullMessage })
+        if (waSonuc?.ok === false) {
+          await logWhatsAppWebSend({
+            clientId: selectedClient.id,
+            target: phone,
+            status: 'failed',
+            errorMessage: waSonuc?.not || waSonuc?.reason || ''
+          })
+          throw new Error(waSonuc?.not || waSonuc?.reason || 'WhatsApp gonderilemedi')
+        }
+        await logWhatsAppWebSend({
+          clientId: selectedClient.id,
+          target: phone,
+          status: waSonuc?.otomatik ? 'sent' : 'pending'
+        })
       } else {
         await sendShareDocumentsViaWhatsApp({ phone, message: fullMessage, settings })
       }
@@ -684,11 +697,15 @@ export default function OdemeTakip() {
   }
 
   // Sirali WhatsApp: mesaji wa.me uzerinden ac
-  const waMesajiAc = () => {
+  const waMesajiAc = async () => {
     const aktif = waQueue?.liste[waQueue.index]
     if (!aktif) return
     if (!aktif.phone) { alert('Müşterinin WhatsApp numarası kayıtlı değil.'); return }
-    openWhatsAppWeb({ phone: aktif.phone, message: aktif.message })
+    const waSonuc = await openWhatsAppWeb({ phone: aktif.phone, message: aktif.message })
+    if (waSonuc?.ok === false) {
+      alert(waSonuc?.not || waSonuc?.reason || 'WhatsApp mesajı gönderilemedi.')
+      return
+    }
     setWaQueue(q => {
       const liste = [...q.liste]
       liste[q.index] = { ...liste[q.index], opened: true }

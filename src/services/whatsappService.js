@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase'
 import { getWhatsAppConfig, getSMTPConfig, getSettings } from './settingsService'
-import { gibYardimciIs, yardimciIsSunucu } from '../utils/gibOdemeHelper'
+import { gibYardimciIs, yardimciIsSunucu, yerelYardimciUygunMu } from '../utils/gibOdemeHelper'
 
 const WHATSAPP_API_VERSION = 'v18.0'
 
@@ -73,6 +73,7 @@ export async function sendDocumentViaWhatsAppChannel({
 
     const result = await openWhatsAppWeb({ phone, message })
 
+    const basarili = result?.ok !== false
     await logSend({
       clientId,
       beyanType,
@@ -81,7 +82,8 @@ export async function sendDocumentViaWhatsAppChannel({
       documentType,
       channel: 'whatsapp_web',
       target: normalizePhone(phone),
-      status: result?.otomatik ? 'sent' : 'pending',
+      status: basarili ? (result?.otomatik ? 'sent' : 'pending') : 'failed',
+      errorMessage: basarili ? '' : (result?.not || result?.reason || 'WhatsApp Web gonderimi yapilamadi'),
       messageId: ''
     })
 
@@ -372,6 +374,11 @@ export async function openWhatsAppWeb({ phone, message, kaynak = null }) {
       hedefKaynak = s?.whatsapp_web_kaynak === 'yerel' ? 'yerel' : 'vps'
     } catch { hedefKaynak = 'vps' }
   }
+  // Yerel yardimci seçili ama kurulu değilse otomatik VPS'e düş (telefon/bilgisayar fark etmez).
+  if (hedefKaynak === 'yerel') {
+    const yerelVar = await yerelYardimciUygunMu().catch(() => false)
+    if (!yerelVar) hedefKaynak = 'vps'
+  }
 
   // 1) Yardimci program varsa tam otomatik gonderim (GONDER tusuna otomatik basar)
   let yardimciHata = ''
@@ -418,41 +425,22 @@ export async function openWhatsAppWeb({ phone, message, kaynak = null }) {
         not: yardimciSonuc.not || "Sunucudaki WhatsApp oturumu yok. Ayarlar > İletişim bölümündeki 'QR Kodu Göster' ile QR kodu okutun."
       }
     }
-    // Gonderim dogrulanamadi ise tarayicida wa.me ile ac (kullanici elle GONDER'e basar)
-    const encoded = encodeURIComponent(mesaj)
-    const url = `https://wa.me/${to}?text=${encoded}`
-    let sekmeAcildi = false
-    try { sekmeAcildi = !!window.open(url, '_blank', 'noopener,noreferrer') } catch (e) { /* popup engellendi */ }
+    // VPS kaynaklı seçiliyken tarayıcıda wa.me açma: otomatik gönderim
+    // başarısız olsa bile kullanıcıyı istemsiz WhatsApp sekmesiyle baş başa
+    // bırakma. Sadece net hata mesajı ver; VPS WhatsApp oturumu kontrol edilsin.
     return {
-      ok: true,
+      ok: false,
       channel: 'whatsapp_web',
       otomatik: false,
-      kaynak: 'vps-fallback',
-      link: url,
-      sekmeAcildi,
-      not: sekmeAcildi
-        ? 'Sunucu otomatik gönderimi doğrulanamadı; hazır mesaj tarayıcınızda açıldı — GÖNDER tuşuna siz basın.'
-        : 'Sunucu otomatik gönderimi doğrulanamadı ve tarayıcı yeni sekmeyi engelledi. Bu linki açarak gönderebilirsiniz: ' + url
+      kaynak: 'vps',
+      reason: yardimciHata || 'gonderim-dogrulanamadi',
+      not: 'Sunucu (VPS) üzerinden gönderim doğrulanamadı (' + (yardimciHata || 'bilinmeyen hata') + '). Sunucudaki WhatsApp oturumunu (QR) kontrol edin; tarayıcıda WhatsApp açılmadı.'
     }
   }
 
-  // 2) Yedek: wa.me linkini yeni sekmede ac (gonder tusuna kullanici basar)
-  const encoded = encodeURIComponent(mesaj)
-  const url = `https://wa.me/${to}?text=${encoded}`
-  let sekmeAcildi = false
-  try {
-    sekmeAcildi = !!window.open(url, '_blank', 'noopener,noreferrer')
-  } catch (e) { /* popup engellendi */ }
-  return {
-    ok: true,
-    channel: 'whatsapp_web',
-    otomatik: false,
-    link: url,
-    sekmeAcildi,
-    not: sekmeAcildi
-      ? 'Hazir mesaj yeni sekmede acildi; GONDER tusuna siz basmalisiniz (tam otomatik gonderim icin yardimci programi guncelleyin).'
-      : 'Tarayici yeni sekmeyi engelledi. Bu linki acarak gonderebilirsiniz: ' + url
-  }
+  // 2) Yedek: VPS kaynaklı seçiliyse tarayıcıda WhatsApp AÇMA (kullanıcı istemsiz
+  // sekme açılmasını istemiyor). Yerel seçiliyse de tarayıcıda açma; sadece hata.
+  return { ok: false, channel: 'whatsapp_web', otomatik: false, kaynak: hedefKaynak, reason: yardimciHata || 'gonderim-yapilamadi', not: 'Otomatik gönderim yapılamadı (' + (yardimciHata || 'bilinmeyen hata') + '). Yardımcı programı (VPS/yerel) kontrol edin.' }
 }
 
 /**

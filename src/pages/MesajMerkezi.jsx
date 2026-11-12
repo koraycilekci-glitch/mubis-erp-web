@@ -225,15 +225,21 @@ export default function MesajMerkezi() {
         senderName: kisaAd
       })
 
-      // WhatsApp secildiyse hazir metinle WhatsApp Web acilir
+      // WhatsApp secildiyse yardimci (VPS/yerel) uzerinden gonderilir.
+      // Basarisizlikta tarayicida wa.me ACILMAZ; sonuc mesajina hata yazilir.
+      let bilgi = 'Mesaj asistan üzerinden müşteriye iletildi.'
       if (kanallar.includes('whatsapp')) {
         const tel = seciliMusteri.phone || seciliMusteri.phonenumbers?.[0]?.phone
         if (tel) {
-          openWhatsAppWeb({ phone: tel, message: r.message.assistant_message })
+          const waSonuc = await openWhatsAppWeb({ phone: tel, message: r.message.assistant_message })
+          if (waSonuc?.ok === false) {
+            bilgi += ` (WhatsApp gönderilemedi: ${waSonuc?.not || waSonuc?.reason || 'bilinmeyen hata'})`
+          } else {
+            bilgi += waSonuc?.otomatik ? ' WhatsApp: gönderildi.' : ' WhatsApp: hazırlandı.'
+          }
         }
       }
 
-      let bilgi = 'Mesaj asistan üzerinden müşteriye iletildi.'
       if (r.email?.gonderildi) bilgi += ` E-posta: ${r.email.adres}`
       if (r.email && !r.email.gonderildi) bilgi += ` (E-posta gönderilemedi: ${r.email.hata})`
       setSonuc({ tip: 'ok', mesaj: bilgi })

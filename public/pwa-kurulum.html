@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MUBİS ERP — Mobil Uygulama Kurulum Kılavuzu</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; background: #0b2a4a; color: #e6edf5; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 24px 18px 60px; }
+  h1 { text-align: center; font-size: 24px; margin: 0 0 8px; }
+  .sub { text-align: center; color: #9fb3cc; font-size: 14px; margin-bottom: 28px; }
+  .icon { display: block; margin: 0 auto 16px; width: 96px; height: 96px; border-radius: 22px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+  .card { background: #133a6b; border: 1px solid #1f4d8a; border-radius: 16px; padding: 20px; margin-bottom: 20px; }
+  .card h2 { margin: 0 0 12px; font-size: 18px; display: flex; align-items: center; gap: 10px; }
+  .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .badge.android { background: #3ddc84; color: #0b2a4a; }
+  .badge.ios { background: #a2aaad; color: #0b2a4a; }
+  ol { padding-left: 22px; line-height: 1.8; }
+  ol li { margin-bottom: 6px; }
+  .step { background: #0e2f5a; border-radius: 10px; padding: 10px 14px; margin: 8px 0; font-size: 14px; }
+  .note { background: #1a4a80; border-left: 4px solid #f59e0b; padding: 12px 14px; border-radius: 8px; font-size: 13px; margin-top: 12px; }
+  .footer { text-align: center; color: #9fb3cc; font-size: 12px; margin-top: 30px; }
+  .btn { display: inline-block; margin-top: 12px; padding: 10px 18px; background: #2563eb; color: #fff; border-radius: 10px; text-decoration: none; font-weight: 600; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row .card { flex: 1 1 320px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <img class="icon" src="/icon-192.png" alt="MUBİS ERP" />
+    <h1>MUBİS ERP Mobil Kurulum</h1>
+    <p class="sub">Telefonunuzun ana ekranına MUBİS ERP'yi uygulama gibi ekleyin. Play Store gerekmez.</p>
+
+    <div class="row">
+      <div class="card">
+        <h2><span class="badge android">Android</span> Chrome ile Kurulum</h2>
+        <ol>
+          <li>Telefonunuzda <strong>Chrome</strong> tarayıcısını açın.</li>
+          <li><strong>mubiserp.com</strong> adresine gidin ve giriş yapın.</li>
+          <li>Sağ üstteki <strong>⋮ (üç nokta)</strong> menüsüne dokunun.</li>
+          <li><strong>"Ana ekrana ekle"</strong> veya <strong>"Uygulamayı yükle"</strong> seçeneğine dokunun.</li>
+          <li>Açılan pencerede <strong>"Ekle"</strong> / <strong>"Yükle"</strong> butonuna basın.</li>
+          <li>Ana ekranda MUBİS logosu belirecek; tek dokunuşla açılır.</li>
+        </ol>
+        <div class="note">💡 İpucu: Chrome bazen otomatik "Uygulamayı yükle" banner'ı gösterir; görünmezse menüden manuel ekleyin.</div>
+      </div>
+
+      <div class="card">
+        <h2><span class="badge ios">iOS</span> Safari ile Kurulum</h2>
+        <ol>
+          <li>Telefonunuzda <strong>Safari</strong> tarayıcısını açın (Chrome değil).</li>
+          <li><strong>mubiserp.com</strong> adresine gidin ve giriş yapın.</li>
+          <li>Alt menüdeki <strong>Paylaş</strong> (□↑) simgesine dokunun.</li>
+          <li>Açılan listede <strong>"Ana Ekrana Ekle"</strong> seçeneğine dokunun.</li>
+          <li>İsim onay ekranında <strong>"Ekle"</strong> butonuna basın.</li>
+          <li>Ana ekranda MUBİS logosu belirecek; tek dokunuşla açılır.</li>
+        </ol>
+        <div class="note">⚠️ iOS'ta otomatik yükleme seçeneği yoktur; mutlaka Safari'nin Paylaş menüsünden eklenmelidir.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>🔐 Giriş Bilgileri</h2>
+      <p class="step">Müşteri portalı için kullanıcı adı: <strong>VKN veya TC Kimlik No</strong></p>
+      <p class="step">Şifre: Mali müşavirinizin belirlediği şifre</p>
+      <p class="step">Giriş adresi: <strong>mubiserp.com</strong></p>
+    </div>
+
+    <div class="card">
+      <h2>❓ Sorun Giderme</h2>
+      <p class="step"><strong>Seçenek çıkmıyor:</strong> Sayfayı birkaç saniye açık tutun, sonra menüyü tekrar açın. Chrome'un "Otomatik oynatma" veya "Site ayarları"nda "Ana ekrana ekle" engellenmiş olabilir.</p>
+      <p class="step"><strong>Açılmıyor / beyaz ekran:</strong> Uygulamayı silip yeniden ekleyin; veya tarayıcıda siteyi açıp Ctrl+F5 (masaüstü) ile yenileyin.</p>
+      <p class="step"><strong>iOS'ta Paylaş menüsü yok:</strong> Safari kullanıldığından emin olun (Chrome/Firefox'ta bu menü yok).</p>
+    </div>
+
+    <div style="text-align:center; margin-top: 24px;">
+      <a class="btn" href="https://mubiserp.com/">MUBİS ERP'yi Aç</a>
+    </div>
+
+    <p class="footer">MUBİS ERP — Mali Müşavirin Dijital Çalışma Masası · SMMM Aziz Koray Çilekci</p>
+  </div>
+</body>
+</html>

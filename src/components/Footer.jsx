@@ -24,6 +24,7 @@ export default function Footer() {
               <Link to="/hakkimizda" className="text-muted hover:text-white text-sm block transition-colors">Hakkımızda</Link>
               <Link to="/iletisim" className="text-muted hover:text-white text-sm block transition-colors">İletişim</Link>
               <Link to="/giris" className="text-muted hover:text-white text-sm block transition-colors">Giriş Yap</Link>
+              <a href="/pwa-kurulum.html" target="_blank" rel="noopener noreferrer" className="text-muted hover:text-white text-sm block transition-colors">📱 Mobil Kurulum Kılavuzu</a>
             </div>
           </div>
 

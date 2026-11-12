@@ -21840,7 +21840,7 @@ var zipYakalamaKurFn = () => {
             const metin = new TextDecoder().decode(buf);
             const j = JSON.parse(metin);
             const aday = j && (j.data && (j.data.zip || j.data.base64 || j.data.dosya)) || j.zip || j.base64 || "";
-            if (typeof aday === "string" && aday.length > 200) {
+            if (typeof aday === "string" && aday.length > 100) {
               const b64 = aday.replace(/^data:[^,]*,/, "").replace(/\s+/g, "");
               // ZIP imzasi base64'te "UEsDB" ile baslar
               if (/^UEsDB/.test(b64)) {
@@ -22139,7 +22139,7 @@ function lucaZipAgIzleyici(browser, hedefKlasor) {
           const metin = buf.toString("utf8");
           const j = JSON.parse(metin);
           const aday = (j && j.data && (j.data.zip || j.data.base64 || j.data.dosya)) || j.zip || j.base64 || "";
-          if (typeof aday === "string" && aday.length > 200) {
+          if (typeof aday === "string" && aday.length > 100) {
             const b64 = aday.replace(/^data:[^,]*,/, "").replace(/\s+/g, "");
             if (/^UEsDB/.test(b64)) {
               const zipBuf = Buffer.from(b64, "base64");

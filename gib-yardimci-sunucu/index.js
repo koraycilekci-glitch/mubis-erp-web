@@ -20619,14 +20619,22 @@ async function etebligatOtomatikGonder(clientId, belgeNo, dosyaAdi, tebligatlar)
   }
 }
 var etebligatCronCalisiyor = false;
+var etebligatGonderimCalisiyor = false;
 async function etebligatGonderimKontrol() {
+  if (etebligatGonderimCalisiyor) return;
+  etebligatGonderimCalisiyor = true;
   try {
-    const r = await fetch("https://mubiserp.com/api/etebligat-gonderim-calistir?sunucu=1", { signal: AbortSignal.timeout(12e4) });
+    const r = await fetch("https://mubiserp.com/api/etebligat-gonderim-calistir?sunucu=1", {
+      headers: { "x-mubis-key": process.env.MUBIS_SUNUCU_ANAHTARI || "" },
+      signal: AbortSignal.timeout(12e4)
+    });
     if (!r.ok) return;
     const j = await r.json().catch(() => null);
     if (j && j.vadesi) console.log("[etebligat-gonderim] vadesi geldi:", JSON.stringify(j));
   } catch (e) {
     console.log("[etebligat-gonderim] hata:", e?.message || e);
+  } finally {
+    etebligatGonderimCalisiyor = false;
   }
 }
 

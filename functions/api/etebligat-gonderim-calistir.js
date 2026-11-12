@@ -48,7 +48,7 @@ export async function onRequestGet({ env, request }) {
   if (!supabase) return json({ error: 'Supabase credentials missing' }, 500)
   const url = new URL(request.url)
   if (url.searchParams.get('sunucu') !== '1') return json({ ok: false, error: 'yetkisiz' }, 401)
-  // anahtar kontrolu (etebligat-cron ile ayni: sunucu=1 yeterli)
+  if (!anahtarUydu(env, request)) return json({ ok: false, error: 'yetkisiz' }, 401)
 
   // Plan oku
   let plan = null
@@ -59,20 +59,34 @@ export async function onRequestGet({ env, request }) {
   if (!plan || plan.aktif !== true) return json({ ok: true, vadesi: false, reason: 'plan-pasif' })
 
   const gunler = Array.isArray(plan.gunler) ? plan.gunler.map(Number) : []
-  const now = new Date()
-  const gun = now.getDay()
+  // 2.8.321: Cloudflare calisma zamani UTC'dir; plan saatleri Turkiye
+  // saatiyle girilir. Karsilastirma Europe/Istanbul'a gore yapilir.
+  const trParcalar = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23', weekday: 'short'
+  }).formatToParts(new Date())
+  const trAl = (t) => (trParcalar.find(p => p.type === t)?.value || '')
+  const gunMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }
+  const gun = gunMap[trAl('weekday')] ?? 0
+  const simdiSaat = `${trAl('hour')}:${trAl('minute')}`
+  const bugunStr = `${trAl('year')}-${trAl('month')}-${trAl('day')}`
   const haftaEslesir = gunler.filter(n => n >= 0 && n <= 6).includes(gun)
-  const ayGunuEslesir = gunler.filter(n => n >= 101 && n <= 131).map(n => n - 100).includes(now.getDate())
+  const ayGunuEslesir = gunler.filter(n => n >= 101 && n <= 131).map(n => n - 100).includes(Number(trAl('day')))
+  if (url.searchParams.get('kontrol') === '1') {
+    return json({ ok: true, vadesi: false, kontrol: {
+      simdi: simdiSaat, bugun: bugunStr, haftaGunu: gun, planSaat: plan.saat,
+      gunler, haftaEslesir, ayGunuEslesir, sonCalisma: plan.son_calisma || null,
+      kanal: plan.kanal || 'tercih', musteriSayisi: Array.isArray(plan.musteriler) ? plan.musteriler.length : 0
+    } })
+  }
   if (!haftaEslesir && !ayGunuEslesir) return json({ ok: true, vadesi: false, reason: 'gun-eslesmedi' })
-  if (!/^\d{1,2}:\d{2}$/.test(String(plan.saat || '')) || String(plan.saat) > String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0')) {
+  if (!/^\d{1,2}:\d{2}$/.test(String(plan.saat || '')) || String(plan.saat) > simdiSaat) {
     return json({ ok: true, vadesi: false, reason: 'saat-gelmedi' })
   }
-  // son_calisma kontrolu
-  const bugunStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
+  // son_calisma kontrolu (Turkiye tarihine gore)
   if (plan.son_calisma) {
     try {
-      const d = new Date(plan.son_calisma)
-      const sonStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+      const sonStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(plan.son_calisma))
       if (sonStr >= bugunStr) return json({ ok: true, vadesi: false, reason: 'bugun-calisti' })
     } catch { /* devam */ }
   }

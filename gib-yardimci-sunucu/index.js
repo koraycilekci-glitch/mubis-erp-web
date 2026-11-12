@@ -20182,6 +20182,10 @@ async function lucaGibdenGetir(page, etiket, p = {}, sadeceTamamla = false) {
 function edefterHedefKlasor(p) {
   let kok = String(p.edefterKok || CONFIG.edefterKok || "G:\\Drive'\u0131m\\EDEFTER").trim();
   if (!kok) return "";
+  // 2.8.321: Linux VPS'te Windows surucu yolu (G:\...) anlamsizdir; boyle bir
+  // kok verildiginde "G:\Drive..." adli bir klasor acilip 1.8 GB gereksiz
+  // kopya birikiyordu. Windows yolu degilse kopyalama yapilmaz.
+  if (process.platform !== "win32" && /^[A-Za-z]:[\\/]/.test(kok)) return "";
   kok = kok.replace(/[\\/]+(?:GELEN|GIDEN)[\\/]*$/i, "");
   const aylar = ["OCAK", "\uFFFD?UBAT", "MART", "N\u0130SAN", "MAYIS", "HAZ\u0130RAN", "TEMMUZ", "A\uFFFD?USTOS", "EYL\xDCL", "EK\u0130M", "KASIM", "ARALIK"];
   const ay = aylar[(parseInt(p.ay, 10) || (/* @__PURE__ */ new Date()).getMonth() + 1) - 1];
@@ -20402,6 +20406,7 @@ function edtYetim() {
       const st = fs.statSync(path.join(indirmeKlasoru, ad));
       if (Date.now() - st.mtimeMs < 9e4) continue;
       const hedef = edefterHedefKlasor(ctx3);
+      if (!hedef) { edtOrphanlar.delete(ad); continue; }
       if (fs.existsSync(edtKopyaHedef(hedef, ad))) {
         edtOrphanlar.delete(ad);
         continue;
@@ -20432,6 +20437,7 @@ function edtYetim() {
       if (Date.now() - st.mtimeMs < 9e4) continue;
       const yonF = String(f).toLocaleLowerCase("tr").includes(" satis ") ? "satis" : "alis";
       const hedef = edefterHedefKlasor({ ...ctx, yon: yonF });
+      if (!hedef) { edtIslenen.add(f); continue; }
       if (fs.existsSync(edtKopyaHedef(hedef, f))) {
         edtIslenen.add(f);
         continue;
@@ -20489,6 +20495,10 @@ function edtGuvenlik() {
       fs.renameSync(path.join(indirmeKlasoru, f), path.join(indirmeKlasoru, ad));
       console.log("[edt-guvenlik] benzersiz adlandi:", f, "->", ad);
       const hedef = edefterHedefKlasor(ctx);
+      if (!hedef) {
+        console.log("[edt-guvenlik] edefter kok yok - kopyalama atlandi (dosya indirilenlerde kalir):", ad);
+        continue;
+      }
       fs.mkdirSync(hedef, { recursive: true });
       edtKopyaYap(hedef, ad);
       edtGecikmeliSil(ad);

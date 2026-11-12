@@ -14,6 +14,9 @@ export default function Footer() {
               Mali Müşavirin Dijital Çalışma Masası. Beyanlardan tahakkuklara,
               e-defterden e-tebligata kadar tüm süreçlerinizi tek platformdan yönetin.
             </p>
+            <a href="/pwa-kurulum.html" target="_blank" rel="noopener noreferrer" className="inline-block mt-3 text-cyan-300 hover:text-cyan-200 text-sm font-medium underline">
+              📱 Mobil Kurulum Kılavuzu
+            </a>
           </div>
 
           <div>

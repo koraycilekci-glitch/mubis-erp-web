@@ -84,25 +84,31 @@ export async function onRequestPost({ request, env }) {
   const belgeNo = String(govde?.belge_no || '').trim()
   if (!clientId || !belgeNo) return json({ error: 'client_id ve belge_no zorunlu' }, 400)
 
-  // 2.8.320: Otomatik Gonderim paneli aktifse, cron sirasindaki otomatik
-  // gonderim devre disi (gonderim yalnizca panelin zamanlamasina gore yapilir).
+  // 2.8.321: Otomatik Gonderim paneli aktifse cron sirasindaki otomatik
+  // gonderim devre disi. ANCAK panelin kendi calistiricisi (sunucu anahtariyla
+  // gelir) gonderim yapabilmelidir; aksi halde panel hicbir sey gondermiyordu.
+  const panelCalistirici = Boolean(env?.MUBIS_SUNUCU_ANAHTARI) &&
+    request.headers.get('x-mubis-key') === env.MUBIS_SUNUCU_ANAHTARI
   try {
     const { data: p } = await supabase.from('app_settings').select('value').eq('key', 'etebligat_gonderim_v1').limit(1).maybeSingle()
     const plan = p?.value ? (typeof p.value === 'string' ? JSON.parse(p.value) : p.value) : null
-    if (plan?.aktif === true) {
+    if (plan?.aktif === true && !panelCalistirici) {
       return json({ ok: true, belge_no: belgeNo, atlandi: true, reason: 'panel-aktif' })
     }
   } catch { /* plan okunamadi — eski davranis (gonder) */ }
 
-  // Yalnizca aktif otomatik sorgu plani olan musteri
-  try {
-    const r = await fetch(`${SB_URL}/rest/v1/etebligat_cron?client_id=eq.${clientId}&aktif=eq.true&select=id&limit=1`, { headers: SvcH })
-    const planlar = r.ok ? await r.json() : []
-    if (!Array.isArray(planlar) || !planlar.length) {
-      return json({ error: 'bu musteri icin aktif otomatik sorgu plani yok' }, 403)
+  // Yalnizca aktif otomatik sorgu plani olan musteri. Panel calistiricisi
+  // adminin sectigi musteriler icin calisir; ayri cron plani sart degil.
+  if (!panelCalistirici) {
+    try {
+      const r = await fetch(`${SB_URL}/rest/v1/etebligat_cron?client_id=eq.${clientId}&aktif=eq.true&select=id&limit=1`, { headers: SvcH })
+      const planlar = r.ok ? await r.json() : []
+      if (!Array.isArray(planlar) || !planlar.length) {
+        return json({ error: 'bu musteri icin aktif otomatik sorgu plani yok' }, 403)
+      }
+    } catch {
+      return json({ error: 'plan dogrulanamadi' }, 502)
     }
-  } catch {
-    return json({ error: 'plan dogrulanamadi' }, 502)
   }
 
   const sonuc = { ok: true, belge_no: belgeNo, yuklendi: false, mail: '', whatsapp: '', yerel_whatsapp: null }
@@ -170,8 +176,15 @@ export async function onRequestPost({ request, env }) {
     sonuc.atlandi = 'musteri tercihi: gonderme yok'
     return json(sonuc)
   }
-  const waIstendi = tercih === 'whatsapp' || tercih === 'ikisi'
-  const mailIstendi = tercih === 'mail' || tercih === 'email' || tercih === 'ikisi'
+  // 2.8.321: Daha once gonderilmis kanala TEKRAR gonderme (mukerrer engeli).
+  // Panel calistiricisi her turda gonderilmemis belgeleri secer; kanal bazli
+  // zaman damgasi kontrolu cift gonderimi onler.
+  const waIstendi = (tercih === 'whatsapp' || tercih === 'ikisi') && !satir?.whatsapp_gonderim_ts
+  const mailIstendi = (tercih === 'mail' || tercih === 'email' || tercih === 'ikisi') && !satir?.email_gonderim_ts
+  if (!waIstendi && !mailIstendi) {
+    sonuc.atlandi = 'zaten-gonderildi'
+    return json(sonuc)
+  }
 
   const metin = ustYazi(client, satir, 'whatsapp')
   const mailMetni = ustYazi(client, satir, 'mail')

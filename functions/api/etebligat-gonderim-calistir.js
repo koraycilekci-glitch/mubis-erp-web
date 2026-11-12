@@ -9,6 +9,40 @@ function anahtarUydu(env, request) {
 
 const PLAN_KEY = 'etebligat_gonderim_v1'
 
+// WhatsApp Web/Masaustu kanali: VPS yardimcisinda gonderimi calistir ve
+// sonucu bekle. (Cloudflare Functions tarayici acamaz; is VPS'te yapilir.)
+async function whatsappYardimciGonder(env, telefon, mesaj) {
+  const base = String(env?.YARDIMCI_URL || '').replace(/\/+$/, '')
+  const key = String(env?.MUBIS_SUNUCU_ANAHTARI || '')
+  if (!base || !key) return { ok: false, reason: 'yardimci-yapilandirilmamis' }
+  const basliklar = { 'content-type': 'application/json', 'x-mubis-key': key }
+  let isId = ''
+  try {
+    const r = await fetch(base + '/is', {
+      method: 'POST', headers: basliklar,
+      body: JSON.stringify({ is: 'whatsapp-web-gonder', asenkron: true, telefon, mesaj }),
+      signal: AbortSignal.timeout(20000)
+    })
+    const j = await r.json().catch(() => ({}))
+    if (!j?.success || !j?.isId) return { ok: false, reason: j?.error || 'is-baslatilamadi' }
+    isId = j.isId
+  } catch (e) {
+    return { ok: false, reason: e?.message || 'yardimci-ulasilamadi' }
+  }
+  const t0 = Date.now()
+  while (Date.now() - t0 < 55000) {
+    await new Promise(r => setTimeout(r, 3000))
+    try {
+      const r = await fetch(base + '/is-sonuc?id=' + encodeURIComponent(isId), { headers: basliklar, signal: AbortSignal.timeout(15000) })
+      const j = await r.json().catch(() => null)
+      if (!j?.success) continue
+      if (j.durum === 'bitti') return { ok: true, ...j }
+      if (j.durum === 'hata') return { ok: false, reason: j.error || j.reason || 'gonderim-hatasi' }
+    } catch { /* yoklamaya devam */ }
+  }
+  return { ok: false, reason: 'zaman-asimi' }
+}
+
 export async function onRequestGet({ env, request }) {
   const supabase = supabaseAdmin(env)
   if (!supabase) return json({ error: 'Supabase credentials missing' }, 500)
@@ -61,17 +95,27 @@ export async function onRequestGet({ env, request }) {
   const SVC = svcHeaders(env)
   const BASE = new URL(request.url).origin
 
+  // 2.8.321: Kanal bazli filtre — gonderilmis kanala tekrar gonderme.
+  const filtre = kanal === 'whatsapp' ? 'whatsapp_gonderim_ts.is.null'
+    : kanal === 'email' ? 'email_gonderim_ts.is.null'
+    : 'or=(whatsapp_gonderim_ts.is.null,email_gonderim_ts.is.null)'
+  const baslangic = Date.now()
+  const SURE_LIMIT = 60000
+  let kalan = false
+
   for (const m of musteriler) {
+    if (Date.now() - baslangic > SURE_LIMIT) { kalan = true; break }
     // Bu musterinin gonderilmemis tebligatlarini bul
     let tebligatlar = []
     try {
-      const r = await fetch(`${SB}/rest/v1/etebligatlar?client_id=eq.${m.id}&select=belge_no,file_url&or=(whatsapp_gonderim_ts.is.null,email_gonderim_ts.is.null)`, { headers: SVC })
+      const r = await fetch(`${SB}/rest/v1/etebligatlar?client_id=eq.${m.id}&select=belge_no,file_url&${filtre}`, { headers: SVC })
       if (r.ok) tebligatlar = await r.json()
     } catch { tebligatlar = [] }
     if (!Array.isArray(tebligatlar)) tebligatlar = []
 
     for (const t of tebligatlar) {
       if (!t?.belge_no) continue
+      if (Date.now() - baslangic > SURE_LIMIT) { kalan = true; break }
       try {
         const r = await fetch(`${BASE}/api/etebligat-gonder`, {
           method: 'POST',
@@ -79,22 +123,56 @@ export async function onRequestGet({ env, request }) {
           body: JSON.stringify({ client_id: m.id, belge_no: t.belge_no, file_url: t.file_url || '', kanal })
         })
         const j = await r.json().catch(() => ({}))
-        if (j?.ok) gonderilen++
-        else if (j?.atlandi) atlanan++
-        else { hatali++; hatalar.push(`${m.id}/${t.belge_no}: ${j?.error || 'hata'}`) }
+        if (!j?.ok && !j?.atlandi) {
+          hatali++
+          hatalar.push(`${m.id}/${t.belge_no}: ${j?.error || 'hata'}`)
+          continue
+        }
+        let basarili = j?.mail === 'gonderildi' || j?.whatsapp === 'gonderildi'
+        // WhatsApp Web/Masaustu: gorevi VPS yardimcisinda calistir
+        if (j?.yerel_whatsapp?.telefon) {
+          const wa = await whatsappYardimciGonder(env, j.yerel_whatsapp.telefon, j.yerel_whatsapp.mesaj)
+          if (wa?.ok) {
+            basarili = true
+            try {
+              await fetch(`${SB}/rest/v1/etebligatlar?client_id=eq.${m.id}&belge_no=eq.${encodeURIComponent(t.belge_no)}`, {
+                method: 'PATCH',
+                headers: { ...SVC, 'Prefer': 'return=minimal' },
+                body: JSON.stringify({ whatsapp_gonderim_ts: new Date().toISOString() })
+              })
+            } catch { /* zaman damgasi sonraki turda tekrar denenir */ }
+          } else {
+            hatali++
+            hatalar.push(`${m.id}/${t.belge_no}: WhatsApp ${wa?.reason || 'gonderilemedi'}`)
+            continue
+          }
+        }
+        if (basarili) gonderilen++
+        else {
+          const sorun = [j?.mail, j?.whatsapp]
+            .filter(v => typeof v === 'string' && v.startsWith('hata')).join('; ')
+          if (sorun) {
+            hatali++
+            hatalar.push(`${m.id}/${t.belge_no}: ${sorun}`.substring(0, 200))
+          } else atlanan++
+        }
       } catch (e) {
         hatali++; hatalar.push(`${m.id}/${t.belge_no}: ${e?.message || 'hata'}`)
       }
     }
+    if (kalan) break
   }
 
-  // son_calisma guncelle
-  plan.son_calisma = new Date().toISOString()
-  try {
-    await supabase.from('app_settings').upsert({ key: PLAN_KEY, value: JSON.stringify(plan) }, { onConflict: 'key' })
-  } catch { /* yoksay */ }
+  // son_calisma: yalnizca TUM is bittiyse guncelle. Sure siniri geldiyse
+  // dokunma; sonraki dakika kaldigi yerden devam eder.
+  if (!kalan) {
+    plan.son_calisma = new Date().toISOString()
+    try {
+      await supabase.from('app_settings').upsert({ key: PLAN_KEY, value: JSON.stringify(plan) }, { onConflict: 'key' })
+    } catch { /* yoksay */ }
+  }
 
-  return json({ ok: true, vadesi: true, gonderilen, atlanan, hatali, hatalar: hatalar.slice(0, 10) })
+  return json({ ok: true, vadesi: true, gonderilen, atlanan, hatali, kalan, hatalar: hatalar.slice(0, 10) })
 }
 
 function SB_URL_BASE() { return 'https://gxuqrxmpgoeyykoolmwv.supabase.co' }

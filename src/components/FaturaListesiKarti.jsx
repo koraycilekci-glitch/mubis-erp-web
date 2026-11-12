@@ -61,9 +61,28 @@ function uttsUnvanlariBirlestir(faturalar) {
   })
 }
 
-function karsiTarafMetni(fatura) {
+// 2.8.51: Karşi taraf, musterinin KENDISI ise gosterilmez. Giden (kesilen)
+// faturalarda bir donem yanlislikla satici (musterinin kendi unvani) yazilmis
+// kayitlar icin savunma katmani.
+function karsiTarafMetni(fatura, client = null) {
   const unvan = String(fatura.karsi_unvan || '').trim()
   const vkn = String(fatura.karsi_vkn || '').trim()
+  if (client) {
+    // 2.8.52: noktalama/bicim farkina dayanikli karsilastirma — "ELEKTRO-AK
+    // LTD. ŞTİ." ile "ELEKTRO AK" ayni kisi sayilir; satis faturasinda
+    // saticinin (musterinin kendi) adi gorunmez.
+    const sadeles = (s) => String(s || '')
+      .toLocaleUpperCase('tr')
+      .replace(/[İI]/g, 'I').replace(/Ş/g, 'S').replace(/Ğ/g, 'G')
+      .replace(/Ü/g, 'U').replace(/Ö/g, 'O').replace(/Ç/g, 'C')
+      .replace(/[^A-Z0-9]/g, '')
+    const mv = String(client.vkn || client.tc || '').replace(/\s/g, '')
+    const ad = sadeles(client.name || client.company || '')
+    const ayniVkn = !!(mv && vkn && vkn.replace(/\s/g, '') === mv)
+    const su = sadeles(unvan)
+    const ayniAd = !!(ad && su && (su === ad || ((su.includes(ad) || ad.includes(su)) && su.slice(0, 8) === ad.slice(0, 8))))
+    if (ayniVkn || ayniAd) return '-'
+  }
   if (fatura.tur === 'utts' && unvan && vkn && unvan !== vkn) return `${unvan}, ${vkn}`
   return unvan || vkn || '-'
 }
@@ -1102,7 +1121,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
                           <td className="py-2 whitespace-nowrap">{belgeTuruAdi(f) || '-'}</td>
                           <td className="py-2 whitespace-nowrap">{faturaTurEtiketi(f) || '-'}</td>
                           <td className="py-2">{f.fatura_no || '-'}</td>
-                          <td className="py-2 max-w-[200px] truncate" title={karsiTarafMetni(f)}>{karsiTarafMetni(f)}</td>
+                          <td className="py-2 max-w-[200px] truncate" title={karsiTarafMetni(f, client)}>{karsiTarafMetni(f, client)}</td>
                           <td className="py-2 whitespace-nowrap text-right">{d.matrah != null ? d.matrah.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) : '-'}</td>
                           <td className="py-2 whitespace-nowrap">
                             {d.kdv != null ? (
@@ -1179,7 +1198,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
                       <td className="py-2 whitespace-nowrap">{belgeTuruAdi(f) || '-'}</td>
                       <td className="py-2 whitespace-nowrap">{faturaTurEtiketi(f) || '-'}</td>
                       <td className="py-2">{f.fatura_no || '-'}</td>
-                      <td className="py-2 max-w-[200px] truncate" title={karsiTarafMetni(f)}>{karsiTarafMetni(f)}</td>
+                      <td className="py-2 max-w-[200px] truncate" title={karsiTarafMetni(f, client)}>{karsiTarafMetni(f, client)}</td>
                       <td className="py-2 whitespace-nowrap text-right">{f.matrah != null ? Number(f.matrah).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) : '-'}</td>
                       <td className="py-2 whitespace-nowrap">
                         {f.kdv != null ? (

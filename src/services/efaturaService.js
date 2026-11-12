@@ -359,6 +359,15 @@ export function faturaMetadatasiXml(xmlText, musteriVkn = '', sorguYon = '') {
     dovizKur,
     karsiVkn: yon === 'giden' ? alici.vkn : satici.vkn,
     karsiUnvan: yon === 'giden' ? alici.unvan : satici.unvan,
+    // 2.8.51: HER IKI TARAF da dondurulur. Cagiran taraf dosya adindan/klasorden
+    // kesin yonu biliyorsa (Luca "satis" klasoru) karsi tarafi bu yone gore
+    // kendisi secer. Onceden yon 'hepsi' geldiginde yon 'gelen'e dusuyor ve
+    // KESILEN faturalarda karsi taraf olarak SATICI (musterinin kendi unvani)
+    // yaziliyordu.
+    saticiVkn: satici.vkn || '',
+    saticiUnvan: satici.unvan || '',
+    aliciVkn: alici.vkn || '',
+    aliciUnvan: alici.unvan || '',
     // Fatura turu (UBL cbc:InvoiceTypeCode): SATIS | IADE | TEVKIFAT |
     // IHRACAT | KONSINYE | OZELMATRAH | SARF | ISTISNA ...
     faturaTuru: al('InvoiceTypeCode').toLocaleUpperCase('tr'),
@@ -999,7 +1008,22 @@ export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura
       const uuid = (meta?.uuid || uuidAdlandan(temel) || temel).replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase()
       kayit.uuid = uuid
       // 2.7.161: meta yon veremezse dosya adi/sorgulanan yon kullanilir
-      const faturaYon = yonTespitEt(ad, meta?.yon, yon)
+      // 2.8.55: VKN ESLESMESI HER SEYDEN ONCE GELIR. Fatura iki tarafi da
+      // biliniyorsa yon yalnizca bundan belirlenir; klasor adi ("satis") veya
+      // sorgu yonu yanlissa fatura ters sekmeye (Kesilen <-> Alinan) dusuyor
+      // ve "Karsi Taraf" olarak yanlis taraf yaziliyordu.
+      const mvEsas = String(client.vkn || client.tc || '').replace(/\s/g, '')
+      const sVkn = String(meta?.saticiVkn || '').replace(/\s/g, '')
+      const aVkn = String(meta?.aliciVkn || '').replace(/\s/g, '')
+      let faturaYon = yonTespitEt(ad, meta?.yon, yon)
+      if (mvEsas && sVkn && aVkn) {
+        if (sVkn === mvEsas && aVkn !== mvEsas) faturaYon = 'giden'
+        else if (aVkn === mvEsas && sVkn !== mvEsas) faturaYon = 'gelen'
+      } else if (mvEsas && sVkn && sVkn === mvEsas) {
+        faturaYon = 'giden'
+      } else if (mvEsas && aVkn && aVkn === mvEsas) {
+        faturaYon = 'gelen'
+      }
       // XML meta turu veremezse secilen sorgu turu kullanilir (esmm/utts dahil)
       const tur = meta?.tur || (['efatura', 'earsiv'].includes(String(sorguTip)) ? sorguTip : (sorguTip || 'efatura'))
       const dosyaAdi = `${faturaYon}_${uuid}.${ext}`
@@ -1020,10 +1044,41 @@ export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura
       }
 
       const onceki = satirlar[uuid] || {}
-      // 2.7.461: PDF ve XML ayni fatura icin PARALEL islenir; PDF meta zayif
-      // cikarimdir ("Fatura Notu"->'tu', ulke adi->'TÜRKIYE', tür bos).
-      // PDF yazimi mevcut (XML'den gelen) dolu alanlari EZMESIN; XML yazimi
-      // her zaman üstün kalir. Yalniz PDF meta'sinda olan faturaTuru PDF'den gelir.
+      // 2.8.51: KARSI TARAF, KESIN YONE (faturaYon) gore secilir.
+      // meta.yon, sorgu yonu 'hepsi' geldiginde 'gelen'e dusebiliyor ve kesilen
+      // (satis) faturalarda karsi taraf olarak SATICI — yani musterinin kendi
+      // unvani — yaziliyordu. Artik iki taraf da meta'dan alinip yon ile
+      // eslestiriliyor: giden -> ALICI, gelen -> SATICI.
+      const mv = String(client.vkn || client.tc || '').replace(/\s/g, '')
+      // 2.8.52: unvan karsilastirmasi noktalama/bicim farklarina dayanikli
+      // (örn. "ELEKTRO-AK LTD. ŞTİ." ile "ELEKTRO AK" ayni kisi sayilir).
+      const sadeles = (s) => String(s || '')
+        .toLocaleUpperCase('tr')
+        .replace(/[İI]/g, 'I').replace(/Ş/g, 'S').replace(/Ğ/g, 'G')
+        .replace(/Ü/g, 'U').replace(/Ö/g, 'O').replace(/Ç/g, 'C')
+        .replace(/[^A-Z0-9]/g, '')
+      const ayniKisi = (vkn, unvan) => {
+        const v = String(vkn || '').replace(/\s/g, '')
+        if (mv && v && v === mv) return true
+        const u = sadeles(unvan)
+        const ad = sadeles(client.name || client.company || '')
+        if (!u || !ad) return false
+        if (u === ad) return true
+        // biri digerini iceriyorsa ve ilk 8 karakter ayniysa ayni kisi kabul et
+        return (u.includes(ad) || ad.includes(u)) && u.slice(0, 8) === ad.slice(0, 8)
+      }
+      const metaKarsiVkn = faturaYon === 'giden'
+        ? (meta?.aliciVkn || '')
+        : (meta?.saticiVkn || '')
+      const metaKarsiUnvan = faturaYon === 'giden'
+        ? (meta?.aliciUnvan || '')
+        : (meta?.saticiUnvan || '')
+      // Meta'da iki taraf yoksa (eski/bozuk kayit) mevcut karsi alanlari koru;
+      // ama o alan musterinin KENDISI ise yazma.
+      const yedekKarsiUnvan = meta?.karsiUnvan || ''
+      const karsiUnvanSec = metaKarsiUnvan
+        || (ayniKisi(metaKarsiVkn, yedekKarsiUnvan) ? '' : yedekKarsiUnvan)
+      const karsiVknSec = metaKarsiVkn || (ayniKisi(metaKarsiVkn, yedekKarsiUnvan) ? '' : (meta?.karsiVkn || ''))
       const pdfMi = ext === 'pdf'
       satirlar[uuid] = {
         client_id: client.id,
@@ -1033,8 +1088,8 @@ export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura
         fatura_uuid: uuid,
         fatura_no: pdfMi ? (onceki.fatura_no || meta?.faturaNo || '') : (meta?.faturaNo || onceki.fatura_no || ''),
         tarih: pdfMi ? (onceki.tarih || meta?.tarih || null) : (meta?.tarih || onceki.tarih || null),
-        karsi_vkn: pdfMi ? (onceki.karsi_vkn || meta?.karsiVkn || '') : (meta?.karsiVkn || onceki.karsi_vkn || ''),
-        karsi_unvan: pdfMi ? (onceki.karsi_unvan || meta?.karsiUnvan || '') : (meta?.karsiUnvan || onceki.karsi_unvan || ''),
+        karsi_vkn: karsiVknSec || onceki.karsi_vkn || '',
+        karsi_unvan: karsiUnvanSec || onceki.karsi_unvan || '',
         tutar: pdfMi ? (onceki.tutar ?? meta?.tutar ?? null) : (meta?.tutar ?? onceki.tutar ?? null),
         matrah: pdfMi ? (onceki.matrah ?? meta?.matrah ?? null) : (meta?.matrah ?? onceki.matrah ?? null),
         kdv: pdfMi ? (onceki.kdv ?? meta?.kdv ?? null) : (meta?.kdv ?? onceki.kdv ?? null),
@@ -1573,11 +1628,26 @@ export async function faturaMetadatasiPdf(blob, musteriVkn = '', yon = '') {
     }
     const pbR = m.match(/\b(USD|EUR|GBP)\b/)
     const mv2 = String(musteriVkn || '').trim()
-    let yonBul = yon
+    // 2.8.52: Sorgu yonu 'satis'/'alis' olarak gelebilir; 'giden'/'gelen'
+    // disindaki degerler ONCEDEN 'gelen' sayiliyor ve SATIS faturalarinda
+    // karsi taraf olarak SATICI (musterinin kendi unvani) yaziliyordu.
+    // Artik: once VKN eslesmesi, sonra normalize edilmis yon.
+    const yonNorm = (() => {
+      const s = String(yon || '').toLocaleLowerCase('tr')
+      if (!s) return ''
+      if (/giden|sati[sş]|kesilen|satilan/.test(s)) return 'giden'
+      if (/gelen|ali[sş]|alinan/.test(s)) return 'gelen'
+      return ''
+    })()
+    let yonBul = ''
+    if (mv2 && duzNo && aliciNo) {
+      if (duzNo === mv2 && aliciNo !== mv2) yonBul = 'giden'
+      else if (aliciNo === mv2 && duzNo !== mv2) yonBul = 'gelen'
+    }
     if (!yonBul) {
       if (mv2 && duzNo === mv2) yonBul = 'giden'
       else if (mv2 && aliciNo === mv2) yonBul = 'gelen'
-      else yonBul = 'gelen'
+      else yonBul = yonNorm || 'gelen'
     }
     // 2.7.469: Karşı taraf müşterinin kendisi çıktıysa (SAYIN/ALICI bloğu müşteriye
     // ait başlıksız PDF'lerde) düzenleyen tarafa bak; yine kendiyse boş bırak.
@@ -1605,6 +1675,12 @@ export async function faturaMetadatasiPdf(blob, musteriVkn = '', yon = '') {
       tarih: tarR ? tarTsdn2(tarR[1]) : null,
       karsiVkn: karsiVkn || '',
       karsiUnvan: karsiUnvan || '',
+      // 2.8.51: iki taraf da dondurulur (XML ile ayni gerekce)
+      saticiVkn: duzNo || '',
+      saticiUnvan: temizUnvan(duzUnvan) || '',
+      aliciVkn: aliciNo || '',
+      aliciUnvan: temizUnvan(aliciUnvan) || '',
+      yon: yonBul,
       matrah: matrah != null && matrah > 0 && matrah < 1e9 ? matrah : null,
       kdv: kdv != null && kdv >= 0 && kdv < 1e9 ? kdv : null,
       tutar: tutar != null && tutar > 0 && tutar < 1e9 ? tutar : null,
@@ -1972,6 +2048,71 @@ const yonlariDuzelt = (data) => {
   }
 }
 
+// 2.8.55: ESKI KAYIT ONARIMI — gecmis surumlerde bazi faturalarda "Karsi Taraf"
+// olarak faturanin KESENI (musterinin kendi unvani) yazilmis, hatta yon ters
+// kaydedilmis olabiliyor. Kayitli XML varsa yeniden okunup iki taraf VKN'leri
+// karsilastirilir; yon ve karsi taraf duzeltilir. Sessiz, en fazla 40 kayit,
+// arka planda — liste yuklemesini bekletmez.
+export async function karsiTarafOnar(clientId, adaylar = null) {
+  try {
+    const cid = Number(clientId)
+    if (!cid) return 0
+    const { data: c } = await supabase
+      .from('clients').select('id,name,company,vkn,tc').eq('id', cid).single()
+    if (!c) return 0
+    const mv = String(c.vkn || c.tc || '').replace(/\s/g, '')
+    const ad = String(c.name || c.company || '').trim().toLocaleUpperCase('tr')
+    let liste = adaylar
+    if (!Array.isArray(liste)) {
+      const { data } = await supabase
+        .from('efatura_faturalar')
+        .select('id,client_id,yon,tur,fatura_no,karsi_vkn,karsi_unvan,xml_url')
+        .eq('client_id', cid)
+        .not('xml_url', 'is', null)
+        .limit(400)
+      liste = data || []
+    }
+    const supheli = liste.filter(f => {
+      const v = String(f.karsi_vkn || '').replace(/\s/g, '')
+      const u = String(f.karsi_unvan || '').trim().toLocaleUpperCase('tr')
+      if (mv && v && v === mv) return true
+      if (ad && u && u === ad) return true
+      return false
+    }).slice(0, 40)
+    if (!supheli.length) return 0
+    let onarilan = 0
+    for (const f of supheli) {
+      try {
+        const r = await fetch(f.xml_url)
+        if (!r.ok) continue
+        const xml = await r.text()
+        const meta = faturaMetadatasiXml(xml, mv, f.yon)
+        const sVkn = String(meta.saticiVkn || '').replace(/\s/g, '')
+        const aVkn = String(meta.aliciVkn || '').replace(/\s/g, '')
+        let yeniYon = f.yon
+        if (mv && sVkn && aVkn) {
+          if (sVkn === mv && aVkn !== mv) yeniYon = 'giden'
+          else if (aVkn === mv && sVkn !== mv) yeniYon = 'gelen'
+        }
+        const yeniVkn = yeniYon === 'giden' ? aVkn : sVkn
+        const yeniUnvan = (yeniYon === 'giden' ? meta.aliciUnvan : meta.saticiUnvan) || ''
+        const degisti = yeniYon !== f.yon
+          || String(yeniVkn) !== String(f.karsi_vkn || '').replace(/\s/g, '')
+          || String(yeniUnvan).trim() !== String(f.karsi_unvan || '').trim()
+        if (!degisti) continue
+        await supabase.from('efatura_faturalar')
+          .update({ yon: yeniYon, karsi_vkn: yeniVkn || '', karsi_unvan: yeniUnvan || '' })
+          .eq('id', f.id)
+        Object.assign(f, { yon: yeniYon, karsi_vkn: yeniVkn || '', karsi_unvan: yeniUnvan || '' })
+        onarilan++
+      } catch { /* tek kayit atlanir */ }
+    }
+    return onarilan
+  } catch {
+    return 0
+  }
+}
+
 // Musterinin kayitli faturalarini listeler
 // Tum satirlari sayfalayarak ceker — PostgREST istek basina ~1000 satirla
 // sinirlar; canli testte 1000'lik sayfa bile 999 satirda kesildi (999 < 1000
@@ -2020,6 +2161,16 @@ export async function faturalariGetir(clientId, secenek) {
     return []
   }
   yonlariDuzelt(data)
+  // 2.8.55: "Karsi Taraf" olarak musterinin kendisi yazilmis kayitlari arka
+  // planda onar (en fazla 40 kayit). Liste bekletilmez; sonraki acilista duzelir.
+  try {
+    const supheVar = (data || []).some(f => String(f.karsi_vkn || '').replace(/\s/g, ''))
+    if (supheVar) {
+      void karsiTarafOnar(clientId, data).then(n => {
+        if (n > 0) console.info(`[efatura] ${n} faturanin karsi tarafi/yonu onarildi`)
+      })
+    }
+  } catch { /* onarim kritik degil */ }
   // Eski UTTS kayitlarinin fatura_turu SATIS/ALIS kalmis olabilir — UTTS'e
   // duzelt (bir kez, sessiz; boylece filtrede "UTTS" secince listelenirler).
   // Ayrica UTTS fişleri her zaman Alınan'dir (yon='giden' ise duzelt).

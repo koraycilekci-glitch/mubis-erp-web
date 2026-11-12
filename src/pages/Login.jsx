@@ -185,7 +185,7 @@ export default function Login() {
             </div>
           )}
           <div className="mt-4 text-center">
-            <a href="/pwa-kurulum.html" target="_blank" rel="noopener noreferrer" className="text-xs text-cyan-300 hover:text-cyan-200 underline">
+            <a href="/pwa-kurulum" target="_blank" rel="noopener noreferrer" className="text-xs text-cyan-300 hover:text-cyan-200 underline">
               📱 Mobil uygulama kurulum kılavuzu (Android / iOS)
             </a>
           </div>

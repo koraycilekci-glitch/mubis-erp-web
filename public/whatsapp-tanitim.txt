@@ -17,7 +17,7 @@ MUBİS ERP'yi artık telefonunuzun ana ekranından, tek dokunuşla uygulama gibi
   3. "Ana Ekrana Ekle" → "Ekle"
 
 🔗 Detaylı adım adım kılavuz:
-https://mubiserp.com/pwa-kurulum.html
+https://mubiserp.com/pwa-kurulum
 
 🔐 *Giriş:* VKN veya TC Kimlik No + şifreniz
 

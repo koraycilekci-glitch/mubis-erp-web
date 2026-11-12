@@ -335,6 +335,17 @@ function psCalistir(psKomut, zamanAsimiMs = 20000) {
   }).toString()
 }
 
+// 2.8.321: ZIP acma — Windows'ta PowerShell, Linux VPS'te adm-zip.
+// (VPS'te powershell olmadigi icin toplu ZIP her seferinde basarisiz olup
+// tekil indirmeye dusuyordu; bu, toplu sorguyu gereksiz yavaslatiyordu.)
+function zipCikar(zipYol, hedefKlasor, zamanAsimiMs = 180000) {
+  if (process.platform === 'win32') {
+    return psCalistir(`Expand-Archive -LiteralPath '${String(zipYol).replace(/'/g, "''")}' -DestinationPath '${String(hedefKlasor).replace(/'/g, "''")}' -Force`, zamanAsimiMs)
+  }
+  const AdmZip = require('adm-zip')
+  new AdmZip(zipYol).extractAllTo(hedefKlasor, true)
+}
+
 // Yardimcinin actigi Chrome sureclerinin PID'leri (komut satirinda
 // "tarayici-profili" gecenler). Windows 11 24H2+ wmic'i kaldirdigi icin once
 // PowerShell CIM, olmazsa wmic denenir.
@@ -16923,7 +16934,7 @@ const ISLER = {
             oncekiBoyut = boyut;
           }
           try {
-            psCalistir(`Expand-Archive -Path '${zipTamYol.replace(/'/g, "''")}' -DestinationPath '${indirmeKlasoru.replace(/'/g, "''")}' -Force`, 12e4);
+            zipCikar(zipTamYol, indirmeKlasoru, 12e4);
             adet = klasordekiDosyalar().filter((a) => /\.(xml|pdf)$/i.test(a) && !oncekiDosyalar.has(a)).length;
             zipYoluIle = true;
             log("ZIP acildi, yeni dosya:", adet);
@@ -22456,7 +22467,7 @@ async function lucaGorunurTopluZip(frame, etiket, p = {}, page = null) {
   if (durum?.ag && durum.dosya && fs.existsSync(durum.dosya)) {
     try { agIzleyici && agIzleyici.durdur(); } catch { /* yoksay */ }
     log("gorunur toplu ZIP agdan yakalandi (" + Math.round(durum.boyut / 1024) + " KB) \u2014 aciliyor");
-    psCalistir(`Expand-Archive -LiteralPath '${durum.dosya.replace(/'/g, "''")}' -DestinationPath '${indirmeKlasoru.replace(/'/g, "''")}' -Force`, 18e4);
+    zipCikar(durum.dosya, indirmeKlasoru, 18e4);
     try { fs.unlinkSync(durum.dosya); } catch { /* yoksay */ }
     lucaJqZipIle = true;
     log("gorunur toplu indirme tamam: ZIP acildi (ag)");
@@ -22490,7 +22501,7 @@ async function lucaGorunurTopluZip(frame, etiket, p = {}, page = null) {
   try { fs.readSync(imza, 0, 2, 0); } finally { fs.closeSync(ifd); }
   if (boyut < 4 || imza[0] !== 80 || imza[1] !== 75) throw new Error("Luca gorunur toplu indirme gecerli bir ZIP degil");
   log("gorunur toplu ZIP kaydedildi (" + Math.round(boyut / 1024) + " KB) \u2014 aciliyor");
-  psCalistir(`Expand-Archive -LiteralPath '${zipYol.replace(/'/g, "''")}' -DestinationPath '${indirmeKlasoru.replace(/'/g, "''")}' -Force`, 18e4);
+  zipCikar(zipYol, indirmeKlasoru, 18e4);
   try { fs.unlinkSync(zipYol); } catch { }
   lucaJqZipIle = true;
   log("gorunur toplu indirme tamam: ZIP acildi");
@@ -22687,7 +22698,7 @@ async function lucaDahiliTopluZip(frame, etiket, p = {}) {
   }
   if (boyut < 4 || imza[0] !== 80 || imza[1] !== 75) throw new Error("Luca toplu indirme verisi gecerli bir ZIP dosyasi degil");
   log("Luca toplu ZIP kaydedildi (" + Math.round(boyut / 1024) + " KB) \u2014 aciliyor");
-  psCalistir(`Expand-Archive -LiteralPath '${zipYol.replace(/'/g, "''")}' -DestinationPath '${indirmeKlasoru.replace(/'/g, "''")}' -Force`, 18e4);
+  zipCikar(zipYol, indirmeKlasoru, 18e4);
   lucaJqZipIle = true;
   log("HIZLI INDIRME tamam: ZIP acildi, XML/PDF dosyalari indirme klasorune dustu");
   return "tamam";

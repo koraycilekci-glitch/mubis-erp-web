@@ -1,0 +1,30 @@
+📢 *MUBİS ERP — Mobil Uygulama*
+
+Sayın müşterimiz,
+
+MUBİS ERP'yi artık telefonunuzun ana ekranından, tek dokunuşla uygulama gibi kullanabilirsiniz. Play Store gerekmez, ücretsizdir ve internet bağlantısıyla çalışır.
+
+📱 *Kurulum (30 saniye):*
+
+• *Android (Chrome):*
+  1. Chrome'u açın → mubiserp.com
+  2. Sağ üst ⋮ menüsü → "Ana ekrana ekle" / "Uygulamayı yükle"
+  3. "Ekle" butonuna basın
+
+• *iPhone (Safari):*
+  1. Safari'yi açın → mubiserp.com
+  2. Alt menüde Paylaş (□↑) simgesine dokunun
+  3. "Ana Ekrana Ekle" → "Ekle"
+
+🔗 Detaylı adım adım kılavuz:
+https://mubiserp.com/pwa-kurulum.html
+
+🔐 *Giriş:* VKN veya TC Kimlik No + şifreniz
+
+Sorularınız için bizimle iletişime geçebilirsiniz.
+
+Saygılarımızla,
+
+*Smmm Aziz Koray Çilekci*
+*MUBİS ERP — Muhasebe Bizim İşimiz*
+_Bu mesaj MUBİS ERP tarafından gönderilmiştir._

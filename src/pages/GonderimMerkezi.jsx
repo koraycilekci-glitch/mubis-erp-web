@@ -222,7 +222,7 @@ export default function GonderimMerkezi() {
     const caption = `Sayin ${client.name},\n${item.year} ${MONTHS[item.month]} donemine ait ${item.beyanLabel} ${documentType === 'tahakkuk' ? 'tahakkuk' : 'beyanname'} dosyaniz hazirdir.\n\nSaygilarimizla,\nMUBiS ERP`
     const documentName = `${item.beyanType}_${item.year}_${String(item.month).padStart(2, '0')}_${documentType}.pdf`
 
-    await sendDocumentViaWhatsAppChannel({
+    const waSonuc = await sendDocumentViaWhatsAppChannel({
       phone,
       documentUrl: docUrl,
       documentName,
@@ -234,6 +234,9 @@ export default function GonderimMerkezi() {
       documentType,
       settings
     })
+    if (waSonuc?.ok === false) {
+      throw new Error(waSonuc?.not || waSonuc?.reason || 'WhatsApp gonderilemedi')
+    }
 
     await markAsSent(item, 'whatsapp', documentType)
     await createNotification({
@@ -315,7 +318,7 @@ export default function GonderimMerkezi() {
     setSelectedItems(new Set())
     setSending(false)
     if (channel === 'whatsapp') {
-      alert(`${success} adet WhatsApp penceresi acildi, ${failed} adet basarisiz.\nAcilan pencerelerde mesaji gondermeyi unutmayin.\n${errors.slice(0, 5).join('\n')}`)
+      alert(`${success} adet WhatsApp mesaji gonderildi, ${failed} adet basarisiz.\n${errors.slice(0, 5).join('\n')}`)
     } else {
       alert(`${success} adet basarili, ${failed} adet basarisiz.\n${errors.slice(0, 5).join('\n')}`)
     }
@@ -360,7 +363,7 @@ export default function GonderimMerkezi() {
     setSelectedItems(new Set())
     setSending(false)
     if (channel === 'whatsapp') {
-      alert(`${opened} adet WhatsApp penceresi acildi, ${failed} adet basarisiz, ${skipped} adet dosyasi eksik.\n${errors.slice(0, 5).join('\n')}`)
+      alert(`${opened} adet WhatsApp mesaji gonderildi, ${failed} adet basarisiz, ${skipped} adet dosyasi eksik.\n${errors.slice(0, 5).join('\n')}`)
     } else {
       alert(`${success} adet basarili, ${failed} adet basarisiz, ${skipped} adet dosyasi eksik.\n${errors.slice(0, 5).join('\n')}`)
     }
@@ -374,7 +377,7 @@ export default function GonderimMerkezi() {
       else await sendMail(item, documentType)
       await refresh()
       await loadLogs()
-      alert(channel === 'whatsapp' ? 'WhatsApp penceresi acildi. Mesaji WhatsApp uzerinden gonderin.' : 'Gonderim tamamlandi')
+      alert(channel === 'whatsapp' ? 'WhatsApp mesaji gonderildi.' : 'Gonderim tamamlandi')
     } catch (err) {
       alert('Gonderim hatasi: ' + err.message)
     }

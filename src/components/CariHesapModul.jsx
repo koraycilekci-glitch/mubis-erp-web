@@ -538,8 +538,9 @@ function EkstrePaylasModal({ clientId, kart, donem, hazirla, firmAdi, kapat }) {
     try {
       const { blob, ad } = await pdfHazirla()
       const url = await ekstrePdfYukle(clientId, kart.id, donem, blob)
-      await sendDocumentViaWhatsAppChannel({ phone: telefon, documentUrl: url, documentName: ad, caption: mesaj, clientId, documentType: 'cari-ekstre' })
-      setTamam('WhatsApp gönderimi başlatıldı.')
+      const waSonuc = await sendDocumentViaWhatsAppChannel({ phone: telefon, documentUrl: url, documentName: ad, caption: mesaj, clientId, documentType: 'cari-ekstre' })
+      if (waSonuc?.ok === false) throw new Error(waSonuc?.not || waSonuc?.reason || 'WhatsApp gönderilemedi')
+      setTamam(waSonuc?.otomatik ? 'WhatsApp gönderildi.' : 'WhatsApp gönderimi başlatıldı.')
     } catch (e) { setHata(e.message) } finally { setGonderiliyor('') }
   }
 

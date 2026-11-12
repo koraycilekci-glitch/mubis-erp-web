@@ -569,7 +569,7 @@ export default function Tebligatlar() {
       if (kanal === 'whatsapp') {
         const telefon = seciliMusteri.whatsapp || seciliMusteri.phone || ''
         if (!telefon) return { ok: false, hata: 'Müşteri kaydında telefon numarası yok' }
-        await sendDocumentViaWhatsAppChannel({
+        const waSonuc = await sendDocumentViaWhatsAppChannel({
           phone: telefon,
           documentUrl: url,
           documentName: `etebligat_${satir.belge_no}.pdf`,
@@ -578,6 +578,7 @@ export default function Tebligatlar() {
           documentType: 'etebligat',
           settings
         })
+        if (waSonuc?.ok === false) return { ok: false, hata: waSonuc?.not || waSonuc?.reason || 'WhatsApp gönderilemedi' }
         await gonderimKaydet(seciliMusteri.id, satir.belge_no, 'whatsapp')
         setSatirlar(prev => prev.map(s => s.belge_no === satir.belge_no
           ? { ...s, whatsapp_gonderim_ts: new Date().toISOString() } : s))

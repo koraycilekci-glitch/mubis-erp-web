@@ -1218,17 +1218,28 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
       } else {
         const linksText = selectedDocs.map((d, i) => `${i + 1}. ${d.name}: ${d.url}`).join('\n')
         const waMessage = `${fullMessage}\n\n${linksText}\n\nSaygilarimizla, MUBiS ERP`
-        await sendShareDocumentsViaWhatsApp({
+        const waSonuc = await sendShareDocumentsViaWhatsApp({
           phone: shareForm.recipientPhone.trim(),
           message: waMessage,
           settings: shareSettings
         })
-        await logWhatsAppWebSend({
-          clientId,
-          target: shareForm.recipientPhone.trim(),
-          status: 'pending'
+        if (waSonuc?.ok === false) {
+          throw new Error(waSonuc?.not || waSonuc?.reason || 'WhatsApp gonderilemedi')
+        }
+        const waWeb = getWhatsAppChannel(shareSettings) === 'web'
+        if (waWeb) {
+          await logWhatsAppWebSend({
+            clientId,
+            target: shareForm.recipientPhone.trim(),
+            status: waSonuc?.otomatik ? 'sent' : 'pending'
+          })
+        }
+        setShareResult({
+          ok: true,
+          text: waWeb
+            ? (waSonuc?.otomatik ? 'WhatsApp mesaji gonderildi.' : 'WhatsApp mesaji hazirlandi; gonderimi kontrol edin.')
+            : 'WhatsApp mesaji gonderildi.'
         })
-        setShareResult({ ok: true, text: getWhatsAppChannel(shareSettings) === 'web' ? 'WhatsApp acildi. Lutfen mesaji kendi telefonunuzdan gonderin.' : 'WhatsApp mesaji gonderildi.' })
       }
       clearDocSelection()
       setTimeout(() => setShowShareModal(false), 2000)

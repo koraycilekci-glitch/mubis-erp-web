@@ -699,7 +699,7 @@ export async function tahakkuklariGonder({ client, beyan, tahakkukBelgeleri = []
     } else {
       for (const belge of gonderilecek) {
         try {
-          sonuc.whatsapp = await sendDocumentViaWhatsAppChannel({
+          const waSonuc = await sendDocumentViaWhatsAppChannel({
             phone: tel,
             documentUrl: belge.url,
             documentName: belge.ad,
@@ -711,6 +711,10 @@ export async function tahakkuklariGonder({ client, beyan, tahakkukBelgeleri = []
             documentType: belge.documentType,
             settings: ayarlar
           })
+          sonuc.whatsapp = waSonuc
+          if (waSonuc?.ok === false) {
+            sonuc.hatalar.push(`WhatsApp: ${waSonuc?.not || waSonuc?.reason || 'gonderilemedi'}`)
+          }
         } catch (e) { sonuc.hatalar.push(`WhatsApp: ${e.message}`) }
       }
     }

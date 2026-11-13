@@ -154,7 +154,7 @@ export default function DefterTuruGecisi() {
 
   const defterBeyanOtomatikAl = async () => {
     if (!dbHazir) {
-      setMesaj('Defter Beyan kimlik bilgileri eksik. Önce Beyan Hazırlama sayfasından IVD kullanıcı/parola kaydedin.')
+      setMesaj('Defter Beyan IVD kimlik bilgileri eksik. Beyan Hazırlama sayfasından (veya Ayarlar > GİB Bağlantı) kullanıcı/parola kaydedin, sonra "Firmaları yenile" ile tekrar deneyin.')
       return
     }
     const secili = uygunFirmalar.filter((_, i) => selected.has(i))
@@ -177,7 +177,7 @@ export default function DefterTuruGecisi() {
           try {
             const res = await defterbeyanHesapOzeti(vkn, `01.01.${y}`, `31.12.${y}`, dbKullanici, dbParola)
             const ozet = res?.ozet || res
-            if (!res?.ok && res?.ok !== undefined) throw new Error(res?.not || 'Hesap özeti alınamadı')
+            if (!res?.ok && res?.ok !== undefined) throw new Error(res?.reason || res?.not || 'Hesap özeti alınamadı')
             const hasilat = Number(ozet?.hasilat)
             const satinAlinan = Number(ozet?.satinAlinanEmtia)
             const isService = (c.serbest_meslek === true) || norm(c.defter_tipi || '') === 'SERBESTMESLEK'
@@ -325,7 +325,7 @@ export default function DefterTuruGecisi() {
           <button onClick={yukle} disabled={yukleniyor} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
             {yukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Firmaları yenile
           </button>
-          <button onClick={defterBeyanOtomatikAl} disabled={dbYukleniyor || selected.size === 0 || !dbHazir} title={dbHazir ? 'Defter Beyan hesap özetinden yıllık verileri otomatik al' : 'Defter Beyan IVD kimlik bilgileri eksik'} className="flex items-center gap-2 bg-violet-700/80 hover:bg-violet-600 disabled:opacity-40 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
+          <button onClick={defterBeyanOtomatikAl} disabled={dbYukleniyor || selected.size === 0} title="Defter Beyan hesap özetinden yıllık verileri otomatik al" className="flex items-center gap-2 bg-violet-700/80 hover:bg-violet-600 disabled:opacity-40 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
             {dbYukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Defter Beyan'dan otomatik al
           </button>
           <button onClick={beyannameSorgulaMart} disabled={beyanYukleniyor || selected.size === 0 || !dvsKullanici || !dvsParola} title="e-Beyanname'de Mart ayında TC ile Gelir Vergisi beyanı sorgula" className="flex items-center gap-2 bg-amber-700/80 hover:bg-amber-600 disabled:opacity-40 text-white rounded-lg px-4 py-2 text-sm font-medium transition">

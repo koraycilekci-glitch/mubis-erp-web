@@ -396,6 +396,15 @@ export default function DefterTuruGecisi() {
     setPdfOkuyor(true)
     setPdfSonuc(null)
     setMesaj('')
+    // Yerel yardımcı güncel mi? (beyanname-hesap-ozeti-oku işi var mı?)
+    try {
+      const test = await yardimciIsYerel('beyanname-hesap-ozeti-oku', { vkn: '00000000000', yil: Number(yil), kok: '' }, 15000)
+      if (test?.reason && /Bilinmeyen is/i.test(String(test.reason))) {
+        setMesaj('Yerel yardımcı program güncel değil (beyanname-hesap-ozeti-oku işi yok). Lütfen MUBiS Yardımcı\'nı kapatın ve gib-yardimci/baslat.bat ile yeniden başlatın. Bu arada \"Beyanname PDF\'den oku\" butonuyla PDF\'leri manuel yükleyebilirsiniz.')
+        setPdfOkuyor(false)
+        return
+      }
+    } catch { /* yoksay, devam */ }
     const sonuc = []
     const yeniYearsData = { ...yearsData }
     let tamam = 0, hataSayisi = 0

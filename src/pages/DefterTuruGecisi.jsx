@@ -342,7 +342,7 @@ export default function DefterTuruGecisi() {
             pages.push(content.items.map(it => it.str + (it.hasEOL ? '\n' : ' ')).join(''))
           }
           const metin = pages.join('\n')
-          const tckn = tcknBul(metin)
+          const tckn = (clients || []).map(c => String(c.tc || '').replace(/\s/g, '')).find(tc => tc.length === 11 && metin.includes(tc)) || null
           const client = (clients || []).find(c => String(c.tc || '').replace(/\s/g, '') === tckn || String(c.vkn || '').replace(/\s/g, '') === tckn)
           const ozet = ozetBul(metin)
           const hasilat = ozet.hasilat

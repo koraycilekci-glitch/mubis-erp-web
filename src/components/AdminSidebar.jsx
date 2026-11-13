@@ -224,7 +224,7 @@ export default function AdminSidebar() {
     if (anahtar === 'gonderim' || anahtar === '/admin/mesaj-merkezi' || anahtar === '/admin/gonderim-merkezi' || anahtar === '/admin/duyuru-merkezi') return true
     // 2.8.10: Ayarlar + Kurum Şifreleri personelde her zaman açık —
     // yetki haritasına takılmaz (Ayarlar sayfası personeli zaten kapsıyor).
-    if (anahtar === '/admin/ayarlar' || anahtar === '/admin/kurum-sifreleri') return true
+    if (anahtar === '/admin/ayarlar' || anahtar === '/admin/kurum-sifreleri' || anahtar === '/admin/defter-turu-gecisi') return true
     // 2.8.12: Yönetim grup başlığı personelde de görünsün — çocuklar kendi
     // izinlerinden geçer; tüm alt öğeler kapalıysa grup zaten gizlenir.
     if (anahtar === 'yonetim') return true

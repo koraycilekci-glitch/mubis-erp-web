@@ -494,7 +494,7 @@ export default function DefterTuruGecisi() {
     }
   }
 
-  const excelIndir = async () => {  const excelIndir = async () => {
+  const excelIndir = async () => {
     try {
       const n = await bookTransitionExcel({ yil: Number(yil), rows: sonuclar, rate })
       setMesaj(`Excel hazır (${n} satır).`)
@@ -757,6 +757,4 @@ export default function DefterTuruGecisi() {
       )}
     </div>
   )
-}
-
 }

@@ -210,6 +210,7 @@ export default function FaturaSorgulama() {
     let toplam = 0
     const boslar = []
     const hatalar = []
+    const notlar = []
     let durdur = false
     try {
       for (const id of topluSecili) {
@@ -335,6 +336,7 @@ export default function FaturaSorgulama() {
                 setTopluMesaj(`${ad} - ${turAd}${yonEtiket}: klasörlere kopyalanıyor...`)
                 const kp = await edefterTopluKopyala({ client: clientArg, yardimciKaynak: indirmeKaynak, yil: topluYil, ay: topluAy, yon, dosyalar: indirilenler })
                 if (kp?.ok) aktarimKaydiLucaIsaretle(setAktarimKayitlari, ad, `${turAd}${yonEtiket}`, indirilenler.map(d => d.ad))
+                else if (kp?.atlandi) { if (!notlar.includes(kp.not)) notlar.push(kp.not) }
                 else hatalar.push(`${ad}/${turAd}${yonEtiket} klasor kopyalama: ${kp?.error || 'basarisiz'}`)
               } catch (err) {
                 hatalar.push(`${ad}/${turAd}${yonEtiket} yükleme: ${err.message || 'bilinmeyen hata'}`)
@@ -353,7 +355,8 @@ export default function FaturaSorgulama() {
       if (boslar.length) ozet.push('Yeni dosya/kayıt bulunamadı: ' + boslar.join(', ') + ' (dosya alınmamış veya faturalar zaten kayıtlı olabilir).')
       if (durdurRef.current) ozet.push('Sorgulama kullanıcı tarafından durduruldu — kalan müşteri/türler atlandı.')
       else if (durdur) ozet.push('Kritik hata nedeniyle kalan müşteriler atlandı.')
-      if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
+      if (notlar.length) ozet.push(notlar.join(' '))
+if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
       const sonucBasligi = toplam > 0
         ? 'Sorgulama bitti — sonuçlar MUBİS\'e yüklendi'
         : hatalar.length
@@ -436,7 +439,8 @@ export default function FaturaSorgulama() {
       const ozet = []
       if (toplamSorgu > 0) ozet.push(`${toplamSorgu} sorgu Luca'da tamamlandi — faturalar Luca listesinde hazir; indirmek icin "Luca'dan İndir"i kullanin.`)
       if (durdurRef.current) ozet.push('Sorgulama kullanıcı tarafından durduruldu — kalan müşteri/türler atlandı.')
-      if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
+      if (notlar.length) ozet.push(notlar.join(' '))
+if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
       setTopluMesaj(['Luca sorgulama bitti', ...ozet].join(' '))
     } finally {
       setTopluSorguluyor(false)
@@ -462,6 +466,7 @@ export default function FaturaSorgulama() {
     let toplam = 0
     const boslar = []
     const hatalar = []
+    const notlar = []
     let durdur = false
     try {
       for (const id of hedefler) {
@@ -532,6 +537,7 @@ export default function FaturaSorgulama() {
                 setTopluMesaj(`${ad} - ${turAd}${yonEtiket}: klasörlere kopyalanıyor...`)
                 const kp = await edefterTopluKopyala({ client: clientArg, yardimciKaynak: indirmeKaynak, yil: topluYil, ay: topluAy, yon, dosyalar: indirilenler })
                 if (kp?.ok) aktarimKaydiLucaIsaretle(setAktarimKayitlari, ad, `${turAd}${yonEtiket}`, indirilenler.map(d => d.ad))
+                else if (kp?.atlandi) { if (!notlar.includes(kp.not)) notlar.push(kp.not) }
                 else hatalar.push(`${ad}/${turAd}${yonEtiket} klasor kopyalama: ${kp?.error || 'basarisiz'}`)
               } else {
                 boslar.push(`${ad}/${turAd}${yonEtiket}`)
@@ -553,7 +559,8 @@ export default function FaturaSorgulama() {
       if (boslar.length) ozet.push('Yeni dosya/kayıt bulunamadı: ' + boslar.join(', ') + ' (dosya alınmamış veya faturalar zaten kayıtlı olabilir).')
       if (durdurRef.current) ozet.push('İndirme kullanıcı tarafından durduruldu — kalan müşteri/türler atlandı.')
       else if (durdur) ozet.push('Kritik hata nedeniyle kalan müşteriler atlandı.')
-      if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
+      if (notlar.length) ozet.push(notlar.join(' '))
+if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
       const sonucBasligi = toplam > 0
         ? 'Luca\'dan indirme bitti — sonuçlar MUBİS\'e yüklendi'
         : hatalar.length

@@ -213,6 +213,7 @@ export default function KontrolMerkezi() {
     const turAdlari = { efatura: 'e-Fatura', earsiv: 'e-Arşiv', esmm: 'e-SMM', utts: 'UTTS' }
     let toplam = 0
     const hatalar = []
+    const notlar = []
     try {
       const clientArg = { ...r, id: r.id, vkn: r.vkn || '' }
       for (const tur of turlar) {
@@ -265,14 +266,15 @@ export default function KontrolMerkezi() {
               if (!(yuk.sayi > 0) && yuk.not) hatalar.push(`${r.ad}/${turAd}${yonEtiket}: ${yuk.not}`)
               setAsamaMesaj(onEk + 'klasörlere kopyalanıyor...')
               const kp = await edefterTopluKopyala({ client: clientArg, yardimciKaynak: res.yardimciKaynak, yil, ay, yon, dosyalar: indirilenler })
-              if (!kp?.ok) hatalar.push(`${r.ad}/${turAd}${yonEtiket} klasor kopyalama: ${kp?.error || 'basarisiz'}`)
+              if (kp?.atlandi) { if (!notlar.includes(kp.not)) notlar.push(kp.not) }
+              else if (!kp?.ok) hatalar.push(`${r.ad}/${turAd}${yonEtiket} klasor kopyalama: ${kp?.error || 'basarisiz'}`)
             }
           } catch (e) {
             hatalar.push(`${r.ad}/${turAd}${yonEtiket}: ${e?.message || 'hata'}`)
           }
         }
       }
-      setAsamaMesaj(`${r.ad} tamamlandı — ${toplam} belge MUBiS'e yüklendi.` + (hatalar.length ? ` Hatalar: ${hatalar.join(' | ').slice(0, 300)}` : ''))
+      setAsamaMesaj(`${r.ad} tamamlandı — ${toplam} belge MUBiS'e yüklendi.` + (notlar.length ? ' ' + notlar.join(' ') : '') + (hatalar.length ? ` Hatalar: ${hatalar.join(' | ').slice(0, 300)}` : ''))
       await yukle()
     } finally {
       setAsamaCalisan(null)

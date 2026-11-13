@@ -1255,7 +1255,7 @@ export async function edefterTopluKopyala({ client, yil, ay, yon = 'alis', dosya
       ? (kl.faturaGidenKlasoru || '')
       : (kl.faturaGelenKlasoru || '')
   } catch { edefterKok = '' }
-  return await (yardimciKaynak === 'yerel' ? yardimciIsYerel : yardimciIsSunucu)('edefter-kopyala', {
+  const sonuc = await (yardimciKaynak === 'yerel' ? yardimciIsYerel : yardimciIsSunucu)('edefter-kopyala', {
     shortName: client.shortName || client.name || '',
     fullName: client.name || client.company || '',
     yil: String(yil || ''),
@@ -1264,6 +1264,20 @@ export async function edefterTopluKopyala({ client, yil, ay, yon = 'alis', dosya
     edefterKok,
     dosyalar: dosyalar.map(d => (typeof d === 'string' ? d : d.ad)).filter(Boolean)
   }, 5 * 60 * 1000)
+  // 2.8.322: Sorgu VPS'te calisirken EDEFTER klasoru kullanicinin
+  // bilgisayarindadir; VPS Windows surucu yolunu cozumleyemez ve yardimci
+  // "hedef klasor hesaplanamadi" doner. Belgeler zaten MUBiS'e kaydedildigi
+  // icin bu durum HATA degildir - kullaniciya kopyalama atlandi bilgisi verilir.
+  if (sonuc && sonuc.ok === false && /hedef klasor hesaplanamadi/i.test(String(sonuc.error || ''))) {
+    return {
+      ...sonuc,
+      ok: true,
+      kopya: 0,
+      atlandi: true,
+      not: 'EDEFTER klasörü bu makinede tanımlı değil (sorgu sunucuda çalıştı); belgeler MUBiS’e kaydedildi, klasöre kopyalama atlandı.'
+    }
+  }
+  return sonuc
 }
 
 // Yardimci programin "indirilenler" klasorundeki TUM pdf/xml dosyalarini

@@ -647,7 +647,8 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
               if (!(yuk.sayi > 0) && hatalar.length === hataBaslangic) boslar.push(turAd + yonEtiket + (yuk.not ? ' (' + yuk.not + ')' : ''))
               setMesaj(turAd + yonEtiket + ': klasörlere kopyalanıyor...')
               const kp = await edefterTopluKopyala({ client: clientArg, yardimciKaynak: indirmeKaynak, yil: sorguYiliEff, ay: sorguAyiEff, yon, dosyalar: indirilenler })
-              if (!kp?.ok) hatalar.push(turAd + yonEtiket + ' klasor kopyalama: ' + (kp?.error || 'basarisiz'))
+              if (kp?.atlandi) { if (!notlar.includes(kp.not)) notlar.push(kp.not) }
+              else if (!kp?.ok) hatalar.push(turAd + yonEtiket + ' klasor kopyalama: ' + (kp?.error || 'basarisiz'))
             } catch (err) {
               hatalar.push(turAd + yonEtiket + ' yükleme: ' + (err.message || 'bilinmeyen hata'))
             }

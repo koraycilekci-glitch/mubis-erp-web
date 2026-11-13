@@ -24,7 +24,8 @@ export const MENU = [
     children: [
       { to: '/admin/aylik-beyan-takip', icon: CalendarDays, label: 'Aylık Beyan Takip' },
       { to: '/admin/beyanname-kontrol', icon: ClipboardCheck, label: 'Beyanname Kontrol Listesi' },
-      { to: '/admin/kontrol-merkezi', icon: TableProperties, label: 'Kontrol Merkezi' }
+      { to: '/admin/kontrol-merkezi', icon: TableProperties, label: 'Kontrol Merkezi' },
+      { to: '/admin/defter-turu-gecisi', icon: BarChart3, label: 'Defter Türü Geçişi' }
     ]
   },
   {

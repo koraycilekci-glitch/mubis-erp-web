@@ -2,7 +2,7 @@
 // ClientDetail icinde kullanilir; musteri portalindaki "Faturalarim"
 // sekmesiyle ayni veriyi okur ve yazar).
 import { useState, useEffect, useMemo, useRef, Fragment, useCallback } from 'react'
-import { Eye, Download, Upload, RefreshCw, Receipt, Search, Trash2, Loader2, CreditCard, X, Square } from 'lucide-react'
+import { Eye, Download, Upload, RefreshCw, Receipt, Search, Trash2, Loader2, CreditCard, X, Square, Archive } from 'lucide-react'
 import { dosyaIndir } from '../utils/dosyaIndir'
 import { fetchDocument, openDocument } from '../utils/storageUrl'
 import { faturalariGetir, kdvDetaylariGetir, efaturaSorgula, faturaGruplari, faturaTuruAdi, faturaTurEslesir, faturaTurEtiketi, belgeTuruAdi, sorguYonleri, manuelFaturaYukle, faturalariSil, dosyalariMubisYukle, edefterTopluKopyala, efaturaTutarlariOnar, efaturaKdvOranlariOnar, afaDokumuYukle, fisKdvDetayUret, aracKdvMatrahaEkle, lucaDurumMetni, faturaIlerlemeMetni } from '../services/efaturaService'
@@ -139,6 +139,8 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
   const [dokumYukleniyor, setDokumYukleniyor] = useState(false)
   const [dokumMesaj, setDokumMesaj] = useState('')
   const [dokumHata, setDokumHata] = useState('')
+  // 2.8.60: Filtrelenmiş fatura listesinin PDF/XML dosyalarını tek ZIP'te indir
+  const [zipDurum, setZipDurum] = useState(null) // { calisiyor, toplam, tamamlanan, hatalar, mesaj }
 
   const dokumYukle = async (dosya, tip) => {
     if (!dosya || !client) return
@@ -335,6 +337,86 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
     a.download = `Fatura_Listesi_${sorguYili}_${sorguAyi}.csv`
     a.click()
     URL.revokeObjectURL(a.href)
+  }
+
+  // 2.8.60: Filtrelenmiş listedeki tüm PDF/XML dosyalarını ZIP arşivine
+  // paketler. Tek tek indirme yerine toplu arşiv isteyen kullanıcı için.
+  // Dosyalar "Alinan"/"Kesilen" klasörlerine, tarih + fatura no ile yazılır.
+  const zipIndir = async () => {
+    if (zipDurum?.calisiyor) return
+    const belgeler = gorunen.filter(f => f.pdf_url || f.xml_url)
+    if (!belgeler.length) {
+      setMesaj('ZIP arşivi için indirilebilir PDF/XML belgesi yok.')
+      return
+    }
+    const isler = []
+    for (const f of belgeler) {
+      if (f.pdf_url) isler.push({ f, url: f.pdf_url, uzanti: 'pdf' })
+      if (f.xml_url) isler.push({ f, url: f.xml_url, uzanti: (f.tur === 'utts' || f.tur === 'gumruk') ? 'xlsx' : 'xml' })
+    }
+    if (!window.confirm(`${belgeler.length} fatura için ${isler.length} dosya indirilip ZIP arşivi oluşturulacak. Devam edilsin mi?`)) return
+    setZipDurum({ calisiyor: true, toplam: isler.length, tamamlanan: 0, hatalar: [], mesaj: 'ZIP arşivi hazırlanıyor…' })
+    try {
+      const JSZip = (await import('jszip')).default
+      const zip = new JSZip()
+      const temiz = (s) => String(s || '').replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_').slice(0, 90)
+      const kullanilan = new Set()
+      const hazir = isler.map((is) => {
+        const f = is.f
+        const tarih = String(f.tarih || '').slice(0, 10) || 'tarihsiz'
+        const taban = `${tarih}_${temiz(f.fatura_no) || temiz(f.fatura_uuid) || 'fatura'}`
+        let ad = `${taban}.${is.uzanti}`
+        let sayac = 2
+        while (kullanilan.has(ad)) ad = `${taban}_${sayac++}.${is.uzanti}`
+        kullanilan.add(ad)
+        const klasor = f.yon === 'giden' ? 'Kesilen' : 'Alinan'
+        return { ...is, yol: `${klasor}/${ad}` }
+      })
+
+      let sira = 0
+      let tamamlanan = 0
+      const hatalar = []
+      const isci = async () => {
+        while (sira < hazir.length) {
+          const is = hazir[sira++]
+          try {
+            const yanit = await fetchDocument(is.url)
+            if (!yanit.ok) throw new Error(`HTTP ${yanit.status}`)
+            const blob = await yanit.blob()
+            if (!blob.size) throw new Error('Boş dosya')
+            zip.file(is.yol, blob)
+            tamamlanan++
+          } catch (e) {
+            hatalar.push(`${is.yol}: ${e?.message || 'indirilemedi'}`)
+          }
+          setZipDurum({ calisiyor: true, toplam: hazir.length, tamamlanan, hatalar: [...hatalar], mesaj: 'Dosyalar indiriliyor…' })
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(4, hazir.length) }, () => isci()))
+
+      setZipDurum({ calisiyor: true, toplam: hazir.length, tamamlanan, hatalar: [...hatalar], mesaj: 'ZIP arşivi oluşturuluyor…' })
+      const blob = await zip.generateAsync(
+        { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 3 } },
+        (meta) => setZipDurum({ calisiyor: true, toplam: hazir.length, tamamlanan, hatalar: [...hatalar], mesaj: `ZIP arşivi oluşturuluyor… %${Math.round(meta.percent)}` })
+      )
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Fatura_Arsivi_${sorguYili}_${sorguAyi}.zip`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 10000)
+      setZipDurum({
+        calisiyor: false,
+        toplam: hazir.length,
+        tamamlanan,
+        hatalar,
+        mesaj: `${tamamlanan} dosya ZIP arşivine eklendi.` + (hatalar.length ? ` ${hatalar.length} dosya indirilemedi.` : '')
+      })
+    } catch (e) {
+      setZipDurum({ calisiyor: false, toplam: 0, tamamlanan: 0, hatalar: [], mesaj: 'ZIP hatası: ' + (e?.message || 'arşiv oluşturulamadı') })
+    }
   }
 
   // 2.7.541: arama degisince 1. sayfaya don (liste uzunlugu degisimi asagida)
@@ -918,6 +1000,15 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
             )}
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={zipIndir}
+              disabled={!!zipDurum?.calisiyor || filtreliSonuc.length === 0}
+              title="Filtrelenmiş listedeki tüm PDF/XML dosyalarını ZIP olarak indir"
+              className="px-2.5 py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 text-xs flex items-center gap-1.5 hover:bg-cyan-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {zipDurum?.calisiyor ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Archive className="w-3.5 h-3.5" />}
+              ZIP İndir
+            </button>
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
@@ -1024,6 +1115,25 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
               title="Mevcut adım tamamlanınca sorgulamayı keser">
               <Square className="w-3 h-3" /> Durdur
             </button>
+          )}
+        </div>
+      )}
+
+      {zipDurum && (
+        <div className={`rounded-lg p-2.5 mb-3 text-xs flex flex-col gap-1 ${zipDurum.calisiyor ? 'bg-cyan-500/10 border border-cyan-500/30 text-cyan-200' : zipDurum.hatalar?.length ? 'bg-amber-500/10 border border-amber-500/30 text-amber-200' : 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300'}`}>
+          <div className="flex items-center gap-2">
+            {zipDurum.calisiyor && <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />}
+            <span className="font-medium">{zipDurum.mesaj}</span>
+            {zipDurum.toplam > 0 && <span className="text-gray-400">({zipDurum.tamamlanan}/{zipDurum.toplam} dosya)</span>}
+            {!zipDurum.calisiyor && (
+              <button onClick={() => setZipDurum(null)} className="ml-auto p-1 rounded hover:bg-white/10" title="Kapat"><X className="w-3.5 h-3.5" /></button>
+            )}
+          </div>
+          {!zipDurum.calisiyor && zipDurum.hatalar?.length > 0 && (
+            <details className="text-[11px] text-amber-300/90">
+              <summary className="cursor-pointer">İndirilemeyen dosyalar ({zipDurum.hatalar.length})</summary>
+              <div className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap">{zipDurum.hatalar.slice(0, 50).join('\n')}{zipDurum.hatalar.length > 50 ? `\n… +${zipDurum.hatalar.length - 50} daha` : ''}</div>
+            </details>
           )}
         </div>
       )}

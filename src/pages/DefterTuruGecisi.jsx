@@ -45,6 +45,7 @@ export default function DefterTuruGecisi() {
   const [yearsData, setYearsData] = useState({}) // clientId -> { [y]: {purchases,sales,services,complete,closed} }
   const [editing, setEditing] = useState(null) // clientId
   const [sonuclar, setSonuclar] = useState([])
+  const [mesaj, setMesaj] = useState('')
   const [calisiyor, setCalisiyor] = useState(false)
   const [dbKullanici, setDbKullanici] = useState('')
   const [dbParola, setDbParola] = useState('')

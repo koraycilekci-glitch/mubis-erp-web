@@ -56,6 +56,7 @@ export default function DefterTuruGecisi() {
   const [dvsParola, setDvsParola] = useState('')
   const [beyanYukleniyor, setBeyanYukleniyor] = useState(false)
   const [beyanSonuc, setBeyanSonuc] = useState(null)
+  const [beyanIlerleme, setBeyanIlerleme] = useState('')
 
   const yukle = async () => {
     setYukleniyor(true)
@@ -218,7 +219,14 @@ export default function DefterTuruGecisi() {
     if (!secili.length) { setMesaj('En az bir firma seçin.'); return }
     setBeyanYukleniyor(true)
     setBeyanSonuc(null)
+    setBeyanIlerleme('GİB sorgusu başlatılıyor...')
     setMesaj('')
+    const baslangic = Date.now()
+    const timer = setInterval(() => {
+      const sn = Math.floor((Date.now() - baslangic) / 1000)
+      const dk = Math.floor(sn / 60)
+      setBeyanIlerleme(`GİB sorgusu çalışıyor — ${dk > 0 ? dk + ' dk ' : ''}${sn % 60} sn geçti. Bu işlem birkaç dakika sürebilir; sayfayı kapatmayın.`)
+    }, 1000)
     try {
       const tcknler = secili.map(c => String(c.tc || c.vkn || '').replace(/\s/g, '')).filter(v => /^\d{10,11}$/.test(v))
       const yilSorgu = Number(yil) + 1
@@ -248,7 +256,9 @@ export default function DefterTuruGecisi() {
     } catch (e) {
       setMesaj('Beyanname sorgu hatası: ' + (e?.message || ''))
     } finally {
+      clearInterval(timer)
       setBeyanYukleniyor(false)
+      setBeyanIlerleme('')
     }
   }
 
@@ -313,6 +323,7 @@ export default function DefterTuruGecisi() {
         </div>
         {mesaj && <div className="mt-3 text-sm text-cyan-200">{mesaj}</div>}
         {dbIlerleme && <div className="mt-1 text-xs text-violet-300 flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {dbIlerleme}</div>}
+        {beyanIlerleme && <div className="mt-1 text-xs text-amber-300 flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {beyanIlerleme}</div>}
         {!dbHazir && <div className="mt-2 text-xs text-amber-300">Defter Beyan IVD kimlik bilgileri eksik. Beyan Hazırlama sayfasından kullanıcı/parola kaydedin.</div>}
       </div>
 

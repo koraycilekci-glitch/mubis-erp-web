@@ -291,6 +291,7 @@ export default function FaturaSorgulama() {
               dosyaFotografi = res.oncekiSet
               if (res.yerelYedek) hatalar.push(`${ad} - ${turAd}${yonEtiket}: VPS'ten Luca'ya erişilemedi; indirme yerel yardımcıda çalıştı.`)
               if (res.ok === false && res.not) hatalar.push(`${ad} - ${turAd}${yonEtiket} indirme: ${res.not}`)
+              if (!(res.sayi > 0) && res.not && res.ok !== false) notlar.push(`${ad} - ${turAd}${yonEtiket}: ${res.not}`)
               for (const d of (res.dosyalar || [])) {
                 if (!indirilenler.some(x => x.ad === d.ad)) indirilenler.push(d)
               }
@@ -507,6 +508,7 @@ if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
               dosyaFotografi = res.oncekiSet
               if (res.yerelYedek) hatalar.push(`${ad} - ${turAd}${yonEtiket}: VPS'ten Luca'ya erişilemedi; indirme yerel yardımcıda çalıştı.`)
               if (res.ok === false && res.not) hatalar.push(`${ad} - ${turAd}${yonEtiket}: ${res.not}`)
+              if (!(res.sayi > 0) && res.not && res.ok !== false) notlar.push(`${ad} - ${turAd}${yonEtiket}: ${res.not}`)
               for (const d of (res.dosyalar || [])) {
                 if (!indirilenler.some(x => x.ad === d.ad)) indirilenler.push(d)
               }

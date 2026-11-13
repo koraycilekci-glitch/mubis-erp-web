@@ -605,6 +605,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
             if (res.yerelYedek) notlar.push('Sunucu Luca bağlantısı başarısız oldu; işlem yerel yardımcıda çalıştı.')
             if (res.ok === false && res.not) hatalar.push(turAd + yonEtiket + ' indirme: ' + res.not)
             if (res.sayi > 0 && res.not) notlar.push(res.not)
+            if (!(res.sayi > 0) && res.not && res.ok !== false) notlar.push(turAd + yonEtiket + ': ' + res.not)
             for (const d of (res.dosyalar || [])) {
               if (!indirilenler.some(x => x.ad === d.ad)) indirilenler.push(d)
             }

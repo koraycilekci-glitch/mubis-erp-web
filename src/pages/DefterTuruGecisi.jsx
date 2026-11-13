@@ -357,6 +357,7 @@ export default function DefterTuruGecisi() {
       }
       setPdfSonuc(sonuc)
       setMesaj(`${sonuc.length} PDF işlendi. Eşleşen firmaların yıllık verileri dolduruldu.`)
+      setTimeout(() => { try { kontrolEt() } catch { /* manuel */ } }, 0)
     } catch (e) {
       setMesaj('PDF okuma hatası: ' + (e?.message || ''))
     } finally {

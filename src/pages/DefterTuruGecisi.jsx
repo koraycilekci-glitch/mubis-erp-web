@@ -222,9 +222,9 @@ export default function DefterTuruGecisi() {
     try {
       const tcknler = secili.map(c => String(c.tc || c.vkn || '').replace(/\s/g, '')).filter(v => /^\d{10,11}$/.test(v))
       const yilSorgu = Number(yil) + 1
-      const res = await beyannameSorgula({ kullaniciKodu: dvsKullanici, parola: dvsParola, yil: yilSorgu, ay: 3, turKodu: 'GELIR', vknListesi: tcknler })
+      const res = await beyannameSorgula({ kullaniciKodu: dvsKullanici, parola: dvsParola, yil: yilSorgu, ay: 2, turKodu: 'GELIR', vknListesi: tcknler })
       if (!res?.ok) throw new Error(res?.reason || res?.error || 'Beyanname sorgusu başarısız')
-      const { kayitlar } = await beyannameKayitlariGetirDetay(yilSorgu, 3)
+      const { kayitlar } = await beyannameKayitlariGetirDetay(yilSorgu, 2)
       const bulunan = new Map()
       for (const k of (kayitlar || [])) {
         if (k.tur && !/gelir/i.test(k.tur)) continue

@@ -163,6 +163,7 @@ export default function DefterTuruGecisi() {
     setDbIlerleme('')
     setMesaj('')
     let tamam = 0, hataSayisi = 0
+    const yeniYearsData = { ...yearsData }
     try {
       for (let fi = 0; fi < secili.length; fi++) {
         const c = secili[fi]
@@ -180,8 +181,6 @@ export default function DefterTuruGecisi() {
             const hasilat = Number(ozet?.hasilat)
             const satinAlinan = Number(ozet?.satinAlinanEmtia)
             const isService = (c.serbest_meslek === true) || norm(c.defter_tipi || '') === 'SERBESTMESLEK'
-            // Defter Beyan hesap özeti mal/hizmet ayrımı vermez; hasilat toplam
-            // gelirdir. Serbest meslek → hizmet, diğerleri → mal satış olarak alınır.
             const ycur = {
               purchases: Number.isFinite(satinAlinan) ? satinAlinan : '',
               sales: (!isService && Number.isFinite(hasilat)) ? hasilat : '',
@@ -189,10 +188,8 @@ export default function DefterTuruGecisi() {
               complete: true,
               closed: y < simdi.getFullYear(),
             }
-            setYearsData(prev => {
-              const cur = prev[c.id] || {}
-              return { ...prev, [c.id]: { ...cur, [y]: ycur } }
-            })
+            if (!yeniYearsData[c.id]) yeniYearsData[c.id] = {}
+            yeniYearsData[c.id][y] = ycur
             tamam++
           } catch (e) {
             hataSayisi++
@@ -200,9 +197,33 @@ export default function DefterTuruGecisi() {
           }
         }
       }
-      // Otomatik değerlendirme
-      try { kontrolEt() } catch { /* manuel devam */ }
-      setMesaj(`${tamam} yıl verisi Defter Beyan'dan alındı.` + (hataSayisi ? ` ${hataSayisi} hata.` : ''))
+      setYearsData(yeniYearsData)
+      // Değerlendirme (güncel veriyle)
+      const r = Number(rate)
+      const estimates = (OFFICIAL_LIMITS[Number(yil) + 1] || r == null) ? {} : { [Number(yil) + 1]: estimateLimits(Number(yil) + 1, r) }
+      const sonuc = []
+      for (const c of secili) {
+        const bt = bookTypeOf(c)
+        const tckn = String(c.tc || c.vkn || '').replace(/\s/g, '')
+        const entity = /^\d{11}$/.test(tckn) ? 'individual' : 'unknown'
+        const years = {}
+        for (const y of yillarGerekli(bt)) {
+          const v = (yeniYearsData[c.id] && yeniYearsData[c.id][y]) || { purchases: '', sales: '', services: '', complete: true, closed: y < simdi.getFullYear() }
+          const p = Number(v.purchases), s = Number(v.sales), h = Number(v.services)
+          years[y] = {
+            purchases: Number.isFinite(p) ? p : null,
+            sales: Number.isFinite(s) ? s : null,
+            services: Number.isFinite(h) ? h : null,
+            complete: !!v.complete,
+            closed: !!v.closed,
+            activity: (Number.isFinite(s) && s > 0 && Number.isFinite(h) && h > 0) ? 'mixed' : (Number.isFinite(h) && h > 0 && (!Number.isFinite(s) || s === 0)) ? 'service' : 'trade',
+          }
+        }
+        const ev = evaluate({ bookType: bt, entity, year: Number(yil), years, estimates })
+        sonuc.push({ ad: (c.company || c.name || '').trim(), bookType: bt, entity, years, result: ev })
+      }
+      setSonuclar(sonuc)
+      setMesaj(`${tamam} yıl verisi Defter Beyan'dan alındı.` + (hataSayisi ? ` ${hataSayisi} hata.` : '') + ` ${sonuc.length} firma değerlendirildi.`)
     } catch (e) {
       setMesaj('Hata: ' + (e?.message || ''))
     } finally {

@@ -54,8 +54,8 @@ export default function DefterTuruGecisi() {
   const [dbIlerleme, setDbIlerleme] = useState('')
   const [dvsKullanici, setDvsKullanici] = useState('')
   const [dvsParola, setDvsParola] = useState('')
-  const [beyanYukleniyor, setBeyanYukleniyor] = useState(false)
-  const [beyanSonuc, setBeyanSonuc] = useState(null)
+  const [pdfOkuyor, setPdfOkuyor] = useState(false)
+  const [pdfSonuc, setPdfSonuc] = useState(null)
   const [beyanIlerleme, setBeyanIlerleme] = useState('')
 
   const yukle = async () => {
@@ -285,6 +285,85 @@ export default function DefterTuruGecisi() {
     }
   }
 
+  const pdfBeyannameOku = async (fileList) => {
+    setPdfOkuyor(true)
+    setPdfSonuc(null)
+    setMesaj('')
+    const sonuc = []
+    try {
+      const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
+      if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+        const worker = await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url')
+        pdfjsLib.GlobalWorkerOptions.workerSrc = worker.default
+      }
+      const parseSayi = (s) => {
+        const m = String(s || '').match(/-?[\d.]+,\d{2}/)
+        if (!m) return null
+        return Number(m[0].replace(/\./g, '').replace(',', '.'))
+      }
+      const bul = (metin, kalip) => {
+        const satirlar = metin.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+        for (let i = 0; i < satirlar.length; i++) {
+          if (!kalip.test(satirlar[i])) continue
+          let m = satirlar[i].match(/-?[\d.]+,\d{2}/)
+          if (m) return parseSayi(m[0])
+          if (i + 1 < satirlar.length) {
+            const m2 = satirlar[i + 1].match(/^-?[\d.]+,\d{2}$/)
+            if (m2) return parseSayi(m2[0])
+          }
+        }
+        return null
+      }
+      const tcknBul = (metin) => {
+        const m = metin.match(/T\.?\s*C\.?\s*Kimlik\s*No[^0-9]*(\d{11})/i) || metin.match(/(\d{11})/)
+        return m ? m[1] : null
+      }
+      for (const file of fileList) {
+        try {
+          const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise
+          const pages = []
+          for (let p = 1; p <= pdf.numPages; p++) {
+            const page = await pdf.getPage(p)
+            const content = await page.getTextContent()
+            pages.push(content.items.map(it => it.str).join(' '))
+          }
+          const metin = pages.join('\n')
+          const tckn = tcknBul(metin)
+          const client = (clients || []).find(c => String(c.tc || '').replace(/\s/g, '') === tckn || String(c.vkn || '').replace(/\s/g, '') === tckn)
+          const hasilat = bul(metin, /gayrisafi\s*has[ıi]lat/i)
+          const satinAlinan = bul(metin, /sat[ıi]n\s*al[ıi]nan\s*emtia/i)
+          const donemBasi = bul(metin, /d[öo]nem\s*ba[şs][ıi]\s*emtia/i)
+          const donemSonu = bul(metin, /d[öo]nem\s*sonu\s*emtia/i)
+          if (client) {
+            const bt = bookTypeOf(client)
+            const isService = (client.serbest_meslek === true) || norm(client.defter_tipi || '') === 'SERBESTMESLEK'
+            const y = Number(yil)
+            const ycur = {
+              purchases: Number.isFinite(satinAlinan) ? satinAlinan : '',
+              sales: (!isService && Number.isFinite(hasilat)) ? hasilat : '',
+              services: (isService && Number.isFinite(hasilat)) ? hasilat : '',
+              complete: true,
+              closed: y < simdi.getFullYear(),
+            }
+            setYearsData(prev => {
+              const cur = prev[client.id] || {}
+              return { ...prev, [client.id]: { ...cur, [y]: ycur } }
+            })
+          }
+          sonuc.push({ dosya: file.name, tckn, client: client ? (client.company || client.name) : 'eşleşme yok', hasilat, satinAlinan, donemBasi, donemSonu })
+        } catch (e) {
+          sonuc.push({ dosya: file.name, tckn: null, client: 'okunamadı', hasilat: null, satinAlinan: null, donemBasi: null, donemSonu: null, hata: e?.message })
+        }
+      }
+      setPdfSonuc(sonuc)
+      setMesaj(`${sonuc.length} PDF işlendi. Eşleşen firmaların yıllık verileri dolduruldu.`)
+    } catch (e) {
+      setMesaj('PDF okuma hatası: ' + (e?.message || ''))
+    } finally {
+      setPdfOkuyor(false)
+    }
+  }
+
   const excelIndir = async () => {
     try {
       const n = await bookTransitionExcel({ yil: Number(yil), rows: sonuclar, rate })
@@ -343,6 +422,28 @@ export default function DefterTuruGecisi() {
         </div>
         {mesaj && <div className="mt-3 text-sm text-cyan-200">{mesaj}</div>}
         {beyanIlerleme && <div className="mt-1 text-xs text-amber-300 flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {beyanIlerleme}</div>}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-700/80 hover:bg-emerald-600 text-white text-sm font-medium transition cursor-pointer">
+            {pdfOkuyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            Beyanname PDF'den oku (otomatik)
+            <input type="file" accept=".pdf" multiple className="hidden" onChange={e => { if (e.target.files?.length) pdfBeyannameOku(Array.from(e.target.files)); e.target.value = '' }} disabled={pdfOkuyor} />
+          </label>
+          <span className="text-xs text-gray-400">Gelir Vergisi beyanname PDF'lerini seçin; TCKN ve hesap özeti otomatik okunur.</span>
+        </div>
+        {pdfSonuc && (
+          <div className="mt-2 text-xs text-gray-300">
+            {pdfSonuc.map((p, i) => (
+              <div key={i} className="flex flex-wrap gap-2 border-b border-blue-800/30 py-1">
+                <span className="text-white">{p.dosya}</span>
+                <span className="text-gray-400">TCKN: {p.tckn || '—'}</span>
+                <span className="text-gray-400">Firma: {p.client}</span>
+                <span className="text-cyan-300">Hasılat: {p.hasilat != null ? p.hasilat.toLocaleString('tr-TR') : '—'}</span>
+                <span className="text-cyan-300">Satın alınan emtia: {p.satinAlinan != null ? p.satinAlinan.toLocaleString('tr-TR') : '—'}</span>
+                {p.hata && <span className="text-red-300">{p.hata}</span>}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Limit tablosu */}

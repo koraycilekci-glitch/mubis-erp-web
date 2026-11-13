@@ -301,6 +301,8 @@ export default function DefterTuruGecisi() {
             {beyanYukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />} Beyanname sorgula (Mart)
           </button>
           <button onClick={topluSec} className="px-3 py-2 rounded-lg bg-blue-900/60 border border-blue-700/60 text-gray-200 text-sm hover:bg-blue-900/80">Tümünü seç</button>
+          <button onClick={() => { const s = new Set(); uygunFirmalar.forEach((c, i) => { if (bookTypeOf(c) === 'isletme') s.add(i) }); setSelected(s) }} className="px-3 py-2 rounded-lg bg-blue-900/60 border border-blue-700/60 text-gray-200 text-sm hover:bg-blue-900/80">İşletme seç</button>
+          <button onClick={() => { const s = new Set(); uygunFirmalar.forEach((c, i) => { if (bookTypeOf(c) === 'bilanco') s.add(i) }); setSelected(s) }} className="px-3 py-2 rounded-lg bg-blue-900/60 border border-blue-700/60 text-gray-200 text-sm hover:bg-blue-900/80">Bilanço seç</button>
           <button onClick={topluTemizle} className="px-3 py-2 rounded-lg bg-blue-900/60 border border-blue-700/60 text-gray-200 text-sm hover:bg-blue-900/80">Seçimi temizle</button>
           <button onClick={kontrolEt} disabled={calisiyor || selected.size === 0} className="flex items-center gap-2 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-40 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
             {calisiyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />} Yıllık verileri al ve kontrol et

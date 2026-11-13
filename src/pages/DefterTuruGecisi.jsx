@@ -20,7 +20,7 @@ function norm(s) {
 }
 
 function eligible(client) {
-  const dt = norm(client?.defterTipi || '')
+  const dt = norm(client?.defter_tipi || '')
   const isBook = dt === 'BILANCO' || dt === 'ISLETME'
   const tckn = String(client?.tc || client?.vkn || '').replace(/\s/g, '')
   const isIndividual = /^\d{11}$/.test(tckn)
@@ -28,7 +28,7 @@ function eligible(client) {
 }
 
 function bookTypeOf(client) {
-  const dt = norm(client?.defterTipi || '')
+  const dt = norm(client?.defter_tipi || '')
   if (dt === 'BILANCO') return 'bilanco'
   if (dt === 'ISLETME') return 'isletme'
   return null
@@ -62,7 +62,7 @@ export default function DefterTuruGecisi() {
     try {
       const { data, error } = await supabase
         .from('clients')
-        .select('id, name, company, vkn, tc, defterTipi, serbestMeslek')
+        .select('id, name, company, vkn, tc, defter_tipi, serbest_meslek')
         .order('name', { ascending: true })
       if (error) throw error
       setClients(data || [])
@@ -178,7 +178,7 @@ export default function DefterTuruGecisi() {
             if (!res?.ok && res?.ok !== undefined) throw new Error(res?.not || 'Hesap özeti alınamadı')
             const hasilat = Number(ozet?.hasilat)
             const satinAlinan = Number(ozet?.satinAlinanEmtia)
-            const isService = (c.serbestMeslek === true) || norm(c.defterTipi || '') === 'SERBESTMESLEK'
+            const isService = (c.serbest_meslek === true) || norm(c.defter_tipi || '') === 'SERBESTMESLEK'
             // Defter Beyan hesap özeti mal/hizmet ayrımı vermez; hasilat toplam
             // gelirdir. Serbest meslek → hizmet, diğerleri → mal satış olarak alınır.
             const ycur = {

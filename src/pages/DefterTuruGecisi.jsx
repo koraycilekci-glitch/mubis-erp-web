@@ -327,9 +327,6 @@ export default function DefterTuruGecisi() {
           <button onClick={yukle} disabled={yukleniyor} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
             {yukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Firmaları yenile
           </button>
-          <button onClick={defterBeyanOtomatikAl} disabled={dbYukleniyor || selected.size === 0} title="Defter Beyan hesap özetinden yıllık verileri otomatik al" className="flex items-center gap-2 bg-violet-700/80 hover:bg-violet-600 disabled:opacity-40 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
-            {dbYukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Defter Beyan'dan otomatik al
-          </button>
           <button onClick={beyannameSorgulaMart} disabled={beyanYukleniyor || selected.size === 0 || !dvsKullanici || !dvsParola} title="e-Beyanname'de Mart ayında TC ile Gelir Vergisi beyanı sorgula" className="flex items-center gap-2 bg-amber-700/80 hover:bg-amber-600 disabled:opacity-40 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
             {beyanYukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />} Beyanname sorgula (Mart)
           </button>
@@ -345,9 +342,7 @@ export default function DefterTuruGecisi() {
           </button>
         </div>
         {mesaj && <div className="mt-3 text-sm text-cyan-200">{mesaj}</div>}
-        {dbIlerleme && <div className="mt-1 text-xs text-violet-300 flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {dbIlerleme}</div>}
         {beyanIlerleme && <div className="mt-1 text-xs text-amber-300 flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {beyanIlerleme}</div>}
-        {!dbHazir && <div className="mt-2 text-xs text-amber-300">Defter Beyan IVD kimlik bilgileri eksik. Beyan Hazırlama sayfasından kullanıcı/parola kaydedin.</div>}
       </div>
 
       {/* Limit tablosu */}

@@ -1,0 +1,320 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { RefreshCw, Download, TableProperties, Loader2, ShieldCheck } from 'lucide-react'
+import { supabase } from '../lib/supabase'
+import {
+  OFFICIAL_LIMITS, LIMIT_LABELS, limitsFor, estimateLimits, evaluate, bookTransitionExcel
+} from '../services/bookTransitionService'
+
+const AYLAR = ['OCAK', 'ŞUBAT', 'MART', 'NİSAN', 'MAYIS', 'HAZİRAN', 'TEMMUZ', 'AĞUSTOS', 'EYLÜL', 'EKİM', 'KASIM', 'ARALIK']
+
+function tl(x) { return (x == null ? 0 : x).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }
+
+function norm(s) {
+  return String(s || '').toLocaleUpperCase('tr')
+    .replace(/[İIı]/g, 'I').replace(/Ç/g, 'C').replace(/Ğ/g, 'G')
+    .replace(/Ö/g, 'O').replace(/Ş/g, 'S').replace(/Ü/g, 'U')
+}
+
+function eligible(client) {
+  const dt = norm(client?.defterTipi || '')
+  const isBook = dt === 'BILANCO' || dt === 'ISLETME'
+  const tckn = String(client?.tc || client?.vkn || '').replace(/\s/g, '')
+  const isIndividual = /^\d{11}$/.test(tckn)
+  return isBook && isIndividual
+}
+
+function bookTypeOf(client) {
+  const dt = norm(client?.defterTipi || '')
+  if (dt === 'BILANCO') return 'bilanco'
+  if (dt === 'ISLETME') return 'isletme'
+  return null
+}
+
+export default function DefterTuruGecisi() {
+  const navigate = useNavigate()
+  const simdi = new Date()
+  const [yil, setYil] = useState(simdi.getFullYear() - 1)
+  const [rate, setRate] = useState('25.49')
+  const [clients, setClients] = useState([])
+  const [yukleniyor, setYukleniyor] = useState(false)
+  const [selected, setSelected] = useState(new Set())
+  const [yearsData, setYearsData] = useState({}) // clientId -> { [y]: {purchases,sales,services,complete,closed} }
+  const [editing, setEditing] = useState(null) // clientId
+  const [sonuclar, setSonuclar] = useState([])
+  const [calisiyor, setCalisiyor] = useState(false)
+  const [mesaj, setMesaj] = useState('')
+
+  const yukle = async () => {
+    setYukleniyor(true)
+    try {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, name, company, vkn, tc, defterTipi, serbestMeslek')
+        .order('name', { ascending: true })
+      if (error) throw error
+      setClients(data || [])
+    } catch (e) {
+      setMesaj('Müşteriler alınamadı: ' + (e?.message || ''))
+    } finally {
+      setYukleniyor(false)
+    }
+  }
+  useEffect(() => { yukle() }, [])
+
+  const uygunFirmalar = useMemo(() => (clients || []).filter(eligible), [clients])
+  const seciliFirmalar = useMemo(() => uygunFirmalar.filter((_, i) => selected.has(i)), [uygunFirmalar, selected])
+
+  const limits = useMemo(() => {
+    try {
+      const y = Number(yil)
+      const r = rate === '' ? null : Number(rate)
+      const estimates = (OFFICIAL_LIMITS[y + 1] || r == null) ? {} : { [y + 1]: estimateLimits(y + 1, r) }
+      return { year: y, targetYear: y + 1, current: limitsFor(y + 1, estimates), previous: limitsFor(y) }
+    } catch (e) {
+      return null
+    }
+  }, [yil, rate])
+
+  const topluSec = () => setSelected(new Set(uygunFirmalar.map((_, i) => i)))
+  const topluTemizle = () => setSelected(new Set())
+
+  const yillarGerekli = (bookType) => bookType === 'bilanco' ? [Number(yil), Number(yil) - 1, Number(yil) - 2] : [Number(yil), Number(yil) - 1]
+
+  const veriAl = (clientId, y) => (yearsData[clientId] && yearsData[clientId][y]) || { purchases: '', sales: '', services: '', complete: true, closed: Number(y) < simdi.getFullYear() }
+
+  const veriYaz = (clientId, y, alan, deger) => {
+    setYearsData(prev => {
+      const cur = prev[clientId] || {}
+      const ycur = cur[y] || { purchases: '', sales: '', services: '', complete: true, closed: Number(y) < simdi.getFullYear() }
+      return { ...prev, [clientId]: { ...cur, [y]: { ...ycur, [alan]: deger } } }
+    })
+  }
+
+  const kontrolEt = () => {
+    setCalisiyor(true)
+    setMesaj('')
+    try {
+      const r = Number(rate)
+      const estimates = (OFFICIAL_LIMITS[Number(yil) + 1] || r == null) ? {} : { [Number(yil) + 1]: estimateLimits(Number(yil) + 1, r) }
+      const sonuc = []
+      for (const c of uygunFirmalar.filter((_, i) => selected.has(i))) {
+        const bt = bookTypeOf(c)
+        const tckn = String(c.tc || c.vkn || '').replace(/\s/g, '')
+        const entity = /^\d{11}$/.test(tckn) ? 'individual' : 'unknown'
+        const years = {}
+        for (const y of yillarGerekli(bt)) {
+          const v = veriAl(c.id, y)
+          const p = Number(v.purchases), s = Number(v.sales), h = Number(v.services)
+          years[y] = {
+            purchases: Number.isFinite(p) ? p : null,
+            sales: Number.isFinite(s) ? s : null,
+            services: Number.isFinite(h) ? h : null,
+            complete: !!v.complete,
+            closed: !!v.closed,
+            activity: (Number.isFinite(s) && s > 0 && Number.isFinite(h) && h > 0) ? 'mixed' : (Number.isFinite(h) && h > 0 && (!Number.isFinite(s) || s === 0)) ? 'service' : 'trade',
+          }
+        }
+        const ev = evaluate({ bookType: bt, entity, year: Number(yil), years, estimates })
+        sonuc.push({ ad: (c.company || c.name || '').trim(), bookType: bt, entity, years, result: ev })
+      }
+      setSonuclar(sonuc)
+      if (!sonuc.length) setMesaj('Seçili firma yok.')
+      else setMesaj(`${sonuc.length} firma için değerlendirme tamamlandı.`)
+    } catch (e) {
+      setMesaj('Hata: ' + (e?.message || ''))
+    } finally {
+      setCalisiyor(false)
+    }
+  }
+
+  const excelIndir = async () => {
+    try {
+      const n = await bookTransitionExcel({ yil: Number(yil), rows: sonuclar, rate })
+      setMesaj(`Excel hazır (${n} satır).`)
+      setTimeout(() => setMesaj(null), 4000)
+    } catch (e) {
+      setMesaj('Excel hatası: ' + (e?.message || ''))
+    }
+  }
+
+  const durumRenk = (s) => {
+    if (!s) return 'text-gray-400'
+    if (s.includes('gerekli')) return 'text-red-400'
+    if (s.includes('mümkün')) return 'text-sky-400'
+    if (s.includes('devam')) return 'text-emerald-400'
+    return 'text-amber-400'
+  }
+
+  return (
+    <div className="p-4 md:p-6 max-w-[1600px] mx-auto">
+      <div className="flex items-center gap-2 mb-4">
+        <TableProperties className="w-6 h-6 text-cyan-400" />
+        <h1 className="text-2xl font-bold text-white">Defter Türü Geçişi</h1>
+      </div>
+      <p className="text-gray-400 text-sm mb-4 leading-relaxed">
+        VUK 177/179/180: iş hacmi hadlerine göre işletme ↔ bilanço defteri geçiş değerlendirmesi.
+        Bu kontrol Luca kayıtlarını veya defter türünü değiştirmez. Şahıs firmaları (11 haneli TCKN) ve işletme/bilanço defterli firmalar için uygulanır.
+      </p>
+
+      <div className="bg-blue-950/40 border border-blue-800/40 rounded-2xl p-4 mb-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">İncelenecek faaliyet yılı</label>
+            <input type="number" min="2025" max={simdi.getFullYear()} value={yil} onChange={e => setYil(Number(e.target.value))} className="bg-blue-900/60 border border-blue-700/60 rounded-lg px-3 py-2 text-white text-sm w-28" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Tahmini had artışı (%)</label>
+            <input type="number" min="0" max="200" step="0.01" value={rate} onChange={e => setRate(e.target.value)} className="bg-blue-900/60 border border-blue-700/60 rounded-lg px-3 py-2 text-white text-sm w-28" />
+          </div>
+          <button onClick={yukle} disabled={yukleniyor} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
+            {yukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Firmaları yenile
+          </button>
+          <button onClick={topluSec} className="px-3 py-2 rounded-lg bg-blue-900/60 border border-blue-700/60 text-gray-200 text-sm hover:bg-blue-900/80">Tümünü seç</button>
+          <button onClick={topluTemizle} className="px-3 py-2 rounded-lg bg-blue-900/60 border border-blue-700/60 text-gray-200 text-sm hover:bg-blue-900/80">Seçimi temizle</button>
+          <button onClick={kontrolEt} disabled={calisiyor || selected.size === 0} className="flex items-center gap-2 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-40 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
+            {calisiyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />} Yıllık verileri al ve kontrol et
+          </button>
+          <button onClick={excelIndir} disabled={!sonuclar.length} className="flex items-center gap-2 bg-cyan-700/80 hover:bg-cyan-600 disabled:opacity-40 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
+            <Download className="w-4 h-4" /> Excel
+          </button>
+        </div>
+        {mesaj && <div className="mt-3 text-sm text-cyan-200">{mesaj}</div>}
+      </div>
+
+      {/* Limit tablosu */}
+      {limits && (
+        <div className="bg-blue-950/40 border border-blue-800/40 rounded-2xl p-4 mb-4">
+          <p className="text-sm text-gray-300 mb-2">Hedef yıl: <b>{limits.targetYear}</b> — incelenen yıllar: {limits.year} ve {limits.year - 1}{limits.current?.estimated ? ' (tahmini had)' : ''}</p>
+          <div className="overflow-auto">
+            <table className="w-full text-sm min-w-[640px]">
+              <thead>
+                <tr className="text-gray-300">
+                  <th className="px-3 py-2 text-left">Ölçüt</th>
+                  <th className="px-3 py-2 text-right">{limits.year} haddi (önceki yıl kontrolü)</th>
+                  <th className="px-3 py-2 text-right">{limits.targetYear} haddi{limits.current?.estimated ? ' — TAHMİNİ' : ''}</th>
+                  <th className="px-3 py-2 text-right">%20 üst sınır</th>
+                </tr>
+              </thead>
+              <tbody>
+                {LIMIT_LABELS.map(([key, label]) => (
+                  <tr key={key} className="border-t border-blue-800/30">
+                    <td className="px-3 py-2 text-gray-200">{label}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{limits.previous?.[key] != null ? tl(limits.previous[key]) + ' TL' : 'oran girin'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{limits.current?.[key] != null ? tl(limits.current[key]) + ' TL' : 'oran girin'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{limits.current?.[key] != null ? tl(limits.current[key] * 1.2) + ' TL' : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Firma seçimi + yıllık veri girişi */}
+      <div className="bg-blue-950/40 border border-blue-800/40 rounded-2xl p-4 mb-4">
+        <h3 className="text-white font-semibold mb-2">Uygun firmalar ({uygunFirmalar.length})</h3>
+        {yukleniyor ? (
+          <div className="py-6 text-center text-gray-400"><Loader2 className="w-5 h-5 animate-spin inline" /></div>
+        ) : uygunFirmalar.length === 0 ? (
+          <p className="text-gray-500 text-sm">Uygun firma yok. Mükellef listesinden defter türü (İşletme/Bilanço) ve TCKN (11 hane) bilgilerini güncelleyin (Luca'dan firma getir).</p>
+        ) : (
+          <div className="overflow-auto max-h-[420px]">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-gray-300">
+                  <th className="px-2 py-2 text-left">Seç</th>
+                  <th className="px-2 py-2 text-left">Firma</th>
+                  <th className="px-2 py-2 text-left">Defter</th>
+                  <th className="px-2 py-2 text-left">Yıllık veri (Y / Y-1 / Y-2)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {uygunFirmalar.map((c, i) => {
+                  const bt = bookTypeOf(c)
+                  const yillar = yillarGerekli(bt)
+                  const isOpen = editing === c.id
+                  return (
+                    <tr key={c.id} className="border-t border-blue-800/30 align-top">
+                      <td className="px-2 py-2">
+                        <input type="checkbox" checked={selected.has(i)} onChange={e => {
+                          const s = new Set(selected)
+                          if (e.target.checked) s.add(i); else s.delete(i)
+                          setSelected(s)
+                        }} className="accent-yellow-500" />
+                      </td>
+                      <td className="px-2 py-2 text-white max-w-[220px] truncate" title={c.company || c.name}>{c.company || c.name}</td>
+                      <td className="px-2 py-2 text-gray-300">{bt === 'bilanco' ? 'Bilanço' : 'İşletme'}</td>
+                      <td className="px-2 py-2">
+                        <button onClick={() => setEditing(isOpen ? null : c.id)} className="text-xs text-cyan-300 hover:underline mb-1">
+                          {isOpen ? 'Kapat' : 'Veri gir'}
+                        </button>
+                        {isOpen && (
+                          <div className="space-y-2 mt-1">
+                            {yillar.map(y => (
+                              <div key={y} className="flex flex-wrap items-center gap-1">
+                                <span className="text-xs text-gray-400 w-12">{y}</span>
+                                <input type="number" placeholder="Mal alım" value={veriAl(c.id, y).purchases} onChange={e => veriYaz(c.id, y, 'purchases', e.target.value)} className="bg-blue-900/60 border border-blue-700/60 rounded px-2 py-1 text-white text-xs w-24" />
+                                <input type="number" placeholder="Mal satış" value={veriAl(c.id, y).sales} onChange={e => veriYaz(c.id, y, 'sales', e.target.value)} className="bg-blue-900/60 border border-blue-700/60 rounded px-2 py-1 text-white text-xs w-24" />
+                                <input type="number" placeholder="Hizmet geliri" value={veriAl(c.id, y).services} onChange={e => veriYaz(c.id, y, 'services', e.target.value)} className="bg-blue-900/60 border border-blue-700/60 rounded px-2 py-1 text-white text-xs w-28" />
+                                <label className="text-xs text-gray-400 flex items-center gap-1">
+                                  <input type="checkbox" checked={veriAl(c.id, y).complete} onChange={e => veriYaz(c.id, y, 'complete', e.target.checked)} /> tam
+                                </label>
+                                <label className="text-xs text-gray-400 flex items-center gap-1">
+                                  <input type="checkbox" checked={veriAl(c.id, y).closed} onChange={e => veriYaz(c.id, y, 'closed', e.target.checked)} /> kapalı
+                                </label>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Sonuçlar */}
+      {sonuclar.length > 0 && (
+        <div className="bg-blue-950/40 border border-blue-800/40 rounded-2xl p-4">
+          <h3 className="text-white font-semibold mb-2">Sonuçlar ({sonuclar.length})</h3>
+          <div className="overflow-auto">
+            <table className="w-full text-sm min-w-[980px]">
+              <thead>
+                <tr className="text-gray-300">
+                  <th className="px-3 py-2 text-left">Firma</th>
+                  <th className="px-3 py-2 text-left">Mal alımları</th>
+                  <th className="px-3 py-2 text-left">Mal satışları</th>
+                  <th className="px-3 py-2 text-left">Hizmet geliri</th>
+                  <th className="px-3 py-2 text-left">Önceki yıl (al/sat/hiz)</th>
+                  <th className="px-3 py-2 text-left">Sonuç</th>
+                  <th className="px-3 py-2 text-left">Açıklama</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sonuclar.map((r, i) => {
+                  const v = r.years?.[Number(yil)] || {}
+                  const prev = r.years?.[Number(yil) - 1]
+                  return (
+                    <tr key={i} className="border-t border-blue-800/30">
+                      <td className="px-3 py-2 text-white max-w-[200px] truncate" title={r.ad}>{r.ad}</td>
+                      <td className="px-3 py-2 tabular-nums text-gray-200">{v.purchases != null ? tl(v.purchases) : '—'}</td>
+                      <td className="px-3 py-2 tabular-nums text-gray-200">{v.sales != null ? tl(v.sales) : '—'}</td>
+                      <td className="px-3 py-2 tabular-nums text-gray-200">{v.services != null ? tl(v.services) : '—'}</td>
+                      <td className="px-3 py-2 text-gray-400 text-xs">{prev?.complete ? [prev.purchases, prev.sales, prev.services].map(n => Number.isFinite(n) ? tl(n) : '—').join(' / ') : (prev?.error || 'önceki yıl okunamadı')}</td>
+                      <td className={`px-3 py-2 font-medium ${durumRenk(r.result?.status)}`}>{r.result?.status || '—'}{r.result?.estimated ? ' (tahmini)' : ''}{r.result?.provisional ? ' (ön)' : ''}</td>
+                      <td className="px-3 py-2 text-gray-400 text-xs max-w-[360px]">{r.result?.reason || v.error || ''}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

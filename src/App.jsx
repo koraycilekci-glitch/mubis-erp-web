@@ -57,6 +57,7 @@ import FaturaSorgulama from './pages/FaturaSorgulama'
 import BeyannameKontrol from './pages/BeyannameKontrol'
 import MuhasebeKayit from './pages/MuhasebeKayit'
 import KontrolMerkezi from './pages/KontrolMerkezi'
+import DefterTuruGecisi from './pages/DefterTuruGecisi'
 import Taramalar from './pages/Taramalar'
 import Fisler from './pages/Fisler'
 import KdvDokumler from './pages/KdvDokumler'
@@ -228,6 +229,7 @@ function AppContent() {
           <Route path="/admin/beyan-hazirlama" element={<BeyanHazirlama />} />
           <Route path="/admin/muhasebe-kayit" element={<MuhasebeKayit />} />
           <Route path="/admin/kontrol-merkezi" element={<KontrolMerkezi />} />
+<Route path="/admin/defter-turu-gecisi" element={<DefterTuruGecisi />} />
           <Route path="/admin/taramalar" element={<Taramalar />} />
           <Route path="/admin/fisler" element={<Fisler />} />
           <Route path="/admin/kdv-dokumleri" element={<KdvDokumler />} />

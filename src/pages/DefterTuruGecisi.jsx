@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { RefreshCw, Download, TableProperties, Loader2, ShieldCheck, ClipboardCheck } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { defterbeyanHesapOzeti } from '../services/beyanHazirlamaService'
+import { yardimciIsYerel } from '../utils/gibOdemeHelper'
 import { getSettings } from '../services/settingsService'
 import { beyannameSorgula, beyannameKayitlariGetirDetay } from '../services/beyannameService'
 import {
@@ -177,7 +177,7 @@ export default function DefterTuruGecisi() {
           const y = yillar[yi]
           setDbIlerleme(`${fi + 1}/${secili.length} firma — ${c.company || c.name} — ${y} yılı`)
           try {
-            const res = await defterbeyanHesapOzeti(vkn, `01.01.${y}`, `31.12.${y}`, dbKullanici, dbParola)
+            const res = await yardimciIsYerel('defterbeyan-hesap-ozeti', { vkn, baslangic: `01.01.${y}`, bitis: `31.12.${y}`, kullaniciKodu: dbKullanici, parola: dbParola }, 5 * 60 * 1000)
             const ozet = res?.ozet || res
             if (!res?.ok && res?.ok !== undefined) throw new Error(res?.reason || res?.not || 'Hesap özeti alınamadı')
             const hasilat = Number(ozet?.hasilat)

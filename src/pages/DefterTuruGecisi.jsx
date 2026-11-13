@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { RefreshCw, Download, TableProperties, Loader2, ShieldCheck } from 'lucide-react'
+import { RefreshCw, Download, TableProperties, Loader2, ShieldCheck, ClipboardCheck } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { defterbeyanBilgileriGetir, defterbeyanHesapOzeti } from '../services/beyanHazirlamaService'
+import { getSettings } from '../services/settingsService'
+import { beyannameSorgula, beyannameKayitlariGetirDetay } from '../services/beyannameService'
 import {
   OFFICIAL_LIMITS, LIMIT_LABELS, limitsFor, estimateLimits, evaluate, bookTransitionExcel
 } from '../services/bookTransitionService'
@@ -43,7 +46,15 @@ export default function DefterTuruGecisi() {
   const [editing, setEditing] = useState(null) // clientId
   const [sonuclar, setSonuclar] = useState([])
   const [calisiyor, setCalisiyor] = useState(false)
-  const [mesaj, setMesaj] = useState('')
+  const [dbKullanici, setDbKullanici] = useState('')
+  const [dbParola, setDbParola] = useState('')
+  const [dbHazir, setDbHazir] = useState(false)
+  const [dbYukleniyor, setDbYukleniyor] = useState(false)
+  const [dbIlerleme, setDbIlerleme] = useState('')
+  const [dvsKullanici, setDvsKullanici] = useState('')
+  const [dvsParola, setDvsParola] = useState('')
+  const [beyanYukleniyor, setBeyanYukleniyor] = useState(false)
+  const [beyanSonuc, setBeyanSonuc] = useState(null)
 
   const yukle = async () => {
     setYukleniyor(true)
@@ -54,6 +65,17 @@ export default function DefterTuruGecisi() {
         .order('name', { ascending: true })
       if (error) throw error
       setClients(data || [])
+      try {
+        const b = await defterbeyanBilgileriGetir()
+        setDbKullanici(b.kullaniciKodu || '')
+        setDbParola(b.parola || '')
+        setDbHazir(!!(b.kullaniciKodu && b.parola))
+      } catch { setDbHazir(false) }
+      try {
+        const s = await getSettings()
+        setDvsKullanici(s.admin_gib_kullanici_kodu || '')
+        setDvsParola(s.admin_gib_parola || '')
+      } catch { /* yoksay */ }
     } catch (e) {
       setMesaj('Müşteriler alınamadı: ' + (e?.message || ''))
     } finally {
@@ -128,6 +150,107 @@ export default function DefterTuruGecisi() {
     }
   }
 
+  const defterBeyanOtomatikAl = async () => {
+    if (!dbHazir) {
+      setMesaj('Defter Beyan kimlik bilgileri eksik. Önce Beyan Hazırlama sayfasından IVD kullanıcı/parola kaydedin.')
+      return
+    }
+    const secili = uygunFirmalar.filter((_, i) => selected.has(i))
+    if (!secili.length) { setMesaj('En az bir firma seçin.'); return }
+    setDbYukleniyor(true)
+    setDbIlerleme('')
+    setMesaj('')
+    let tamam = 0, hataSayisi = 0
+    try {
+      for (let fi = 0; fi < secili.length; fi++) {
+        const c = secili[fi]
+        const bt = bookTypeOf(c)
+        const vkn = String(c.vkn || c.tc || '').replace(/\s/g, '')
+        if (!/^\d{10,11}$/.test(vkn)) { hataSayisi++; continue }
+        const yillar = yillarGerekli(bt)
+        for (let yi = 0; yi < yillar.length; yi++) {
+          const y = yillar[yi]
+          setDbIlerleme(`${fi + 1}/${secili.length} firma — ${c.company || c.name} — ${y} yılı`)
+          try {
+            const res = await defterbeyanHesapOzeti(vkn, `01.01.${y}`, `31.12.${y}`, dbKullanici, dbParola)
+            const ozet = res?.ozet || res
+            if (!res?.ok && res?.ok !== undefined) throw new Error(res?.not || 'Hesap özeti alınamadı')
+            const hasilat = Number(ozet?.hasilat)
+            const satinAlinan = Number(ozet?.satinAlinanEmtia)
+            const isService = (c.serbestMeslek === true) || norm(c.defterTipi || '') === 'SERBESTMESLEK'
+            // Defter Beyan hesap özeti mal/hizmet ayrımı vermez; hasilat toplam
+            // gelirdir. Serbest meslek → hizmet, diğerleri → mal satış olarak alınır.
+            const ycur = {
+              purchases: Number.isFinite(satinAlinan) ? satinAlinan : '',
+              sales: (!isService && Number.isFinite(hasilat)) ? hasilat : '',
+              services: (isService && Number.isFinite(hasilat)) ? hasilat : '',
+              complete: true,
+              closed: y < simdi.getFullYear(),
+            }
+            setYearsData(prev => {
+              const cur = prev[c.id] || {}
+              return { ...prev, [c.id]: { ...cur, [y]: ycur } }
+            })
+            tamam++
+          } catch (e) {
+            hataSayisi++
+            setMesaj(`${c.company || c.name} — ${y}: ${e?.message || 'hesap özeti alınamadı'}`)
+          }
+        }
+      }
+      // Otomatik değerlendirme
+      try { kontrolEt() } catch { /* manuel devam */ }
+      setMesaj(`${tamam} yıl verisi Defter Beyan'dan alındı.` + (hataSayisi ? ` ${hataSayisi} hata.` : ''))
+    } catch (e) {
+      setMesaj('Hata: ' + (e?.message || ''))
+    } finally {
+      setDbYukleniyor(false)
+      setDbIlerleme('')
+    }
+  }
+  const beyannameSorgulaMart = async () => {
+    if (!dvsKullanici || !dvsParola) {
+      setMesaj('DVS kimlik bilgileri eksik. Ayarlar > GİB Bağlantı Merkezi\'nden admin GİB kullanıcı/parola kaydedin.')
+      return
+    }
+    const secili = uygunFirmalar.filter((_, i) => selected.has(i))
+    if (!secili.length) { setMesaj('En az bir firma seçin.'); return }
+    setBeyanYukleniyor(true)
+    setBeyanSonuc(null)
+    setMesaj('')
+    try {
+      const tcknler = secili.map(c => String(c.tc || c.vkn || '').replace(/\s/g, '')).filter(v => /^\d{10,11}$/.test(v))
+      const yilSorgu = Number(yil) + 1
+      const res = await beyannameSorgula({ kullaniciKodu: dvsKullanici, parola: dvsParola, yil: yilSorgu, ay: 3, turKodu: 'GELIR', vknListesi: tcknler })
+      if (!res?.ok) throw new Error(res?.reason || res?.error || 'Beyanname sorgusu başarısız')
+      const { kayitlar } = await beyannameKayitlariGetirDetay(yilSorgu, 3)
+      const bulunan = new Map()
+      for (const k of (kayitlar || [])) {
+        if (k.tur && !/gelir/i.test(k.tur)) continue
+        if (!bulunan.has(k.vkn)) bulunan.set(k.vkn, k)
+      }
+      const sonuc = secili.map(c => {
+        const tckn = String(c.tc || c.vkn || '').replace(/\s/g, '')
+        const kayit = bulunan.get(tckn)
+        return {
+          ad: (c.company || c.name || '').trim(),
+          tckn,
+          bulundu: !!kayit,
+          donem: kayit?.donem || '',
+          yukleme: kayit?.yukleme_zamani || '',
+          unvan: kayit?.unvan || '',
+        }
+      })
+      setBeyanSonuc(sonuc)
+      const n = sonuc.filter(s => s.bulundu).length
+      setMesaj(`${n}/${sonuc.length} firmada ${Number(yil)} yılı Gelir Vergisi beyanı (Mart ${yilSorgu} yükleme) bulundu.`)
+    } catch (e) {
+      setMesaj('Beyanname sorgu hatası: ' + (e?.message || ''))
+    } finally {
+      setBeyanYukleniyor(false)
+    }
+  }
+
   const excelIndir = async () => {
     try {
       const n = await bookTransitionExcel({ yil: Number(yil), rows: sonuclar, rate })
@@ -170,6 +293,12 @@ export default function DefterTuruGecisi() {
           <button onClick={yukle} disabled={yukleniyor} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
             {yukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Firmaları yenile
           </button>
+          <button onClick={defterBeyanOtomatikAl} disabled={dbYukleniyor || selected.size === 0 || !dbHazir} title={dbHazir ? 'Defter Beyan hesap özetinden yıllık verileri otomatik al' : 'Defter Beyan IVD kimlik bilgileri eksik'} className="flex items-center gap-2 bg-violet-700/80 hover:bg-violet-600 disabled:opacity-40 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
+            {dbYukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Defter Beyan'dan otomatik al
+          </button>
+          <button onClick={beyannameSorgulaMart} disabled={beyanYukleniyor || selected.size === 0 || !dvsKullanici || !dvsParola} title="e-Beyanname'de Mart ayında TC ile Gelir Vergisi beyanı sorgula" className="flex items-center gap-2 bg-amber-700/80 hover:bg-amber-600 disabled:opacity-40 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
+            {beyanYukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />} Beyanname sorgula (Mart)
+          </button>
           <button onClick={topluSec} className="px-3 py-2 rounded-lg bg-blue-900/60 border border-blue-700/60 text-gray-200 text-sm hover:bg-blue-900/80">Tümünü seç</button>
           <button onClick={topluTemizle} className="px-3 py-2 rounded-lg bg-blue-900/60 border border-blue-700/60 text-gray-200 text-sm hover:bg-blue-900/80">Seçimi temizle</button>
           <button onClick={kontrolEt} disabled={calisiyor || selected.size === 0} className="flex items-center gap-2 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-40 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
@@ -180,6 +309,8 @@ export default function DefterTuruGecisi() {
           </button>
         </div>
         {mesaj && <div className="mt-3 text-sm text-cyan-200">{mesaj}</div>}
+        {dbIlerleme && <div className="mt-1 text-xs text-violet-300 flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {dbIlerleme}</div>}
+        {!dbHazir && <div className="mt-2 text-xs text-amber-300">Defter Beyan IVD kimlik bilgileri eksik. Beyan Hazırlama sayfasından kullanıcı/parola kaydedin.</div>}
       </div>
 
       {/* Limit tablosu */}
@@ -276,6 +407,38 @@ export default function DefterTuruGecisi() {
           </div>
         )}
       </div>
+
+      {/* Beyanname sorgu sonucu */}
+      {beyanSonuc && (
+        <div className="bg-blue-950/40 border border-blue-800/40 rounded-2xl p-4 mb-4">
+          <h3 className="text-white font-semibold mb-2">Gelir Vergisi Beyanı — Mart {Number(yil) + 1} yükleme ({beyanSonuc.filter(s => s.bulundu).length}/{beyanSonuc.length})</h3>
+          <div className="overflow-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-gray-300">
+                  <th className="px-3 py-2 text-left">Firma</th>
+                  <th className="px-3 py-2 text-left">TCKN</th>
+                  <th className="px-3 py-2 text-left">Durum</th>
+                  <th className="px-3 py-2 text-left">Dönem</th>
+                  <th className="px-3 py-2 text-left">Yükleme</th>
+                </tr>
+              </thead>
+              <tbody>
+                {beyanSonuc.map((s, i) => (
+                  <tr key={i} className="border-t border-blue-800/30">
+                    <td className="px-3 py-2 text-white max-w-[220px] truncate" title={s.ad}>{s.ad}</td>
+                    <td className="px-3 py-2 text-gray-300 tabular-nums">{s.tckn}</td>
+                    <td className={`px-3 py-2 font-medium ${s.bulundu ? 'text-emerald-400' : 'text-red-400'}`}>{s.bulundu ? 'Bulundu' : 'Bulunamadı'}</td>
+                    <td className="px-3 py-2 text-gray-400 text-xs">{s.donem || '—'}</td>
+                    <td className="px-3 py-2 text-gray-400 text-xs">{s.yukleme || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-gray-500 mt-2">Yükleme tarihi Mart {Number(yil) + 1} olan Gelir Vergisi beyannameleri listelenir. Hesap özeti (mal alım/satış/hizmet) için beyanname PDF'ini indirip yıllık veri alanına girin veya Defter Beyan'dan otomatik alın.</p>
+        </div>
+      )}
 
       {/* Sonuçlar */}
       {sonuclar.length > 0 && (

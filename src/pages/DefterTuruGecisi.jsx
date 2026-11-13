@@ -407,68 +407,67 @@ export default function DefterTuruGecisi() {
         const tckn = String(c.tc || c.vkn || '').replace(/\s/g, '')
         const musteriAd = c.company || c.name || ''
         const yilSorgu = Number(yil) + 1
-        setMesaj(`${fi + 1}/${secili.length} firma — ${musteriAd} — beyanname indiriliyor...`)
-        // 1) e-Beyanname'den GELIR beyanname PDF'ini indir (yerel yardımcı)
-        try {
-          const indirSonuc = await yardimciIsYerel('eb-beyan-otomatik-indir', {
-            kaynak: 'gib',
-            lucaMember: '',
-            lucaUsername: '',
-            lucaPassword: '',
-            shortName: musteriAd,
-            kullaniciKodu: dvsKullanici,
-            parola: dvsParola,
-            kimlikTip: /^\d{11}$/.test(tckn) ? 'tckn' : 'vkn',
-            vkn: vkn,
-            tc: tckn,
-            kullaniciAdi: '',
-            isyeriKodu: '',
-            sistemSifre: '',
-            isyeriSifre: '',
-            yil: yilSorgu,
-            ay: 3,
-            tur: 'gelir_vergi',
-            musteriAd,
-            beyanKok: '',
-          }, 10 * 60 * 1000)
-          if (!indirSonuc?.ok) {
-            sonuc.push({ dosya: musteriAd, tckn, client: musteriAd, hasilat: null, satinAlinan: null, donemBasi: null, donemSonu: null, hata: indirSonuc?.reason || indirSonuc?.error || 'indirme başarısız' })
+        // 1) Önce yerel klasörde PDF var mı?
+        setMesaj(`${fi + 1}/${secili.length} firma — ${musteriAd} — yerel klasör kontrol ediliyor...`)
+        let okuSonuc = null
+        try { okuSonuc = await yardimciIsYerel('beyanname-hesap-ozeti-oku', { vkn: tckn, yil: Number(yil), kok: '' }, 2 * 60 * 1000) } catch { okuSonuc = null }
+        // 2) Bulunamadıysa e-Beyanname'den indir, sonra tekrar oku
+        if (!okuSonuc?.ok) {
+          setMesaj(`${fi + 1}/${secili.length} firma — ${musteriAd} — e-Beyanname'den indiriliyor...`)
+          try {
+            const indirSonuc = await yardimciIsYerel('eb-beyan-otomatik-indir', {
+              kaynak: 'gib',
+              lucaMember: '',
+              lucaUsername: '',
+              lucaPassword: '',
+              shortName: musteriAd,
+              kullaniciKodu: dvsKullanici,
+              parola: dvsParola,
+              kimlikTip: /^\d{11}$/.test(tckn) ? 'tckn' : 'vkn',
+              vkn: vkn,
+              tc: tckn,
+              kullaniciAdi: '',
+              isyeriKodu: '',
+              sistemSifre: '',
+              isyeriSifre: '',
+              yil: yilSorgu,
+              ay: 3,
+              tur: 'gelir_vergi',
+              musteriAd,
+              beyanKok: '',
+            }, 10 * 60 * 1000)
+            if (!indirSonuc?.ok) throw new Error(indirSonuc?.reason || indirSonuc?.error || 'indirme başarısız')
+          } catch (e) {
+            sonuc.push({ dosya: musteriAd, tckn, client: musteriAd, hasilat: null, satinAlinan: null, donemBasi: null, donemSonu: null, hata: e?.message || 'indirme hatası' })
             hataSayisi++
             continue
           }
-        } catch (e) {
-          sonuc.push({ dosya: musteriAd, tckn, client: musteriAd, hasilat: null, satinAlinan: null, donemBasi: null, donemSonu: null, hata: e?.message || 'indirme hatası' })
+          try { okuSonuc = await yardimciIsYerel('beyanname-hesap-ozeti-oku', { vkn: tckn, yil: Number(yil), kok: '' }, 2 * 60 * 1000) } catch { okuSonuc = null }
+        }
+        if (!okuSonuc?.ok) {
+          sonuc.push({ dosya: musteriAd, tckn, client: musteriAd, hasilat: null, satinAlinan: null, donemBasi: null, donemSonu: null, hata: okuSonuc?.reason || okuSonuc?.error || 'PDF okunamadı' })
           hataSayisi++
           continue
         }
-        // 2) İndirilen PDF'i oku (yerel klasörden)
-        try {
-          const okuSonuc = await yardimciIsYerel('beyanname-hesap-ozeti-oku', { vkn: tckn, yil: Number(yil), kok: '' }, 2 * 60 * 1000)
-          if (!okuSonuc?.ok) throw new Error(okuSonuc?.reason || okuSonuc?.error || 'PDF okunamadı')
-          const hasilat = okuSonuc.hasilat
-          const satinAlinan = okuSonuc.satinAlinan
-          const isService = (c.serbest_meslek === true) || norm(c.defter_tipi || '') === 'SERBESTMESLEK'
-          const yillar = yillarGerekli(bt)
-          for (const y of yillar) {
-            const ycur = {
-              purchases: (y === Number(yil) && Number.isFinite(satinAlinan)) ? satinAlinan : '',
-              sales: (y === Number(yil) && !isService && Number.isFinite(hasilat)) ? hasilat : '',
-              services: (y === Number(yil) && isService && Number.isFinite(hasilat)) ? hasilat : '',
-              complete: true,
-              closed: y < simdi.getFullYear(),
-            }
-            if (!yeniYearsData[c.id]) yeniYearsData[c.id] = {}
-            if (y === Number(yil)) yeniYearsData[c.id][y] = ycur
+        const hasilat = okuSonuc.hasilat
+        const satinAlinan = okuSonuc.satinAlinan
+        const isService = (c.serbest_meslek === true) || norm(c.defter_tipi || '') === 'SERBESTMESLEK'
+        const yillar = yillarGerekli(bt)
+        for (const y of yillar) {
+          const ycur = {
+            purchases: (y === Number(yil) && Number.isFinite(satinAlinan)) ? satinAlinan : '',
+            sales: (y === Number(yil) && !isService && Number.isFinite(hasilat)) ? hasilat : '',
+            services: (y === Number(yil) && isService && Number.isFinite(hasilat)) ? hasilat : '',
+            complete: true,
+            closed: y < simdi.getFullYear(),
           }
-          tamam++
-          sonuc.push({ dosya: okuSonuc.dosya || musteriAd, tckn, client: musteriAd, hasilat, satinAlinan, donemBasi: okuSonuc.donemBasi, donemSonu: okuSonuc.donemSonu })
-        } catch (e) {
-          sonuc.push({ dosya: musteriAd, tckn, client: musteriAd, hasilat: null, satinAlinan: null, donemBasi: null, donemSonu: null, hata: e?.message || 'PDF okunamadı' })
-          hataSayisi++
+          if (!yeniYearsData[c.id]) yeniYearsData[c.id] = {}
+          if (y === Number(yil)) yeniYearsData[c.id][y] = ycur
         }
+        tamam++
+        sonuc.push({ dosya: okuSonuc.dosya || musteriAd, tckn, client: musteriAd, hasilat, satinAlinan, donemBasi: okuSonuc.donemBasi, donemSonu: okuSonuc.donemSonu })
       }
       setYearsData(yeniYearsData)
-      // Değerlendirme
       const r = Number(rate)
       const estimates = (OFFICIAL_LIMITS[Number(yil) + 1] || r == null) ? {} : { [Number(yil) + 1]: estimateLimits(Number(yil) + 1, r) }
       const sonucEval = []
@@ -495,7 +494,7 @@ export default function DefterTuruGecisi() {
     }
   }
 
-  const excelIndir = async () => {
+  const excelIndir = async () => {  const excelIndir = async () => {
     try {
       const n = await bookTransitionExcel({ yil: Number(yil), rows: sonuclar, rate })
       setMesaj(`Excel hazır (${n} satır).`)
@@ -540,8 +539,8 @@ export default function DefterTuruGecisi() {
           <button onClick={beyannameSorgulaMart} disabled={beyanYukleniyor || selected.size === 0 || !dvsKullanici || !dvsParola} title="e-Beyanname'de Mart ayında TC ile Gelir Vergisi beyanı sorgula" className="flex items-center gap-2 bg-amber-700/80 hover:bg-amber-600 disabled:opacity-40 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
             {beyanYukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />} Beyanname sorgula (Mart)
           </button>
-          <button onClick={otomatikBeyannameAl} disabled={pdfOkuyor || selected.size === 0} title="e-Beyanname'den GELIR beyanname PDF'ini indir ve hesap özetini otomatik oku" className="flex items-center gap-2 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-40 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
-            {pdfOkuyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Otomatik (e-Beyanname + klasör)
+          <button onClick={otomatikBeyannameAl} disabled={pdfOkuyor || selected.size === 0} title="Önce yerel klasörde beyanname PDF'i arar; yoksa e-Beyanname'den indirip hesap özetini okur" className="flex items-center gap-2 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-40 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
+            {pdfOkuyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Otomatik (klasör + e-Beyanname)
           </button>
           <button onClick={topluSec} className="px-3 py-2 rounded-lg bg-blue-900/60 border border-blue-700/60 text-gray-200 text-sm hover:bg-blue-900/80">Tümünü seç</button>
           <button onClick={() => { const s = new Set(); uygunFirmalar.forEach((c, i) => { if (bookTypeOf(c) === 'isletme') s.add(i) }); setSelected(s) }} className="px-3 py-2 rounded-lg bg-blue-900/60 border border-blue-700/60 text-gray-200 text-sm hover:bg-blue-900/80">İşletme seç</button>
@@ -728,6 +727,17 @@ export default function DefterTuruGecisi() {
                 {sonuclar.map((r, i) => {
                   const v = r.years?.[Number(yil)] || {}
                   const prev = r.years?.[Number(yil) - 1]
+  const excelIndir = async () => {
+    try {
+      const n = await bookTransitionExcel({ yil: Number(yil), rows: sonuclar, rate })
+      setMesaj('Excel hazir (' + n + ' satir).')
+      setTimeout(() => setMesaj(null), 4000)
+    } catch (e) {
+      setMesaj('Excel hatasi: ' + (e?.message || ''))
+    }
+  }
+
+
                   return (
                     <tr key={i} className="border-t border-blue-800/30">
                       <td className="px-3 py-2 text-white max-w-[200px] truncate" title={r.ad}>{r.ad}</td>
@@ -747,4 +757,6 @@ export default function DefterTuruGecisi() {
       )}
     </div>
   )
+}
+
 }

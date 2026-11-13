@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { RefreshCw, Download, TableProperties, Loader2, ShieldCheck, ClipboardCheck } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { defterbeyanBilgileriGetir, defterbeyanHesapOzeti } from '../services/beyanHazirlamaService'
+import { defterbeyanHesapOzeti } from '../services/beyanHazirlamaService'
 import { getSettings } from '../services/settingsService'
 import { beyannameSorgula, beyannameKayitlariGetirDetay } from '../services/beyannameService'
 import {
@@ -68,15 +68,17 @@ export default function DefterTuruGecisi() {
       if (error) throw error
       setClients(data || [])
       try {
-        const b = await defterbeyanBilgileriGetir()
-        setDbKullanici(b.kullaniciKodu || '')
-        setDbParola(b.parola || '')
-        setDbHazir(!!(b.kullaniciKodu && b.parola))
+        const s = await getSettings()
+        const kullanici = s.admin_gib_kullanici_kodu || ''
+        const parola = s.admin_gib_parola || ''
+        setDbKullanici(kullanici)
+        setDbParola(parola)
+        setDbHazir(!!(kullanici && parola))
       } catch { setDbHazir(false) }
       try {
-        const s = await getSettings()
-        setDvsKullanici(s.admin_gib_kullanici_kodu || '')
-        setDvsParola(s.admin_gib_parola || '')
+        const s2 = await getSettings()
+        setDvsKullanici(s2.admin_gib_kullanici_kodu || '')
+        setDvsParola(s2.admin_gib_parola || '')
       } catch { /* yoksay */ }
     } catch (e) {
       setMesaj('Müşteriler alınamadı: ' + (e?.message || ''))

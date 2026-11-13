@@ -57,6 +57,8 @@ export default function DefterTuruGecisi() {
   const [pdfOkuyor, setPdfOkuyor] = useState(false)
   const [pdfSonuc, setPdfSonuc] = useState(null)
   const [beyanIlerleme, setBeyanIlerleme] = useState('')
+  const [beyanYukleniyor, setBeyanYukleniyor] = useState(false)
+  const [beyanSonuc, setBeyanSonuc] = useState(null)
 
   const yukle = async () => {
     setYukleniyor(true)

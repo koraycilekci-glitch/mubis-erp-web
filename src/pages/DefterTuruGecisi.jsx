@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { RefreshCw, Download, TableProperties, Loader2, ShieldCheck, ClipboardCheck } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { lucaBilgileriGetir } from '../services/efaturaService'
 import { yardimciIsYerel } from '../utils/gibOdemeHelper'
 import { getSettings } from '../services/settingsService'
 import { beyannameSorgula, beyannameKayitlariGetirDetay } from '../services/beyannameService'
@@ -388,9 +387,8 @@ export default function DefterTuruGecisi() {
   }
 
   const otomatikBeyannameAl = async () => {
-    const luca = await lucaBilgileriGetir()
-    if (!luca.username || !luca.password || !luca.member) {
-      setMesaj('Luca bağlantı bilgileri eksik. Ayarlar > Luca Bağlantı bölümünden üye no, kullanıcı adı ve parola girin.')
+    if (!dvsKullanici || !dvsParola) {
+      setMesaj('DVS kimlik bilgileri eksik. Ayarlar > GİB Bağlantı Merkezi\'nden admin GİB kullanıcı/parola kaydedin.')
       return
     }
     const secili = uygunFirmalar.filter((_, i) => selected.has(i))
@@ -413,16 +411,20 @@ export default function DefterTuruGecisi() {
         // 1) e-Beyanname'den GELIR beyanname PDF'ini indir (yerel yardımcı)
         try {
           const indirSonuc = await yardimciIsYerel('eb-beyan-otomatik-indir', {
-            kaynak: 'luca',
-            lucaMember: luca.member,
-            lucaUsername: luca.username,
-            lucaPassword: luca.password,
+            kaynak: 'gib',
+            lucaMember: '',
+            lucaUsername: '',
+            lucaPassword: '',
             shortName: musteriAd,
-            kullaniciKodu: '',
-            parola: '',
+            kullaniciKodu: dvsKullanici,
+            parola: dvsParola,
             kimlikTip: /^\d{11}$/.test(tckn) ? 'tckn' : 'vkn',
             vkn: vkn,
             tc: tckn,
+            kullaniciAdi: '',
+            isyeriKodu: '',
+            sistemSifre: '',
+            isyeriSifre: '',
             yil: yilSorgu,
             ay: 3,
             tur: 'gelir_vergi',

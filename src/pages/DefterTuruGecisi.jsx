@@ -303,22 +303,34 @@ export default function DefterTuruGecisi() {
         if (!m) return null
         return Number(m[0].replace(/\./g, '').replace(',', '.'))
       }
-      const bul = (metin, kalip) => {
-        const satirlar = metin.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
-        for (let i = 0; i < satirlar.length; i++) {
-          if (!kalip.test(satirlar[i])) continue
-          let m = satirlar[i].match(/-?[\d.]+,\d{2}/)
-          if (m) return parseSayi(m[0])
-          if (i + 1 < satirlar.length) {
-            const m2 = satirlar[i + 1].match(/^-?[\d.]+,\d{2}$/)
-            if (m2) return parseSayi(m2[0])
-          }
+      // İşletme Hesabı Özeti: sayılar sabit sırada gelir:
+      // [dönem başı emtia, satın alınan emtia, giderler, hasilat, dönem sonu emtia, zarar, kar, diğer gelirler]
+      const ozetBul = (metin) => {
+        const idx = metin.search(/İşletme Hesabı Özeti|İŞLETME HESABI ÖZETİ|Ticari Kazanç.*İşletme/i)
+        const bolge = idx >= 0 ? metin.slice(idx) : metin
+        const sayilar = bolge.match(/-?[\d.]+,\d{2}/g) || []
+        const vals = sayilar.map(parseSayi).filter(n => n !== null)
+        // ilk 8 sayıyı al
+        const v = vals.slice(0, 8)
+        return {
+          donemBasi: v[0] ?? null,
+          satinAlinan: v[1] ?? null,
+          giderler: v[2] ?? null,
+          hasilat: v[3] ?? null,
+          donemSonu: v[4] ?? null,
+          zarar: v[5] ?? null,
+          kar: v[6] ?? null,
+          digerGelirler: v[7] ?? null,
         }
-        return null
       }
+      const bul = (metin, kalip) => null // kept for compat; use ozetBul
       const tcknBul = (metin) => {
-        const m = metin.match(/T\.?\s*C\.?\s*Kimlik\s*No[^0-9]*(\d{11})/i) || metin.match(/(\d{11})/)
-        return m ? m[1] : null
+        let m = metin.match(/T\.?\s*C\.?\s*Kimlik\s*No[^0-9]{0,20}(\d{11})/i)
+        if (m) return m[1]
+        m = metin.match(/Kimlik\s*No[^0-9]{0,20}(\d{11})/i)
+        if (m) return m[1]
+        const tum = metin.match(/\d{11}/g)
+        return tum ? tum[0] : null
       }
       for (const file of fileList) {
         try {
@@ -327,15 +339,16 @@ export default function DefterTuruGecisi() {
           for (let p = 1; p <= pdf.numPages; p++) {
             const page = await pdf.getPage(p)
             const content = await page.getTextContent()
-            pages.push(content.items.map(it => it.str).join(' '))
+            pages.push(content.items.map(it => it.str + (it.hasEOL ? '\n' : ' ')).join(''))
           }
           const metin = pages.join('\n')
           const tckn = tcknBul(metin)
           const client = (clients || []).find(c => String(c.tc || '').replace(/\s/g, '') === tckn || String(c.vkn || '').replace(/\s/g, '') === tckn)
-          const hasilat = bul(metin, /gayrisafi\s*has[ıi]lat/i)
-          const satinAlinan = bul(metin, /sat[ıi]n\s*al[ıi]nan\s*emtia/i)
-          const donemBasi = bul(metin, /d[öo]nem\s*ba[şs][ıi]\s*emtia/i)
-          const donemSonu = bul(metin, /d[öo]nem\s*sonu\s*emtia/i)
+          const ozet = ozetBul(metin)
+          const hasilat = ozet.hasilat
+          const satinAlinan = ozet.satinAlinan
+          const donemBasi = ozet.donemBasi
+          const donemSonu = ozet.donemSonu
           if (client) {
             const bt = bookTypeOf(client)
             const isService = (client.serbest_meslek === true) || norm(client.defter_tipi || '') === 'SERBESTMESLEK'

@@ -2936,7 +2936,16 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
 
             {(() => {
               const TL = (n) => formatMoney(Number(n) || 0)
-              const vergiSatirlar = gorunen.filter(s => s.kaynak === 'vergi')
+              // GIB detay: borcKalemler'den veya vergiDetay/mesajdan uret
+              let vergiSatirlarHesap = gorunen.filter(s => s.kaynak === 'vergi')
+              if (vergiSatirlarHesap.length === 0 && vergiBorcu > 0) {
+                const vg = vergiDetay.vadesiGecmis || 0
+                const vgm = vergiDetay.vadesiGelmemis || 0
+                if (vg > 0) vergiSatirlarHesap.push({ kaynak: 'vergi', donem: '', tur: 'Vadesi Gecmis', borc: vg, gz: 0, toplam: vg })
+                if (vgm > 0) vergiSatirlarHesap.push({ kaynak: 'vergi', donem: '', tur: 'Vadesi Gelmemis', borc: vgm, gz: 0, toplam: vgm })
+                if (vergiSatirlarHesap.length === 0) vergiSatirlarHesap.push({ kaynak: 'vergi', donem: '', tur: 'Toplam Borc', borc: vergiBorcu, gz: 0, toplam: vergiBorcu })
+              }
+              const vergiSatirlar = vergiSatirlarHesap
               const sgkSatirlar = gorunen.filter(s => s.kaynak === 'sgk')
               const bolumTablo = (satirListesi, bosMetin) => (
                 satirListesi.length === 0 ? (
@@ -2985,7 +2994,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
                     <h3 className="text-sm font-semibold text-red-300 flex items-center gap-2">
                       <FileText className="w-4 h-4" /> GİB (Vergi Dairesi)
                     </h3>
-                    {bolumTablo(vergiBorcu > 0 ? vergiSatirlar : [], vergiBorcu > 0 ? 'Borc yok' : 'Borcu yok (firma alacakli)')}
+                    {bolumTablo(vergiSatirlar, vergiBorcu > 0 ? 'Borc yok' : 'Borcu yok (firma alacakli)')}
                   </div>
                   )}
                   {(borcDetayKaynak === 'hepsi' || borcDetayKaynak === 'sgk') && (

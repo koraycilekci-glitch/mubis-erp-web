@@ -14708,7 +14708,7 @@ const ISLER = {
           }
           const tabloDolu = await page.evaluate(() => {
             const pp = (s) => {
-              const m = String(s || "").match(/[\d.,]+/);
+              const m = String(s || "").match(/-?[\d.,]+/);
               if (!m) return null;
               const v = parseFloat(m[0].replace(/\./g, "").replace(/,/g, "."));
               return isNaN(v) ? null : v;
@@ -14751,9 +14751,9 @@ const ISLER = {
             const normalize = (s) => (s || "").toLocaleUpperCase("tr").replace(/[Çç]/g, "C").replace(/[Ğğ]/g, "G").replace(/[İıIi]/g, "I").replace(/[Öö]/g, "O").replace(/[Şş]/g, "S").replace(/[Üü]/g, "U").replace(/\s+/g, " ").trim();
             const parsePara = (s) => {
               if (!s) return null;
-              const m = String(s).match(/([\d.,]+)/);
+              const m = String(s).match(/-?[\d.,]+/);
               if (!m) return null;
-              const temiz = m[1].replace(/\./g, "").replace(/,/g, ".");
+              const temiz = m[0].replace(/\./g, "").replace(/,/g, ".");
               const v = parseFloat(temiz);
               return isNaN(v) ? null : v;
             };
@@ -27564,7 +27564,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis " + turLimiti + " tur sonunda tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.329";
+var SURUM = "2.8.330";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

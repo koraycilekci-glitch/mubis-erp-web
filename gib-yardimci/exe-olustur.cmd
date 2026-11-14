@@ -3,7 +3,7 @@ title MUBiS GIB Yardimci - EXE Olusturucu
 cd /d "%~dp0"
 
 rem Surum numarasi: index.js icindeki /ping "version" degeriyle ayni tutulmali
-set SURUM=2.8.319
+set SURUM=2.8.324
 
 echo ============================================
 echo  MUBiS GIB Yardimci - EXE olusturuluyor
@@ -33,7 +33,9 @@ echo [2a/6] Tesseract.js Node worker paketleniyor...
 call npx esbuild node_modules\tesseract.js\src\worker-script\node\index.js --bundle --platform=node --target=node20 --outfile=dist\tesseract-worker.js || goto :hata
 
 echo [2b/6] Tesseract.js wasm dosyalari kopyalaniyor...
-copy /y "node_modules\tesseract.js-core\*.wasm" "dist\" >nul || goto :hata
+rem NOT: "copy" joker (*.wasm) ile bu surucude hata veriyor; dosya dosya kopyala.
+for %%f in ("node_modules\tesseract.js-core\*.wasm") do copy /y "%%~ff" "dist\" >nul
+if not exist "dist\tesseract-core.wasm" goto :hata
 
 echo [2c/6] Tray logosu (masot kafasi) hazirlaniyor...
 rem Kalem maskotunun SADECE KAFA kismi: tray simgesinde tam vucut okunmuyor.

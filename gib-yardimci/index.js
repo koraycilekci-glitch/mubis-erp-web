@@ -8851,6 +8851,62 @@ const ISLER = {
   // bos liste "bulunamamistir" kanitiyla dogrulanir, satir VKN formati +
   // aralik kontrolu yapilir; sonraki sayfa beklenen sirada degilse kayit
   // aktarilmaz.
+  // Beyanname hesap ozeti oku: GELIR VERGISI beyannamesinin PDF'inden
+  // Isletme Hesabi Ozeti (Dönem Basi Emtia, Satin Alinan Emtia, Giderler,
+  // Gayrisafi Hasilat, Dönem Sonu Emtia, Zarar, Kar, Diger Gelirler) okur.
+  // Beyanname klasorunde vkn iceren PDF'leri arar; en uygununu parse eder.
+  'beyanname-hesap-ozeti-oku': async (p) => {
+    const log = (m, ek) => console.log('[beyanname-hesap-ozeti-oku]', m, ek === void 0 ? '' : ek)
+    const vkn = String(p.vkn || '').replace(/\D/g, '')
+    if (!/^\d{10,11}$/.test(vkn)) throw new Error('Gecerli VKN/TCKN gerekli.')
+    const yil = parseInt(p.yil, 10)
+    if (!(yil > 2000)) throw new Error('Yil eksik veya gecersiz.')
+    const KOK = p.kok && String(p.kok).trim() ? String(p.kok).trim() : "G:\\Drive'ım\\BEYANNAME"
+    log('kok klasor: ' + KOK)
+    if (!fs.existsSync(KOK)) throw new Error('Klasor yok: ' + KOK)
+    const adaylar = []
+    function tara(dir, derinlik) {
+      if (derinlik > 6) return
+      let entries = []
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+      for (const e of entries) {
+        const tam = path.join(dir, e.name)
+        if (e.isDirectory()) tara(tam, derinlik + 1)
+        else if (/\.pdf$/i.test(e.name) && String(e.name).includes(vkn)) adaylar.push(tam)
+      }
+    }
+    tara(KOK, 0)
+    if (!adaylar.length) throw new Error(vkn + ' icin PDF bulunamadi. Beyanname indirilmis mi?')
+    const skor = (f) => {
+      const t = path.basename(f).toLocaleLowerCase('tr')
+      let s = 0
+      if (/beyanname/.test(t)) s -= 10
+      if (/gelir/.test(t)) s -= 5
+      try { s += -fs.statSync(f).mtimeMs / 1e12 } catch {}
+      return s
+    }
+    adaylar.sort((a, b) => skor(a) - skor(b))
+    const pdfParse = require('pdf-parse/lib/pdf-parse.js')
+    let sonuc = null, hatalar = []
+    for (const dosya of adaylar.slice(0, 5)) {
+      try {
+        const metin = (await pdfParse(fs.readFileSync(dosya))).text || ''
+        if (!metin.includes(String(yil))) { hatalar.push(path.basename(dosya) + ': yil eslesmedi'); continue }
+        if (!/isletme hesabi ozeti|ticari kazanc/i.test(metin.toLocaleLowerCase('tr'))) { hatalar.push(path.basename(dosya) + ': hesap ozeti yok'); continue }
+        const idx = metin.search(/İşletme Hesabı Özeti|İŞLETME HESABI ÖZETİ|Ticari Kazanç/i)
+        const bolge = idx >= 0 ? metin.slice(idx) : metin
+        const sayilar = (bolge.match(/-?[\d.]+,\d{2}/g) || []).map(s => Number(s.replace(/\./g, '').replace(',', '.'))).filter(n => Number.isFinite(n))
+        const v = sayilar.slice(0, 8)
+        sonuc = { ok: true, dosya: path.basename(dosya), donemBasi: v[0] ?? null, satinAlinan: v[1] ?? null, giderler: v[2] ?? null, hasilat: v[3] ?? null, donemSonu: v[4] ?? null, zarar: v[5] ?? null, kar: v[6] ?? null, digerGelirler: v[7] ?? null }
+        break
+      } catch (e) {
+        hatalar.push(path.basename(dosya) + ': ' + (e && e.message))
+      }
+    }
+    if (!sonuc) throw new Error('Hesap ozeti okunamadi. ' + hatalar.join(' | '))
+    return sonuc
+  },
+
   'beyanname-sorgula': async (p) => {
     try {
       return await ISLER.beyannameSorgulaYurut(p)
@@ -27383,7 +27439,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis " + turLimiti + " tur sonunda tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.322";
+var SURUM = "2.8.324";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {
@@ -27923,6 +27979,10 @@ async function guncellemeKontrolEt() {
   setTimeout(() => eskiExeTemizle(6), 8e3);
 }
 async function guncelleUygula(kaynak, zorla = false) {
+  if (!isExe) {
+    console.log("[guncelle] exe olarak calismiyor (node script); kendini degistirme atlandi");
+    return { ok: false, error: "exe-degil" };
+  }
   if (guncellemeZatenBasladi) return { ok: false, error: "guncelleme-zaten-baslamis" };
   guncellemeZatenBasladi = true;
   const gLog = path.join(os.tmpdir(), "mubis-guncelleme.log");
@@ -28126,6 +28186,14 @@ async function otomatikGuncellemeKontrolu() {
     if (aktifIsSayisi > 0) return;
     const kontrol = await guncellemeKontrolEt();
     if (kontrol.ok && kontrol.guncelVar) {
+      if (!isExe) {
+        console.log("[guncelle] otomatik: yeni surum var (" + kontrol.enYeni + ") ancak node script calisiyor");
+        try {
+          trayBildirimKuyrugu.push({ baslik: "MUBiS G\xFCncelleme", mesaj: "Yeni s\xFCr\xFCm " + kontrol.enYeni + " haz\xFDr. Exe s\xFCr\xFCm\xFCn\xFC indirip kurun.", ts: Date.now() });
+        } catch {
+        }
+        return;
+      }
       console.log("[guncelle] otomatik: yeni surum var (" + kontrol.enYeni + ")");
       await guncelleUygula("otomatik");
     }

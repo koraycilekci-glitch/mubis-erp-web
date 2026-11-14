@@ -8,6 +8,9 @@ if not exist node_modules (
 )
 echo MUBiS GIB Yardimci gizli servis olarak baslatiliyor...
 rem Pencere kendiliginden kapanir; servis arka planda gizli calismaya devam eder.
-powershell -NoProfile -Command "Start-Process node -ArgumentList 'index.js','--servis' -WorkingDirectory '%~dp0' -WindowStyle Hidden"
+rem NOT: Klasor adi kesme isareti (') icerebildigi icin PowerShell tarafinda
+rem tek tirnak KULLANILMAZ; %~dp0 degeri ortam degiskeni ile aktarilir.
+set "MUBIS_HELPER_DIR=%~dp0"
+powershell -NoProfile -Command "Start-Process node -ArgumentList 'index.js','--servis' -WorkingDirectory $env:MUBIS_HELPER_DIR -WindowStyle Hidden"
 timeout /t 2 /nobreak >nul
 exit

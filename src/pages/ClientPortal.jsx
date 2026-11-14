@@ -225,6 +225,10 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
   const [borcSorguTs, setBorcSorguTs] = useState({ vergi: null, sgk: null })
   const [borcDetayKaynak, setBorcDetayKaynak] = useState('hepsi') // hepsi | vergi | sgk
 
+  // 2.8.326: MUBiS ERP odeme kayitlari (Kamu Borclari ekrani - Muhasebe bolumu)
+  const [erpOdemeler, setErpOdemeler] = useState([])
+  const [erpOdemelerYukleniyor, setErpOdemelerYukleniyor] = useState(false)
+
   // e-Fatura / e-Arsiv faturalari (Faturalarim sekmesi)
   const [faturalar, setFaturalar] = useState([])
   const [kdvDurum, setKdvDurum] = useState(null)
@@ -1406,6 +1410,19 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
     }).catch(() => {})
     return () => { iptal = true }
   }, [clientDetail?.id])
+
+  // 2.8.327: Kamu Borclari ekrani acikken MUBiS ERP odeme kayitlarini cek
+  useEffect(() => {
+    if (activeTab !== 'borclarim' || !clientId) return
+    let iptal = false
+    setErpOdemelerYukleniyor(true)
+    getPayments(clientId).then(list => {
+      if (iptal) return
+      setErpOdemeler(Array.isArray(list) ? list : [])
+    }).catch(() => { if (!iptal) setErpOdemeler([]) })
+      .finally(() => { if (!iptal) setErpOdemelerYukleniyor(false) })
+    return () => { iptal = true }
+  }, [activeTab, clientId])
 
   // Ana sayfa ozeti icin tarih sirali liste (en yeni ustte)
   const siraliTebligatlar = useMemo(() => {
@@ -2895,53 +2912,107 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
               ))}
             </div>
 
-            {gorunen.length === 0 ? (
-              <div className="bg-blue-900/20 rounded-xl p-10 text-center border border-blue-700/30">
-                <Landmark className="w-12 h-12 text-gray-600 mx-auto mb-3" />
-                <p className="text-gray-400">
-                  {satirlar.length === 0
-                    ? 'Henüz borç kaydı yok. Yukarıdaki "Sorgula" butonlarıyla GİB ve SGK’dan güncel borç durumunu çekebilirsiniz.'
-                    : 'Seçilen kaynakta borç kalemi bulunmuyor.'}
-                </p>
-              </div>
-            ) : (
-              <div className="bg-blue-900/20 rounded-xl border border-blue-700/30 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-blue-900/40 text-gray-400 text-xs uppercase">
-                    <tr>
-                      <th className="px-3 py-2.5 text-left font-medium">Kaynak</th>
-                      <th className="px-3 py-2.5 text-left font-medium">Dönem / Vade</th>
-                      <th className="px-3 py-2.5 text-left font-medium">Tür / Açıklama</th>
-                      <th className="px-3 py-2.5 text-right font-medium">Borç</th>
-                      <th className="px-3 py-2.5 text-right font-medium">Gecikme Zammı</th>
-                      <th className="px-3 py-2.5 text-right font-medium">Toplam</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {gorunen.map((s, i) => (
-                      <tr key={i} className="border-t border-blue-800/30 hover:bg-blue-900/20">
-                        <td className="px-3 py-2.5">
-                          <span className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold border ${kaynakRenk(s.kaynak)}`}>
-                            {kaynakEtiket(s.kaynak)}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5 text-gray-200">{s.donem || '—'}</td>
-                        <td className="px-3 py-2.5 text-gray-300 max-w-[320px] truncate" title={s.tur}>{s.tur || '—'}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums text-gray-200">{tl(s.borc)}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums text-gray-200">{tl(s.gz)}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-white">{tl(s.toplam)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="bg-blue-900/30 border-t border-blue-700/40">
-                    <tr>
-                      <td className="px-3 py-2.5 text-xs text-gray-400" colSpan={5}>TOPLAM</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums font-bold text-yellow-300">{tl(toplamVergi + toplamSgk)}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
+            {(() => {
+              const TL = (n) => formatMoney(Number(n) || 0)
+              const vergiSatirlar = gorunen.filter(s => s.kaynak === 'vergi')
+              const sgkSatirlar = gorunen.filter(s => s.kaynak === 'sgk')
+              const bolumTablo = (satirListesi, bosMetin) => (
+                satirListesi.length === 0 ? (
+                  <div className="bg-blue-900/10 rounded-xl p-6 text-center border border-blue-800/30 text-gray-400 text-sm">
+                    {bosMetin}
+                  </div>
+                ) : (
+                  <div className="bg-blue-900/20 rounded-xl border border-blue-700/30 overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-blue-900/40 text-gray-400 text-xs uppercase">
+                        <tr>
+                          <th className="px-3 py-2.5 text-left font-medium">Dönem / Vade</th>
+                          <th className="px-3 py-2.5 text-left font-medium">Tür / Açıklama</th>
+                          <th className="px-3 py-2.5 text-right font-medium">Borç</th>
+                          <th className="px-3 py-2.5 text-right font-medium">Gecikme Zammı</th>
+                          <th className="px-3 py-2.5 text-right font-medium">Toplam</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {satirListesi.map((s, i) => (
+                          <tr key={i} className="border-t border-blue-800/30 hover:bg-blue-900/20">
+                            <td className="px-3 py-2.5 text-gray-200">{s.donem || '—'}</td>
+                            <td className="px-3 py-2.5 text-gray-300 max-w-[320px] truncate" title={s.tur}>{s.tur || '—'}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-gray-200">{TL(s.borc)}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-gray-200">{TL(s.gz)}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-white">{TL(s.toplam)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-blue-900/30 border-t border-blue-700/40">
+                        <tr>
+                          <td className="px-3 py-2.5 text-xs text-gray-400" colSpan={4}>TOPLAM</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums font-bold text-yellow-300">
+                            {TL(satirListesi.reduce((a, s) => a + s.toplam, 0))}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )
+              )
+              return (
+                <>
+                  {/* GIB bolumu */}
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-semibold text-red-300 flex items-center gap-2">
+                      <FileText className="w-4 h-4" /> GİB (Vergi Dairesi)
+                    </h3>
+                    {bolumTablo(vergiSatirlar, 'Borç yok')}
+                  </div>
+                  {/* SGK bolumu */}
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-semibold text-orange-300 flex items-center gap-2">
+                      <Users className="w-4 h-4" /> SGK
+                    </h3>
+                    {bolumTablo(sgkSatirlar, 'Borç yok')}
+                  </div>
+                  {/* MUBiS ERP odeme kayitlari */}
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-semibold text-emerald-300 flex items-center gap-2">
+                      <DollarSign className="w-4 h-4" /> MUBiS ERP — Ödeme Kayıtları
+                    </h3>
+                    {erpOdemelerYukleniyor ? (
+                      <div className="bg-blue-900/10 rounded-xl p-6 text-center border border-blue-800/30 text-gray-400 text-sm">
+                        <RefreshCw className="w-4 h-4 animate-spin inline mr-2" /> Yükleniyor…
+                      </div>
+                    ) : (erpOdemeler || []).length === 0 ? (
+                      <div className="bg-blue-900/10 rounded-xl p-6 text-center border border-blue-800/30 text-gray-400 text-sm">
+                        Ödeme kaydı yok
+                      </div>
+                    ) : (
+                      <div className="bg-blue-900/20 rounded-xl border border-blue-700/30 overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="bg-blue-900/40 text-gray-400 text-xs uppercase">
+                            <tr>
+                              <th className="px-3 py-2.5 text-left font-medium">Tarih</th>
+                              <th className="px-3 py-2.5 text-left font-medium">Açıklama</th>
+                              <th className="px-3 py-2.5 text-right font-medium">Tutar</th>
+                              <th className="px-3 py-2.5 text-left font-medium">Yöntem</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(erpOdemeler || []).map((o, i) => (
+                              <tr key={i} className="border-t border-blue-800/30 hover:bg-blue-900/20">
+                                <td className="px-3 py-2.5 text-gray-200">{o.tarih || o.odeme_tarihi || o.created_at || '—'}</td>
+                                <td className="px-3 py-2.5 text-gray-300 max-w-[360px] truncate" title={o.aciklama || o.description}>{o.aciklama || o.description || '—'}</td>
+                                <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-white">{TL(o.tutar || o.amount)}</td>
+                                <td className="px-3 py-2.5 text-gray-300">{o.yontem || o.method || '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )
+            })()}
 
             {/* Sorgu notlari */}
             {(vergiBorcMesaj || sgkBorcMesaj) && (

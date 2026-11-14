@@ -209,6 +209,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
   const [messageSending, setMessageSending] = useState(false)
 
   const [vergiBorcu, setVergiBorcu] = useState(0)
+  const [vergiDetay, setVergiDetay] = useState({ vadesiGecmis: 0, vadesiGelmemis: 0 })
   const [sgkBorcu, setSgkBorcu] = useState(0)
   const [sgkSadeceBorclar, setSgkSadeceBorclar] = useState(0)
   const [sgkGecikmeZammi, setSgkGecikmeZammi] = useState(0)
@@ -252,6 +253,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
     const uygulaVergi = (v) => {
       setVergiBorcu(v.toplam || 0)
       setVergiBorcMesaj(v.mesaj || '')
+      setVergiDetay({ vadesiGecmis: v.vadesiGecmis || 0, vadesiGelmemis: v.vadesiGelmemis || 0 })
       if (Array.isArray(v.kalemler)) setBorcKalemler(prev => ({ ...prev, vergi: v.kalemler }))
       if (v.ts) setBorcSorguTs(prev => ({ ...prev, vergi: v.ts }))
     }
@@ -282,7 +284,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
         if (iptal) return
         if (v) {
           const vBulutTs = v.sorgu_ts ? new Date(v.sorgu_ts).getTime() : 0
-          if (!vLocal || vBulutTs >= (vLocal.ts || 0)) uygulaVergi({ toplam: v.toplam, mesaj: v.mesaj, kalemler: v.detay?.kalemler, ts: vBulutTs })
+          if (!vLocal || vBulutTs >= (vLocal.ts || 0)) uygulaVergi({ toplam: v.toplam, mesaj: v.mesaj, vadesiGecmis: v.detay?.vadesiGecmis, vadesiGelmemis: v.detay?.vadesiGelmemis, kalemler: v.detay?.kalemler, ts: vBulutTs })
         } else if (vLocal) {
           // Tablo yeni duzeltildi / onceki yazimlar basarisizdi: yerel veriyi buluta tasi
           borcSonucuKaydet(clientId, 'vergi', {
@@ -522,7 +524,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
   const handleVergiBorcSorgula = async () => {
     if (!clientId) return
     setVergiBorcuYukleniyor(true)
-    setVergiBorcMesaj('Vergi borcu İstanbul sunucusundan sorgulanıyor — 1-2 dakika sürebilir, sayfadan ayrılmayın.')
+    setVergiBorcMesaj('Vergi borcu sorgulaniyor')
     try {
       const res = await gibBorcSorgula(clientId)
       if (!res.ok) {
@@ -537,6 +539,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
       }
       setVergiBorcu(res.toplam || res.borc || 0)
       setVergiBorcMesaj(res.not || '')
+      setVergiDetay({ vadesiGecmis: res.vadesiGecmis || 0, vadesiGelmemis: res.vadesiGelmemis || 0 })
       const vergiKalemler = Array.isArray(res.kalemler) ? res.kalemler : []
       setBorcKalemler(prev => ({ ...prev, vergi: vergiKalemler }))
       setBorcSorguTs(prev => ({ ...prev, vergi: Date.now() }))
@@ -565,7 +568,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
   const handleSgkBorcSorgula = async () => {
     if (!clientId) return
     setSgkBorcuYukleniyor(true)
-    setSgkBorcMesaj('SGK borcu İstanbul sunucusundan sorgulanıyor — 1-2 dakika sürebilir, sayfadan ayrılmayın.')
+    setSgkBorcMesaj('SGK borcu sorgulaniyor')
     try {
       const res = await sgkBorcSorgula(clientId)
       if (!res.ok) {
@@ -2823,9 +2826,17 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
         }
         ekle('vergi', borcKalemler.vergi)
         ekle('sgk', borcKalemler.sgk)
-        // Yardimci kalem listesi dondurmediyse toplam satiri olarak goster
-        if (!(borcKalemler.vergi || []).length && vergiBorcu > 0) {
-          satirlar.push({ kaynak: 'vergi', donem: '', tur: 'Toplam (kalem detayı alınamadı)', borc: vergiBorcu, gz: 0, toplam: vergiBorcu })
+        // Yardimci kalem listesi dondurmediyse ozet satirlari goster
+        if (!(borcKalemler.vergi || []).length) {
+          if ((vergiDetay.vadesiGecmis || 0) > 0) {
+            satirlar.push({ kaynak: 'vergi', donem: '', tur: 'Vadesi Geçmiş', borc: vergiDetay.vadesiGecmis, gz: 0, toplam: vergiDetay.vadesiGecmis })
+          }
+          if ((vergiDetay.vadesiGelmemis || 0) > 0) {
+            satirlar.push({ kaynak: 'vergi', donem: '', tur: 'Vadesi Gelmemiş', borc: vergiDetay.vadesiGelmemis, gz: 0, toplam: vergiDetay.vadesiGelmemis })
+          }
+          if (satirlar.filter(s => s.kaynak === 'vergi').length === 0 && vergiBorcu > 0) {
+            satirlar.push({ kaynak: 'vergi', donem: '', tur: 'Toplam (kalem detayı alınamadı)', borc: vergiBorcu, gz: 0, toplam: vergiBorcu })
+          }
         }
         if (!(borcKalemler.sgk || []).length && sgkBorcu > 0) {
           satirlar.push({ kaynak: 'sgk', donem: '', tur: 'Toplam (kalem detayı alınamadı)', borc: sgkSadeceBorclar || sgkBorcu, gz: sgkGecikmeZammi || 0, toplam: sgkBorcu })

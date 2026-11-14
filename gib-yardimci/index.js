@@ -14786,6 +14786,7 @@ const ISLER = {
               const kalanIdx = idxBul((h) => (h.includes("KALAN") || h.includes("GUNCEL")) && h.includes("BORC"));
               const odenenIdx = idxBul((h) => h.includes("ODENEN") || h.includes("TAHSIL") || h.includes("MAHSUP"));
               const donemIdx = idxBul((h) => h.includes("DONEM") || h.includes("AY/YIL") || h.includes("AY YIL"));
+              const ayIdx = idxBul((h) => h === "AY" || h === "AY " || h.includes("AY") && !h.includes("YIL") && !h.includes("DONEM"));
               const durumIdx = idxBul((h) => h.includes("DURUM") || h.includes("DURUMU"));
               const turIdx = idxBul((h) => h.includes("BELGE") || h.includes("TUR") || h.includes("ACIKLAMA"));
               const tutarIdx = isPayment ? idxBul((h) => h.includes("TUTAR") || h.includes("TOPLAM") || h.includes("BORC")) : -1;
@@ -14851,7 +14852,9 @@ const ISLER = {
                 else if (prim !== null || issizlik !== null) tutar = (prim || 0) + (issizlik || 0) - (odenen || 0);
                 if (tutar === null) continue;
                 const gz2 = hucreOku(gzIdx) || 0;
-                const donem = donemIdx >= 0 && metinler[donemIdx] ? metinler[donemIdx] : "";
+                const donemYil = donemIdx >= 0 && metinler[donemIdx] ? metinler[donemIdx] : "";
+                const donemAy = ayIdx >= 0 && metinler[ayIdx] ? metinler[ayIdx] : "";
+                const donem = donemAy ? (donemYil + "/" + String(donemAy).padStart(2, "0")) : donemYil;
                 const durum = durumIdx >= 0 && metinler[durumIdx] ? metinler[durumIdx] : "";
                 const tur = turIdx >= 0 && metinler[turIdx] ? metinler[turIdx] : "";
                 satirVerileri.push({ donem, durum, tur, tutar, gz2 });
@@ -15484,19 +15487,23 @@ const ISLER = {
       borc = borcKismi;
       console.log("[gib-borc-sorgula] tam okuma yapilamadi, kismi sonuc kullaniliyor");
     }
-    // 2.8.331: GIB "Borc Detay Listesi" sayfasina git ve tabloyu oku
-    // (belge no, vergi turu, donem, vade, asil borc, GZ, toplam)
+    // 2.8.333: GIB borc detay sayfalarini dene ve tabloyu oku
     if (borc) {
-      try {
-        const detayLinki = await page.evaluate(() => {
-          const adaylar = [...document.querySelectorAll("a, button, input[type=button], input[type=submit]")];
-          const hedef = adaylar.find((el) => /detay|dokum|liste|borc.?bilgi/i.test((el.textContent || el.value || "").trim()));
-          if (!hedef) return null;
-          try { hedef.click(); return true; } catch { return null; }
-        }).catch(() => null);
-        if (detayLinki) {
-          await new Promise((r) => setTimeout(r, 6000));
+      const detayUrlAdaylari = [
+        "https://dijital.gib.gov.tr/portal/borc-bilgileri",
+        "https://dijital.gib.gov.tr/portal/borc-detay",
+        "https://dijital.gib.gov.tr/portal/borc-dokum",
+        "https://dijital.gib.gov.tr/portal/borc-listesi",
+        "https://dijital.gib.gov.tr/portal/borc-detay-listesi"
+      ];
+      for (const du of detayUrlAdaylari) {
+        try {
+          await page.goto(du, { waitUntil: "networkidle2", timeout: 15000 }).catch(() => {});
+          await new Promise((r) => setTimeout(r, 4000));
           try { await wafChallengeCoz(page, "gib-borc-sorgula"); } catch {}
+          const urlSimdi = page.url() || "";
+          if (!/gib\.gov\.tr/i.test(urlSimdi)) continue;
+          if (/login|giris/i.test(urlSimdi)) continue;
           const extra = await page.evaluate(() => {
             const txt = (s) => (s || "").toLocaleUpperCase("tr").replace(/\s+/g, " ").trim();
             const parseP = (s) => {
@@ -15520,7 +15527,8 @@ const ISLER = {
               const asilIdx = idxBul((h) => h.includes("ASIL"));
               const gzIdx = idxBul((h) => h.includes("GECIKME"));
               const toplamIdx = idxBul((h) => h.includes("TOPLAM"));
-              if (belgeIdx < 0 && turIdx < 0 && vadeIdx < 0) continue;
+              const isDetay = belgeIdx >= 0 || turIdx >= 0 || (vadeIdx >= 0 && (asilIdx >= 0 || toplamIdx >= 0));
+              if (!isDetay) continue;
               for (const tr of trlar) {
                 if (tr === baslikTr) continue;
                 const hucreler = [...tr.querySelectorAll("td, th")];
@@ -15544,11 +15552,12 @@ const ISLER = {
           }).catch(() => []);
           if (Array.isArray(extra) && extra.length) {
             borc.kalemler = extra;
-            console.log("[gib-borc-sorgula] detay tablosundan " + extra.length + " kalem okundu");
+            console.log("[gib-borc-sorgula] detay sayfasindan " + extra.length + " kalem okundu (url: " + du + ")");
+            break;
           }
+        } catch (e) {
+          console.log("[gib-borc-sorgula] detay url hatasi (" + du + "):", e?.message || String(e));
         }
-      } catch (e) {
-        console.log("[gib-borc-sorgula] detay sayfasi okuma hatasi:", e?.message || String(e));
       }
     }
     const okunamadi = !borc;
@@ -27692,7 +27701,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis " + turLimiti + " tur sonunda tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.331";
+var SURUM = "2.8.333";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

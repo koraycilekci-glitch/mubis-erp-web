@@ -14334,6 +14334,7 @@ const ISLER = {
     let gz = null;
     let borcYok = false;
     let sgkKalemler = [];
+    let sgkEmanet = 0;
     const t0 = Date.now();
     try {
       const gurl = page.url() || "";
@@ -14760,10 +14761,13 @@ const ISLER = {
             let gzDeger = null;
             let tabloBos = false;
             let kalemler = [];
+            let emanetToplam = 0;
+            let borcToplam = 0;
+            let gzToplam = 0;
             const yuvarla = (n) => n == null ? null : Math.round(n * 100) / 100;
             for (const tb of document.querySelectorAll("table")) {
               const trlar = [...tb.querySelectorAll("tr")];
-              const baslikTr = trlar.find((tr) => /DONEM YIL|DONEM NO|PRIM BORCU|SADECE BORCLAR|AYLIK PRIM/i.test(normalize(tr.textContent)));
+              const baslikTr = trlar.find((tr) => /DONEM YIL|DONEM NO|PRIM BORCU|SADECE BORCLAR|AYLIK PRIM|TAHSIL|EMANET/i.test(normalize(tr.textContent)));
               if (!baslikTr) continue;
               const kolonAdi = new Map();
               for (const h of baslikTr.querySelectorAll("th, td")) kolonAdi.set(h.cellIndex, normalize(h.textContent));
@@ -14773,14 +14777,19 @@ const ISLER = {
                 }
                 return -1;
               };
+              const isDebt = idxBul((h) => h.includes("PRIM") && h.includes("BORC")) >= 0 || idxBul((h) => h.includes("BORC") && (h.includes("PRIM") || h.includes("ISSIZLIK") || h.includes("IDARI"))) >= 0;
+              const isPayment = !isDebt && (idxBul((h) => h.includes("TAHSIL") || h.includes("EMANET") || h.includes("MAKBUZ") || h.includes("ODENEN")) >= 0);
+              if (!isDebt && !isPayment) continue;
               const primIdx = idxBul((h) => h.includes("PRIM") && h.includes("BORC"));
               const issizlikIdx = idxBul((h) => h.includes("ISSIZLIK"));
               const sadeceIdx = idxBul((h) => h.includes("SADECE") && h.includes("BORC"));
-              const kalanIdx = idxBul((h) => (h.includes("KALAN") || h.includes("GUNCEL") || h.includes("TOPLAM")) && h.includes("BORC"));
+              const kalanIdx = idxBul((h) => (h.includes("KALAN") || h.includes("GUNCEL")) && h.includes("BORC"));
               const odenenIdx = idxBul((h) => h.includes("ODENEN") || h.includes("TAHSIL") || h.includes("MAHSUP"));
               const donemIdx = idxBul((h) => h.includes("DONEM") || h.includes("AY/YIL") || h.includes("AY YIL"));
+              const durumIdx = idxBul((h) => h.includes("DURUM") || h.includes("DURUMU"));
               const turIdx = idxBul((h) => h.includes("BELGE") || h.includes("TUR") || h.includes("ACIKLAMA"));
-              if (sadeceIdx < 0 && primIdx < 0 && issizlikIdx < 0 && kalanIdx < 0) continue;
+              const tutarIdx = isPayment ? idxBul((h) => h.includes("TUTAR") || h.includes("TOPLAM") || h.includes("BORC")) : -1;
+              if (isDebt && sadeceIdx < 0 && primIdx < 0 && issizlikIdx < 0 && kalanIdx < 0) continue;
               const gzIndeksler = [];
               for (const [i, ad] of kolonAdi) {
                 if (ad.includes("ODENEN")) continue;
@@ -14801,15 +14810,26 @@ const ISLER = {
                 tabloBos = true;
                 continue;
               }
-              // 2.8.325: TOPLAM satiri varsa kalem olarak sayilmaz (cift sayim olmasin)
-              const toplamAday = veriTrleri.filter((tr) => /^(GENEL )?TOPLAM/.test(normalize(tr.textContent)));
-              const toplamTr = toplamAday.length && veriTrleri.length > toplamAday.length ? toplamAday[0] : null;
-              const kalemTrleri = veriTrleri.filter((tr) => tr !== toplamTr);
-              let borcToplam = 0;
-              let gzToplam = 0;
-              let kalemSayisi = 0;
-              const liste = [];
-              for (const tr of kalemTrleri) {
+              if (isPayment) {
+                for (const tr of veriTrleri) {
+                  const degerMap = new Map();
+                  for (const td of tr.querySelectorAll("td, th")) {
+                    const v = parsePara(td.textContent);
+                    if (v !== null) degerMap.set(td.cellIndex, v);
+                  }
+                  if (!degerMap.size) continue;
+                  const hucreOku = (idx) => idx >= 0 && degerMap.has(idx) ? degerMap.get(idx) : null;
+                  let tutar = tutarIdx >= 0 ? hucreOku(tutarIdx) : null;
+                  if (tutar === null) {
+                    const vals = [...degerMap.values()];
+                    if (vals.length) tutar = vals[vals.length - 1];
+                  }
+                  if (tutar !== null) emanetToplam += tutar;
+                }
+                continue;
+              }
+              const satirVerileri = [];
+              for (const tr of veriTrleri) {
                 const degerMap = new Map();
                 for (const td of tr.querySelectorAll("td, th")) {
                   const v = parsePara(td.textContent);
@@ -14818,6 +14838,8 @@ const ISLER = {
                 if (!degerMap.size) continue;
                 const hucreOku = (idx) => idx >= 0 && degerMap.has(idx) ? degerMap.get(idx) : null;
                 const metinler = [...tr.querySelectorAll("td, th")].map((td) => (td.textContent || "").replace(/\s+/g, " ").trim());
+                const metin = normalize(tr.textContent);
+                if (/TOPLAM|SADECE BORCLAR TOPLAMI|GENEL TOPLAM|OZET/i.test(metin)) continue;
                 const sadece = hucreOku(sadeceIdx);
                 const kalan = hucreOku(kalanIdx);
                 const prim = hucreOku(primIdx);
@@ -14830,30 +14852,43 @@ const ISLER = {
                 if (tutar === null) continue;
                 const gz2 = hucreOku(gzIdx) || 0;
                 const donem = donemIdx >= 0 && metinler[donemIdx] ? metinler[donemIdx] : "";
+                const durum = durumIdx >= 0 && metinler[durumIdx] ? metinler[durumIdx] : "";
                 const tur = turIdx >= 0 && metinler[turIdx] ? metinler[turIdx] : "";
-                const satirToplam = yuvarla(tutar + gz2);
-                if (satirToplam !== 0 || veriTrleri.length === 1) {
-                  liste.push({ donem, tur, borc: yuvarla(tutar), gz: yuvarla(gz2), toplam: satirToplam });
-                }
-                borcToplam += tutar;
-                gzToplam += gz2;
-                kalemSayisi++;
+                satirVerileri.push({ donem, durum, tur, tutar, gz2 });
               }
-              if (!kalemSayisi) {
+              if (!satirVerileri.length) {
                 tabloBos = true;
                 continue;
               }
-              borcDeger = yuvarla(Math.max(0, borcToplam));
-              gzDeger = yuvarla(Math.max(0, gzToplam));
-              kalemler = liste.slice(0, 200);
-              break;
+              // Toplam row tespiti: bir satirin tutari digerlerinin toplamina esitse at
+              const filtreli = satirVerileri.filter((r, i) => {
+                if (satirVerileri.length <= 1) return true;
+                const digerleri = satirVerileri.filter((_, j) => j !== i).reduce((a, r2) => a + r2.tutar, 0);
+                if (Math.abs(r.tutar - digerleri) < 0.02) return false;
+                return true;
+              });
+              for (const r of filtreli) {
+                const satirToplam = yuvarla(r.tutar + r.gz2);
+                kalemler.push({ donem: r.donem, durum: r.durum, tur: r.tur, borc: yuvarla(r.tutar), gz: yuvarla(r.gz2), toplam: satirToplam });
+              }
+              borcToplam += satirVerileri.reduce((a, r) => a + r.tutar, 0);
+              gzToplam += satirVerileri.reduce((a, r) => a + r.gz2, 0);
             }
-            return { borcDeger, gzDeger, tabloBos, kalemler };
+            const netBorc = Math.max(0, borcToplam - emanetToplam);
+            if (emanetToplam > 0) {
+              kalemler.push({ donem: "", durum: "Emanet", tur: "Emanetteki tahsilatlar (borcu azaltir)", borc: -yuvarla(emanetToplam), gz: 0, toplam: -yuvarla(emanetToplam) });
+            }
+            borcDeger = yuvarla(netBorc);
+            gzDeger = yuvarla(Math.max(0, gzToplam));
+            if (borcDeger === 0 && gzDeger === 0) tabloBos = (kalemler.length === 0);
+            return { borcDeger, gzDeger, tabloBos, kalemler, emanetToplam };
+
           });
           if (sonuc.borcDeger !== null || sonuc.gzDeger !== null) {
             borc = sonuc.borcDeger;
             gz = sonuc.gzDeger;
             if (Array.isArray(sonuc.kalemler)) sgkKalemler = sonuc.kalemler;
+            if (typeof sonuc.emanetToplam === 'number') sgkEmanet = sonuc.emanetToplam;
             console.log(`[sgk-borc-sorgula] asama2: TUTARLAR OKUNDU -> Sadece Borclar: ${borc}, GZ: ${gz}`);
             clearInterval(interval);
             resolve();
@@ -14883,6 +14918,7 @@ const ISLER = {
       toplam,
       borcYok,
       kalemler: sgkKalemler,
+      emanet: sgkEmanet,
       not: borcYok ? "\u015Eirketin SGK borcu yok (0,00 TL). Gecikme zamm\u0131: 0,00 TL. Toplam: 0,00 TL" : borc !== null || gz !== null ? `Sadece Borclar Toplami: ${sadeceBorclar.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL, GZ: ${gecikmeZammi.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL, Toplam: ${toplam.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL` : "Borc tablosuna ulasildi ancak tutarlar okunamadi."
     };
   },
@@ -27518,7 +27554,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis " + turLimiti + " tur sonunda tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.326";
+var SURUM = "2.8.327";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

@@ -227,8 +227,6 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
   const [borcDetayKaynak, setBorcDetayKaynak] = useState('hepsi') // hepsi | vergi | sgk
 
   // 2.8.326: MUBiS ERP odeme kayitlari (Kamu Borclari ekrani - Muhasebe bolumu)
-  const [erpOdemeler, setErpOdemeler] = useState([])
-  const [erpOdemelerYukleniyor, setErpOdemelerYukleniyor] = useState(false)
 
   // e-Fatura / e-Arsiv faturalari (Faturalarim sekmesi)
   const [faturalar, setFaturalar] = useState([])
@@ -1414,18 +1412,6 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
     return () => { iptal = true }
   }, [clientDetail?.id])
 
-  // 2.8.327: Kamu Borclari ekrani acikken MUBiS ERP odeme kayitlarini cek
-  useEffect(() => {
-    if (activeTab !== 'borclarim' || !clientId) return
-    let iptal = false
-    setErpOdemelerYukleniyor(true)
-    getPayments(clientId).then(list => {
-      if (iptal) return
-      setErpOdemeler(Array.isArray(list) ? list : [])
-    }).catch(() => { if (!iptal) setErpOdemeler([]) })
-      .finally(() => { if (!iptal) setErpOdemelerYukleniyor(false) })
-    return () => { iptal = true }
-  }, [activeTab, clientId])
 
   // Ana sayfa ozeti icin tarih sirali liste (en yeni ustte)
   const siraliTebligatlar = useMemo(() => {
@@ -2969,58 +2955,22 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
               )
               return (
                 <>
-                  {/* GIB bolumu */}
+                  {(borcDetayKaynak === 'hepsi' || borcDetayKaynak === 'vergi') && (
                   <div className="space-y-2">
                     <h3 className="text-sm font-semibold text-red-300 flex items-center gap-2">
                       <FileText className="w-4 h-4" /> GİB (Vergi Dairesi)
                     </h3>
-                    {bolumTablo(vergiSatirlar, 'Borç yok')}
+                    {bolumTablo(vergiSatirlar, vergiBorcu > 0 ? 'Borc yok' : 'Borcu yok (firma alacakli)')}
                   </div>
-                  {/* SGK bolumu */}
+                  )}
+                  {(borcDetayKaynak === 'hepsi' || borcDetayKaynak === 'sgk') && (
                   <div className="space-y-2">
                     <h3 className="text-sm font-semibold text-orange-300 flex items-center gap-2">
                       <Users className="w-4 h-4" /> SGK
                     </h3>
-                    {bolumTablo(sgkSatirlar, 'Borç yok')}
+                    {bolumTablo(sgkSatirlar, sgkBorcu > 0 ? 'Borc yok' : 'Borcu yok (firma alacakli)')}
                   </div>
-                  {/* MUBiS ERP odeme kayitlari */}
-                  <div className="space-y-2">
-                    <h3 className="text-sm font-semibold text-emerald-300 flex items-center gap-2">
-                      <DollarSign className="w-4 h-4" /> MUBiS ERP — Ödeme Kayıtları
-                    </h3>
-                    {erpOdemelerYukleniyor ? (
-                      <div className="bg-blue-900/10 rounded-xl p-6 text-center border border-blue-800/30 text-gray-400 text-sm">
-                        <RefreshCw className="w-4 h-4 animate-spin inline mr-2" /> Yükleniyor…
-                      </div>
-                    ) : (erpOdemeler || []).length === 0 ? (
-                      <div className="bg-blue-900/10 rounded-xl p-6 text-center border border-blue-800/30 text-gray-400 text-sm">
-                        Ödeme kaydı yok
-                      </div>
-                    ) : (
-                      <div className="bg-blue-900/20 rounded-xl border border-blue-700/30 overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead className="bg-blue-900/40 text-gray-400 text-xs uppercase">
-                            <tr>
-                              <th className="px-3 py-2.5 text-left font-medium">Tarih</th>
-                              <th className="px-3 py-2.5 text-left font-medium">Açıklama</th>
-                              <th className="px-3 py-2.5 text-right font-medium">Tutar</th>
-                              <th className="px-3 py-2.5 text-left font-medium">Yöntem</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(erpOdemeler || []).map((o, i) => (
-                              <tr key={i} className="border-t border-blue-800/30 hover:bg-blue-900/20">
-                                <td className="px-3 py-2.5 text-gray-200">{o.tarih || o.odeme_tarihi || o.created_at || '—'}</td>
-                                <td className="px-3 py-2.5 text-gray-300 max-w-[360px] truncate" title={o.aciklama || o.description}>{o.aciklama || o.description || '—'}</td>
-                                <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-white">{TL(o.tutar || o.amount)}</td>
-                                <td className="px-3 py-2.5 text-gray-300">{o.yontem || o.method || '—'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
+                  )}
                 </>
               )
             })()}

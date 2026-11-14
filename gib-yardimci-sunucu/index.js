@@ -23662,10 +23662,20 @@ async function lucaGorunurTopluZip(frame, etiket, p = {}, page = null, beklenenF
       await zipCerceve.evaluate(() => { if (window.__mubisZipKap) window.__mubisZipKap.base64 = ""; }).catch(() => { });
     }
     const boyut = fs.statSync(zipYol).size;
-    const imza = Buffer.alloc(2);
-    const ifd = fs.openSync(zipYol, "r");
-    try { fs.readSync(imza, 0, 2, 0); } finally { fs.closeSync(ifd); }
-    if (boyut < 4 || imza[0] !== 80 || imza[1] !== 75) throw new Error("Luca gorunur toplu indirme gecerli bir ZIP degil");
+    // 2.8.344: imza okuma ASLA basarili bir ZIP yazimini iptal etmemeli.
+    // (readSync 'fd' argumani eksikligi yuzunden tum akis "belge indirilemedi"
+    // ile dusuyordu; imza kontrolu artik yalnizca uyaridir.)
+    let imzaOk = true;
+    try {
+      const imza = Buffer.alloc(4);
+      const ifd = fs.openSync(zipYol, "r");
+      try { fs.readSync(ifd, imza, 0, 4, 0); } finally { fs.closeSync(ifd); }
+      imzaOk = imza[0] === 80 && imza[1] === 75;
+    } catch (eImza) {
+      log("gorunur toplu ZIP imza okunamadi (yoksayildi): " + (eImza && eImza.message || eImza));
+    }
+    if (boyut < 4) throw new Error("Luca gorunur toplu indirme gecerli bir ZIP degil (bos dosya)");
+    if (!imzaOk) throw new Error("Luca gorunur toplu indirme gecerli bir ZIP degil");
     if (beklenenFaturalar) {
       if (boyut !== durum.boyut) throw new Error("Luca ZIP aktarımı eksik; dosya boyutu eşleşmiyor.");
       await lucaDogrulanmisZipKaydet(zipYol, beklenenFaturalar, p, etiket);
@@ -31812,7 +31822,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis sure siniri doldu — tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.343";
+var SURUM = "2.8.344";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

@@ -15507,11 +15507,20 @@ const ISLER = {
         try { for (const pg of await browserRef.pages()) await indirmeAyarla(pg); } catch (e) {}
         console.log("[gib-borc-sorgula] indirme dizini hazir:", indirmeDizini);
 
+        // 2.8.343: indirme beklerken yeni acilan sekmelere de indirme izni ver
         const dosyaBekle = async (bekleMs) => {
           const bitis = Date.now() + bekleMs;
           let sonBoyut = -1;
           let sabit = 0;
+          let izinSayac = 0;
           while (Date.now() < bitis) {
+            if (izinSayac++ % 2 === 0) {
+              try {
+                for (const pg of await browserRef.pages()) {
+                  await indirmeAyarla(pg);
+                }
+              } catch (e) {}
+            }
             let adlar = [];
             try { adlar = fs.readdirSync(indirmeDizini); } catch (e) {}
             const gecerli = adlar.filter((a) => !/\.crdownload$|\.part$|\.tmp$/i.test(a));
@@ -15637,12 +15646,33 @@ const ISLER = {
           return !!secildi;
         };
 
+        // 2.8.343: onceki calismalarda indirme bazen tetiklenmiyor; iki deneme + arada
+        // borc listesi ekranini tazele (goto yerine kart tiklamasi — oturum korunur)
         if (await pdfTaksitsiz()) {
-          dosyaAdi = await dosyaBekle(45000);
+          dosyaAdi = await dosyaBekle(30000);
           if (!dosyaAdi) {
-            console.log("[gib-borc-sorgula] PDF inmedi, menu tekrar deneniyor");
-            await pdfTaksitsiz();
-            dosyaAdi = await dosyaBekle(25000);
+            console.log("[gib-borc-sorgula] PDF inmedi, borc listesi tazelenip tekrar denenecek");
+            try {
+              await page.goto("https://dijital.gib.gov.tr/portal", { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+              await new Promise((r) => setTimeout(r, 3000));
+              await indirmeAyarla(page);
+              const kart2 = await tiklaToplamBorc();
+              console.log("[gib-borc-sorgula] 2. deneme karti:", kart2 || "BULUNAMADI");
+              await new Promise((r) => setTimeout(r, 5000));
+              try {
+                const sayfalar2 = await browserRef.pages();
+                const hedef2 = sayfalar2.find((s) => /odeme-borc-islemleri/i.test(s.url() || ""));
+                if (hedef2 && hedef2 !== page) {
+                  page = hedef2;
+                  await indirmeAyarla(page);
+                }
+              } catch (e) {}
+              if (await pdfTaksitsiz()) {
+                dosyaAdi = await dosyaBekle(25000);
+              }
+            } catch (e) {
+              console.log("[gib-borc-sorgula] 2. deneme hatasi:", e?.message || String(e));
+            }
           }
         }
 
@@ -15819,6 +15849,56 @@ const ISLER = {
         // 3) PDF olmadiysa ekrandaki tabloyu oku
         if (!kalemler.length) {
           const tabloOku = async () => page.evaluate(() => {
+            const nrm0 = (s) => String(s || "").toLocaleUpperCase("tr")
+              .replace(/[Çç]/g, "C").replace(/[Ğğ]/g, "G").replace(/[İıIi]/g, "I")
+              .replace(/[Öö]/g, "O").replace(/[Şş]/g, "S").replace(/[Üü]/g, "U")
+              .replace(/\s+/g, " ").trim();
+            const paraCevirDg = (s) => {
+              const m = String(s || "").match(/-?[\d.,]+/);
+              if (!m) return 0;
+              const v = parseFloat(m[0].replace(/\./g, "").replace(/,/g, "."));
+              return isNaN(v) ? 0 : v;
+            };
+            // 2.8.343: MUI DataGrid / role=row tabanli liste
+            try {
+              const basliklar = [...document.querySelectorAll('[role="columnheader"]')]
+                .map((el) => nrm0(el.textContent));
+              if (basliklar.length >= 3) {
+                const bulDg = (fn) => basliklar.findIndex((h) => fn(h));
+                const iTurDg = bulDg((h) => h.includes("TUR") || h.includes("ACIKLAMA"));
+                const iDonemDg = bulDg((h) => h.includes("DONEM") || h.includes("VADE"));
+                const iAsilDg = bulDg((h) => h.includes("ASIL") || h.includes("BORC"));
+                const iGzDg = bulDg((h) => h.includes("GECIKME"));
+                const iToplamDg = bulDg((h) => h.includes("TOPLAM"));
+                const dgListe = [];
+                for (const tr of document.querySelectorAll('[role="row"]')) {
+                  const hucre = [...tr.querySelectorAll('[role="gridcell"], [role="cell"]')];
+                  if (hucre.length < 3) continue;
+                  const mt = hucre.map((c) => (c.textContent || "").replace(/\s+/g, " ").trim());
+                  if (mt.every((x) => !x)) continue;
+                  const satirMt = nrm0(mt.join(" "));
+                  if (/^TOPLAM\b/.test(satirMt)) continue;
+                  const alDg = (i) => (i >= 0 ? mt[i] || "" : "");
+                  const toplamDg = iToplamDg >= 0 ? paraCevirDg(alDg(iToplamDg)) : 0;
+                  const asilDg = iAsilDg >= 0 ? paraCevirDg(alDg(iAsilDg)) : 0;
+                  if (!toplamDg && !asilDg) continue;
+                  dgListe.push({
+                    donem: alDg(iDonemDg),
+                    vade: "",
+                    tur: alDg(iTurDg),
+                    vergiKodu: "",
+                    belgeNo: "",
+                    vd: "",
+                    plaka: "",
+                    asilBorc: Math.round(asilDg * 100) / 100,
+                    gz: iGzDg >= 0 ? Math.round(paraCevirDg(alDg(iGzDg)) * 100) / 100 : 0,
+                    toplam: Math.round((toplamDg || asilDg) * 100) / 100
+                  });
+                  if (dgListe.length >= 500) break;
+                }
+                if (dgListe.length) return dgListe;
+              }
+            } catch (e) {}
             const nrm = (s) => String(s || "").toLocaleUpperCase("tr")
               .replace(/[Çç]/g, "C").replace(/[Ğğ]/g, "G").replace(/[İıIi]/g, "I")
               .replace(/[Öö]/g, "O").replace(/[Şş]/g, "S").replace(/[Üü]/g, "U")
@@ -28035,7 +28115,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis " + turLimiti + " tur sonunda tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.342";
+var SURUM = "2.8.343";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

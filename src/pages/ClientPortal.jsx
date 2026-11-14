@@ -2960,7 +2960,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
                     <h3 className="text-sm font-semibold text-red-300 flex items-center gap-2">
                       <FileText className="w-4 h-4" /> GİB (Vergi Dairesi)
                     </h3>
-                    {bolumTablo(vergiSatirlar, vergiBorcu > 0 ? 'Borc yok' : 'Borcu yok (firma alacakli)')}
+                    {bolumTablo(vergiBorcu > 0 ? vergiSatirlar : [], vergiBorcu > 0 ? 'Borc yok' : 'Borcu yok (firma alacakli)')}
                   </div>
                   )}
                   {(borcDetayKaynak === 'hepsi' || borcDetayKaynak === 'sgk') && (
@@ -2968,7 +2968,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
                     <h3 className="text-sm font-semibold text-orange-300 flex items-center gap-2">
                       <Users className="w-4 h-4" /> SGK
                     </h3>
-                    {bolumTablo(sgkSatirlar, sgkBorcu > 0 ? 'Borc yok' : 'Borcu yok (firma alacakli)')}
+                    {bolumTablo(sgkBorcu > 0 ? sgkSatirlar : [], sgkBorcu > 0 ? 'Borc yok' : 'Borcu yok (firma alacakli)')}
                   </div>
                   )}
                 </>

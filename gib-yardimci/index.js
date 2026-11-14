@@ -14871,8 +14871,8 @@ const ISLER = {
                 const satirToplam = yuvarla(r.tutar + r.gz2);
                 kalemler.push({ donem: r.donem, durum: r.durum, tur: r.tur, borc: yuvarla(r.tutar), gz: yuvarla(r.gz2), toplam: satirToplam });
               }
-              borcToplam += satirVerileri.reduce((a, r) => a + r.tutar, 0);
-              gzToplam += satirVerileri.reduce((a, r) => a + r.gz2, 0);
+              borcToplam += filtreli.reduce((a, r) => a + r.tutar, 0);
+              gzToplam += filtreli.reduce((a, r) => a + r.gz2, 0);
             }
             const netBorc = Math.max(0, borcToplam - emanetToplam);
             if (emanetToplam > 0) {
@@ -15431,7 +15431,17 @@ const ISLER = {
       vadesiGecmis: v.vadesiGecmis ?? 0,
       vadesiGelmemis: v.vadesiGelmemis ?? 0,
       toplam: v.toplam ?? (v.vadesiGecmis ?? 0) + (v.vadesiGelmemis ?? 0),
-      kalemler: Array.isArray(v.kalemler) ? v.kalemler : [],
+      kalemler: (() => {
+        const k = Array.isArray(v.kalemler) ? v.kalemler.slice() : []
+        if (k.length) return k
+        const vg = Number(v.vadesiGecmis) || 0
+        const vgm = Number(v.vadesiGelmemis) || 0
+        const top = Number(v.toplam) || (vg + vgm)
+        if (vg > 0) k.push({ donem: '', tur: 'Vadesi Geçmiş', toplam: vg })
+        if (vgm > 0) k.push({ donem: '', tur: 'Vadesi Gelmemiş', toplam: vgm })
+        if (k.length === 0 && top > 0) k.push({ donem: '', tur: 'Toplam Borç', toplam: top })
+        return k
+      })(),
       not: !okunamadi ? `Vadesi gecmis: ${fmt(v.vadesiGecmis)} TL, Vadesi gelmemis: ${fmt(v.vadesiGelmemis)} TL, Toplam: ${fmt(v.toplam)} TL` : "Giris tamamlandi ancak borc tutarlari okunamadi."
     };
   },
@@ -27554,7 +27564,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis " + turLimiti + " tur sonunda tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.327";
+var SURUM = "2.8.329";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

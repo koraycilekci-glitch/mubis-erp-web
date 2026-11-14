@@ -910,7 +910,14 @@ export default function MusteriBorcDokumu() {
 
       {/* Özet kartları */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5">
-        <KpiKart baslik="SGK" tutar={`${paraYaz(toplamlar.sgk)} TL`} alt={`${toplamlar.sgkAdet} müşteride borç`} ikon={Landmark} renk="amber" />
+        <KpiKart baslik="SGK" tutar={`${paraYaz(toplamlar.sgk)} TL`} alt={`${toplamlar.sgkAdet} müşteride borç`} ikon={Landmark} renk="amber">
+        {toplamlar.sgk > 0 && (
+          <div className="text-[10px] text-gray-400 mt-1">
+            {liste.some(g => g.sgk?.detayYil) ? (
+              <span>{liste.filter(g => g.sgk?.detayYil && g.sgk?.detayAy).map(g => `${g.sgk.detayYil}/${String(g.sgk.detayAy).padStart(2, '0')}`).join(' · ')}</span>
+            ) : 'Yıl/Ay gösterilemiyor')
+          </div>
+        )}
         <KpiKart baslik="Vergi (GİB)" tutar={`${paraYaz(toplamlar.vergi)} TL`} alt={`${toplamlar.vergiAdet} müşteride borç`} ikon={Building2} renk="sky" />
         <KpiKart
           baslik="Muhasebe"
@@ -1088,14 +1095,25 @@ export default function MusteriBorcDokumu() {
             {arama ? 'Arama metnini temizleyip tekrar deneyin.' : 'Seçili kapsam için canlı sorgulama yaparak verileri güncelleyebilirsiniz.'}
           </p>
           {!arama && (
-            <button
-              type="button"
-              onClick={() => sorgula()}
-              disabled={sorguYukleniyor || !siraliMusteriler.length}
-              className="mt-4 inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium disabled:opacity-40"
-            >
-              <Search className="w-4 h-4" /> Canlı Sorgula
-            </button>
+            <div className="flex flex-col items-center gap-2">
+              <button
+                type="button"
+                onClick={() => eskiBorclariSil(10)}
+                disabled={sorguYukleniyor}
+                className="mt-2 inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium disabled:opacity-40"
+                title="10 günden eski borç kayıtlarını sil (veri tutarlılığını artırır)"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Eski Kayıtları Sil
+              </button>
+              <button
+                type="button"
+                onClick={() => sorgula()}
+                disabled={sorguYukleniyor || !siraliMusteriler.length}
+                className="mt-2 inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium disabled:opacity-40"
+              >
+                <Search className="w-4 h-4" /> Canlı Sorgula
+              </button>
+            </div>
           )}
         </div>
       ) : (
@@ -1151,7 +1169,14 @@ export default function MusteriBorcDokumu() {
                           </button>
                         </td>
                         <td className={`px-3 py-2.5 text-right tabular-nums ${sayi(sgk?.toplam) > 0 ? 'text-amber-200' : 'text-gray-600'}`}>
-                          {sgk ? `${paraYaz(sgk.toplam)} TL` : '—'}
+                          {sgk ? (
+                            <>
+                              <span>{paraYaz(sgk.toplam)} TL</span>
+                              {sgk.detayYil ? (
+                                <span className="ml-1 text-[10px] text-gray-400">({sgk.detayYil}/${String(sgk.detayAy || '').padStart(2, '0')}</span>
+                              ) : ''}
+                            </>
+                          ) : '—'}
                         </td>
                         <td className={`px-3 py-2.5 text-right tabular-nums ${sayi(vergi?.toplam) > 0 ? 'text-sky-200' : 'text-gray-600'}`}>
                           {vergi ? `${paraYaz(vergi.toplam)} TL` : '—'}

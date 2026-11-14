@@ -587,6 +587,9 @@ export async function sgkBorcSorgula(clientId) {
     yerelYedekKapaliMesaj: 'İstanbul sunucusuna (VPS) ulaşılamadı; SGK borcu sorgusu yerel bilgisayardan yapılmaz. Lütfen birkaç dakika sonra tekrar deneyin.'
   })
   if (!res.ok) return res
+  const kalemler = Array.isArray(res.kalemler) ? res.kalemler : []
+  const yil = kalemler.length > 0 ? kalemler[0].yil || kalemler[0].Yil || '' : ''
+  const ay = kalemler.length > 0 ? kalemler[0].ay || kalemler[0].Ay || '' : ''
   return {
     ok: true,
     kaynak: 'vps',
@@ -594,7 +597,11 @@ export async function sgkBorcSorgula(clientId) {
     gecikmeZammi: Number(res.gecikmeZammi) || 0,
     toplam: Number(res.toplam) || 0,
     // 2.8.325: SGK borc tablosundan okunan donem bazli kalemler
-    kalemler: Array.isArray(res.kalemler) ? res.kalemler : [],
+    // Ek: yil/ay bilgisi ayrica saklaniyor (borc dökümünde görüntüleme için)
+    kalemler,
+    // 2.8.340: SGK borç dökümünde yil+ay gösterimi
+    yil: String(yil).trim() || undefined,
+    ay: String(ay).trim() || undefined,
     borcYok: res.borcYok === true,
     not: res.not
   }

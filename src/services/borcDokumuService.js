@@ -56,6 +56,7 @@ export function borcOzetle(kayitlar) {
   // Aynı müşteri + aynı tip için birden fazla kayıt varsa en güncelini al.
   // Ama detayı 0 olup toplamı dolu olan (veri tutarsızlığı) kayıt yerine
   // detayı toplamla tutarlı olan kayıt tercih edilir.
+  // 2.8.340: yil/ay bilgisi korunuyor.
   const harita = new Map()
   for (const k of kayitlar || []) {
     const anahtar = `${k.client_id}|${k.tip}`
@@ -75,7 +76,17 @@ export function borcOzetle(kayitlar) {
       harita.set(anahtar, k)
     }
   }
-  return [...harita.values()]
+  // 2.8.340: Seçilen kayıtlara yil/ay bilgisiniaktar (missing'leri doldur)
+  const sonuc = [...harita.values()]
+  for (const k of sonuc) {
+    if (k.tip === 'sgk' && k.detay) {
+      const storedYil = k.detay.yil !== undefined ? String(k.detay.yil) : (k.detay.Yil || '')
+      const storedAy = k.detay.ay !== undefined ? String(k.detay.ay) : (k.detay.Ay || '')
+      if (storedYil) k.detayYil = storedYil
+      if (storedAy) k.detayAy = storedAy
+    }
+  }
+  return sonuc
 }
 
 // 2.8.39: Belirtilen günden eski borç sonuçlarını SİLER. Borç anlık bir

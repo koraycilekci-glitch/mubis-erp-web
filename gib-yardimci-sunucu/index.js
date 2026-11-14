@@ -20,7 +20,9 @@
 const http = require('http')
 const https = require('https')
 const fs = require('fs')
-const path = require('path')
+const path = require('path');
+const { loadDownloadProgress, recordStep, completedStep } = require('./download-progress');
+const { covered, latestSnapshot } = require('./query-coverage')
 const os = require('os')
 const { exec, execSync, execFileSync, spawn } = require('child_process')
 const puppeteer = require('puppeteer-core')
@@ -23635,6 +23637,14 @@ async function lucaGorunurTopluZip(frame, etiket, p = {}, page = null, beklenenF
     try { fs.unlinkSync(durum.dosya); } catch { /* yoksay */ }
     lucaJqZipIle = true;
     log("gorunur toplu indirme tamam: ZIP acildi (ag)");
+    try {
+      if (durum.indirmeDefteri?.progress && durum.indirmeDefteri?.key) {
+        const kaydedilecek = (typeof lucaSonIndirilenDosyalar !== 'undefined' && Array.isArray(lucaSonIndirilenDosyalar)) ? lucaSonIndirilenDosyalar.map(d => d.ad || d) : [];
+        const dosyalar = kaydedilecek.length ? kaydedilecek.map(ad => path.join(indirmeKlasoru, ad)) : [];
+        recordStep(durum.indirmeDefteri.progress, durum.indirmeDefteri.key, { files: dosyalar, records: [], pagination: { complete: true }, empty: dosyalar.length === 0 });
+        console.log("[indirme-defteri] kayit tamamlandi:", durum.indirmeDefteri.key, "->", dosyalar.length, "dosya");
+      }
+    } catch (e) { console.log("[indirme-defteri] kayit hatasi:", e?.message || String(e)); }
     return "tamam";
   }
   if (agIzleyici) { try { agIzleyici.durdur(); } catch { /* yoksay */ } }
@@ -23686,6 +23696,13 @@ async function lucaGorunurTopluZip(frame, etiket, p = {}, page = null, beklenenF
     try { fs.unlinkSync(zipYol); } catch { }
     lucaJqZipIle = true;
     log("gorunur toplu indirme tamam: ZIP acildi");
+    try {
+      if (durum.indirmeDefteri?.progress && durum.indirmeDefteri?.key) {
+        const dosyalar = (typeof lucaSonIndirilenDosyalar !== 'undefined' && Array.isArray(lucaSonIndirilenDosyalar)) ? lucaSonIndirilenDosyalar.map(d => path.join(indirmeKlasoru, d.ad || d)) : [];
+        recordStep(durum.indirmeDefteri.progress, durum.indirmeDefteri.key, { files: dosyalar, records: [], pagination: { complete: true }, empty: dosyalar.length === 0 });
+        console.log("[indirme-defteri] kayit tamamlandi:", durum.indirmeDefteri.key, "->", dosyalar.length, "dosya");
+      }
+    } catch (e) { console.log("[indirme-defteri] kayit hatasi:", e?.message || String(e)); }
     return "tamam";
   } finally {
     if (geciciKlasor) fs.rmSync(geciciKlasor, { recursive: true, force: true });
@@ -24031,6 +24048,42 @@ async function lucaBelgeleriIndir(page, etiket, durum, p = {}) {
       durum.dosyaOncesi = fs.readdirSync(indirmeKlasoru).filter((f) => /\.(zip|xml|pdf|xls|xlsx)$/i.test(f));
     } catch (e) {
       durum.dosyaOncesi = [];
+    }
+  }
+  // 2.8.345: indirme defteri (SHA-256 tabanli ilerleme kaydi)
+  if (!durum.indirmeDefteri) {
+    try {
+      const ay = parseInt(p.ay, 10);
+      const yil = parseInt(p.yil, 10);
+      const bugun = new Date();
+      const efektifAy = (ay >= 1 && ay <= 12) ? ay : (bugun.getMonth() + 1);
+      const efektifYil = (yil >= 2000) ? yil : bugun.getFullYear();
+      const iki = (n) => String(n).padStart(2, "0");
+      const ayStr = iki(efektifAy);
+      const ayKey = efektifYil + "-" + ayStr;
+      const bas = String(p.gibdenBasTarihi || ("01/" + ayStr + "/" + efektifYil));
+      const bit = String(p.gibdenBitTarihi || (iki(new Date(efektifYil, efektifAy, 0).getDate()) + "/" + ayStr + "/" + efektifYil));
+      durum.indirmeDefteri = { yuklendi: false, progress: null, key: null, bas, bit, ayKey };
+    } catch (e) {
+      durum.indirmeDefteri = { yuklendi: false, progress: null, key: null, bas: "", bit: "", ayKey: "" };
+    }
+  }
+  if (!durum.indirmeDefteri.yuklendi) {
+    try {
+      durum.indirmeDefteri.progress = await loadDownloadProgress(indirmeKlasoru, durum.indirmeDefteri.ayKey);
+      const tip = String(p.sorguTip || "efatura").trim();
+      const yon = String(p.yon || "alis").trim();
+      const firma = String(p.firmaAdi || p.companyName || "firma").trim().toUpperCase();
+      durum.indirmeDefteri.key = firma + "|" + tip + "-" + yon + "|" + durum.indirmeDefteri.bas + "|" + durum.indirmeDefteri.bit;
+      durum.indirmeDefteri.yuklendi = true;
+      // kapsama kontrolu (tanilama)
+      try {
+        const kapsam = covered(new Set(Object.keys(durum.indirmeDefteri.progress.steps)), durum.indirmeDefteri.key);
+        console.log("[indirme-defteri] kapsam:", durum.indirmeDefteri.key, "->", kapsam ? "TAM KAPSANDI" : "eksik");
+      } catch (e) { /* yoksay */ }
+    } catch (e) {
+      console.log("[indirme-defteri] yuklenemedi:", e?.message || String(e));
+      durum.indirmeDefteri.yuklendi = true;
     }
   }
   const sorguTipStr0 = String(p.sorguTip || "efatura");

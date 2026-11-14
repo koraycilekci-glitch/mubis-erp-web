@@ -15487,111 +15487,96 @@ const ISLER = {
       borc = borcKismi;
       console.log("[gib-borc-sorgula] tam okuma yapilamadi, kismi sonuc kullaniliyor");
     }
-    // 2.8.334: GIB borc detay - linkleri ve tablolari logla
+    // 2.8.337: GIB "Indir" butonu ile Borc Detay dosyasini indir
     if (borc) {
-      // 1) Sayfadaki tum link/button metinlerini logla (teshis)
       try {
-        const linkler = await page.evaluate(() => {
-          return [...document.querySelectorAll("a, button, input[type=button], input[type=submit]")]
-            .map((el) => ({ text: (el.textContent || el.value || "").trim(), href: el.href || el.getAttribute("onclick") || "", tag: el.tagName }))
-            .filter((t) => t.text.length > 0 && t.text.length < 80);
-        }).catch(() => []);
-        console.log("[gib-borc-sorgula] SAYFA LINKLERI:", JSON.stringify(linkler.slice(0, 60)));
-        console.log("[gib-borc-sorgula] MEVCUT URL:", page.url());
-      } catch (e) {}
-      // 2) Tablo headerlarini logla
-      try {
-        const tablolar = await page.evaluate(() => {
-          return [...document.querySelectorAll("table")].map((tb, idx) => {
-            const trlar = [...tb.querySelectorAll("tr")];
-            const baslik = trlar.length ? (trlar[0].textContent || "").replace(/\s+/g, " ").trim().slice(0, 250) : "";
-            return { idx, rowCount: trlar.length, baslik };
-          });
-        }).catch(() => []);
-        console.log("[gib-borc-sorgula] SAYFA TABLOLARI:", JSON.stringify(tablolar));
-      } catch (e) {}
-      // 3) URL adaylari
-      const detayUrlAdaylari = [
-        "https://dijital.gib.gov.tr/portal/borc-bilgileri",
-        "https://dijital.gib.gov.tr/portal/borc-detay",
-        "https://dijital.gib.gov.tr/portal/borc-dokum",
-        "https://dijital.gib.gov.tr/portal/borc-listesi",
-        "https://dijital.gib.gov.tr/portal/borc-detay-listesi"
-      ];
-      for (const du of detayUrlAdaylari) {
+        const indirmeDizini = path.join(os.tmpdir(), "gib_borc_detay_" + Date.now());
+        fs.mkdirSync(indirmeDizini, { recursive: true });
+        // CDP indirme izni
         try {
-          await page.goto(du, { waitUntil: "networkidle2", timeout: 15000 }).catch(() => {});
-          await new Promise((r) => setTimeout(r, 4000));
-          try { await wafChallengeCoz(page, "gib-borc-sorgula"); } catch {}
-          const urlSimdi = page.url() || "";
-          if (!/gib\.gov\.tr/i.test(urlSimdi)) { console.log("[gib-borc-sorgula] detay url atlandi (gib degil):", du, urlSimdi); continue; }
-          if (/login|giris/i.test(urlSimdi)) { console.log("[gib-borc-sorgula] detay url atlandi (login):", du); continue; }
-          const tabloBilgi = await page.evaluate(() => {
-            const tabs = [...document.querySelectorAll("table")];
-            return tabs.map((tb, idx) => {
-              const trlar = [...tb.querySelectorAll("tr")];
-              const baslik = trlar.length ? (trlar[0].textContent || "").replace(/\s+/g, " ").trim().slice(0, 250) : "";
-              return { idx, rowCount: trlar.length, baslik };
-            });
-          }).catch(() => []);
-          console.log("[gib-borc-sorgula] detay url:", du, "=>", urlSimdi);
-          console.log("[gib-borc-sorgula] detay tablolar:", JSON.stringify(tabloBilgi));
-          const extra = await page.evaluate(() => {
-            const txt = (s) => (s || "").toLocaleUpperCase("tr").replace(/\s+/g, " ").trim();
-            const parseP = (s) => {
-              const m = String(s || "").match(/-?[\d.,]+/);
-              if (!m) return 0;
-              const v = parseFloat(m[0].replace(/\./g, "").replace(/,/g, "."));
-              return isNaN(v) ? 0 : v;
-            };
-            const liste = [];
-            for (const tb of document.querySelectorAll("table")) {
-              const trlar = [...tb.querySelectorAll("tr")];
-              if (trlar.length < 2) continue;
-              const baslikTr = trlar[0];
-              const kolon = new Map();
-              for (const h of baslikTr.querySelectorAll("th, td")) kolon.set(h.cellIndex, txt(h.textContent));
-              const idxBul = (test) => { for (const [i, ad] of kolon) { if (test(ad)) return i; } return -1; };
-              const belgeIdx = idxBul((h) => h.includes("BELGE"));
-              const turIdx = idxBul((h) => h.includes("VERGI") && h.includes("TUR"));
-              const donemIdx = idxBul((h) => h.includes("DONEM"));
-              const vadeIdx = idxBul((h) => h.includes("VADE"));
-              const asilIdx = idxBul((h) => h.includes("ASIL"));
-              const gzIdx = idxBul((h) => h.includes("GECIKME"));
-              const toplamIdx = idxBul((h) => h.includes("TOPLAM"));
-              const isDetay = belgeIdx >= 0 || turIdx >= 0 || (vadeIdx >= 0 && (asilIdx >= 0 || toplamIdx >= 0));
-              if (!isDetay) continue;
-              for (const tr of trlar) {
-                if (tr === baslikTr) continue;
-                const hucreler = [...tr.querySelectorAll("td, th")];
-                if (hucreler.length < 3) continue;
-                const metinler = hucreler.map((td) => (td.textContent || "").replace(/\s+/g, " ").trim());
-                if (metinler.every((m) => !m)) continue;
-                const belge = belgeIdx >= 0 ? metinler[belgeIdx] : "";
-                const tur = turIdx >= 0 ? metinler[turIdx] : "";
-                const donem = donemIdx >= 0 ? metinler[donemIdx] : (vadeIdx >= 0 ? metinler[vadeIdx] : "");
-                const vade = vadeIdx >= 0 ? metinler[vadeIdx] : "";
-                const asil = asilIdx >= 0 ? parseP(metinler[asilIdx]) : 0;
-                const gz = gzIdx >= 0 ? parseP(metinler[gzIdx]) : 0;
-                const toplam = toplamIdx >= 0 ? parseP(metinler[toplamIdx]) : (asil + gz);
-                if (toplam === 0 && asil === 0) continue;
-                liste.push({ donem, vade, tur, belgeNo: belge, asilBorc: Math.round(asil*100)/100, gz: Math.round(gz*100)/100, toplam: Math.round(toplam*100)/100 });
-                if (liste.length >= 500) break;
-              }
-              if (liste.length) break;
-            }
-            return liste;
-          }).catch(() => []);
-          if (Array.isArray(extra) && extra.length) {
-            borc.kalemler = extra;
-            console.log("[gib-borc-sorgula] detay sayfasindan " + extra.length + " kalem okundu (url: " + du + ")");
-            break;
-          }
+          const cdp = await page.target().createCDPSession();
+          await cdp.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: indirmeDizini });
+          console.log("[gib-borc-sorgula] CDP indirme izni verildi:", indirmeDizini);
         } catch (e) {
-          console.log("[gib-borc-sorgula] detay url hatasi (" + du + "):", e?.message || String(e));
+          console.log("[gib-borc-sorgula] CDP hatasi:", e?.message || String(e));
         }
+        // Ana sayfaya geri don (URL denemelerinden sonra)
+        await page.goto("https://dijital.gib.gov.tr/portal", { waitUntil: "networkidle2", timeout: 15000 }).catch(() => {});
+        await new Promise((r) => setTimeout(r, 3000));
+        // "Indir" butonunu bul ve tikla
+        const indirTiklandi = await page.evaluate(() => {
+          const adaylar = [...document.querySelectorAll("a, button, input[type=button], input[type=submit]")];
+          const hedef = adaylar.find((el) => {
+            const t = (el.textContent || el.value || "").trim().toLocaleLowerCase("tr");
+            return t === "indir" || t.includes("indir") || t.includes("excel") || t.includes("pdf") || t.includes("detay liste") || t.includes("borc detay") || t.includes("borc dokum");
+          });
+          if (!hedef) return null;
+          try { hedef.click(); return (hedef.textContent || hedef.value || "").trim(); } catch { return null; }
+        }).catch(() => null);
+        console.log("[gib-borc-sorgula] Indir butonu:", indirTiklandi ? indirTiklandi : "BULUNAMADI");
+        if (indirTiklandi) {
+          // Indirme tamamlanana kadar bekle (max 20 sn)
+          await new Promise((r) => setTimeout(r, 15000));
+          let dosyalar = [];
+          try { dosyalar = fs.readdirSync(indirmeDizini); } catch (e) {}
+          console.log("[gib-borc-sorgula] Indirilen dosyalar:", JSON.stringify(dosyalar));
+          if (dosyalar.length) {
+            const dosyaAdi = dosyalar[0].toLowerCase();
+            const dosyaYolu = path.join(indirmeDizini, dosyalar[0]);
+            console.log("[gib-borc-sorgula] Indirilen dosya:", dosyaAdi, fs.statSync(dosyaYolu).size, "bayt");
+            // Dosyanin ilk 200 byte'ini logla (tip tespiti)
+            try {
+              const buf = fs.readFileSync(dosyaYolu);
+              const ilk200 = buf.slice(0, 200);
+              console.log("[gib-borc-sorgula] Dosya ilk byte'lar (hex):", ilk200.slice(0, 16).toString("hex"));
+              console.log("[gib-borc-sorgula] Dosya ilk byte'lar (text):", ilk200.toString("utf8").substring(0, 200).replace(/\n/g, " "));
+            } catch (e) {}
+            // PDF parse
+            if (dosyaAdi.endsWith(".pdf")) {
+              try {
+                const pdfParse = require("pdf-parse");
+                const buf = fs.readFileSync(dosyaYolu);
+                const data = await pdfParse(buf);
+                const text = data.text || "";
+                console.log("[gib-borc-sorgula] PDF metin (ilk 500):", text.substring(0, 500).replace(/\n/g, " | "));
+                // Parse rows from PDF text
+                const satirlar = text.split(/\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+                const kalemler = [];
+                for (const satir of satirlar) {
+                  const parcalar = satir.split(/\s{2,}|\t/).map((p) => p.trim()).filter((p) => p);
+                  if (parcalar.length < 4) continue;
+                  const sayisallar = parcalar.filter((p) => /^-?[\d.,]+$/.test(p));
+                  if (sayisallar.length < 1) continue;
+                  const toplam = parseFloat((sayisallar[sayisallar.length - 1] || "0").replace(/\./g, "").replace(/,/g, "."));
+                  if (isNaN(toplam) || toplam === 0) continue;
+                  const asil = sayisallar.length >= 3 ? parseFloat((sayisallar[sayisallar.length - 3] || "0").replace(/\./g, "").replace(/,/g, ".")) : 0;
+                  const gz = sayisallar.length >= 2 ? parseFloat((sayisallar[sayisallar.length - 2] || "0").replace(/\./g, "").replace(/,/g, ".")) : 0;
+                  kalemler.push({
+                    donem: parcalar.length >= 5 ? parcalar[parcalar.length - 5] || "" : "",
+                    vade: parcalar.length >= 6 ? parcalar[parcalar.length - 6] || "" : "",
+                    tur: parcalar.length >= 4 ? parcalar[parcalar.length - 4] || "" : "",
+                    belgeNo: parcalar.length >= 7 ? parcalar[parcalar.length - 7] || "" : "",
+                    asilBorc: isNaN(asil) ? 0 : Math.round(asil * 100) / 100,
+                    gz: isNaN(gz) ? 0 : Math.round(gz * 100) / 100,
+                    toplam: Math.round(toplam * 100) / 100
+                  });
+                  if (kalemler.length >= 500) break;
+                }
+                if (kalemler.length) {
+                  borc.kalemler = kalemler;
+                  console.log("[gib-borc-sorgula] PDF'den " + kalemler.length + " kalem okundu");
+                }
+              } catch (e) {
+                console.log("[gib-borc-sorgula] PDF parse hatasi:", e?.message || String(e));
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.log("[gib-borc-sorgula] indirme hatasi:", e?.message || String(e));
       }
     }
+
     const okunamadi = !borc;
     const v = borc || { vadesiGecmis: 0, vadesiGelmemis: 0, toplam: 0 };
     const fmt = (n) => (n ?? 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -27733,7 +27718,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis " + turLimiti + " tur sonunda tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.336";
+var SURUM = "2.8.337";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

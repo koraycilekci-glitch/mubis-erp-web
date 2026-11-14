@@ -910,14 +910,16 @@ export default function MusteriBorcDokumu() {
 
       {/* Özet kartları */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5">
-        <KpiKart baslik="SGK" tutar={`${paraYaz(toplamlar.sgk)} TL`} alt={`${toplamlar.sgkAdet} müşteride borç`} ikon={Landmark} renk="amber">
-        {toplamlar.sgk > 0 && (
-          <div className="text-[10px] text-gray-400 mt-1">
-            {liste.some(g => g.sgk?.detayYil) ? (
-              <span>{liste.filter(g => g.sgk?.detayYil && g.sgk?.detayAy).map(g => `${g.sgk.detayYil}/${String(g.sgk.detayAy).padStart(2, '0')}`).join(' · ')}</span>
-            ) : 'Yıl/Ay gösterilemiyor')
-          </div>
-        )}
+        <KpiKart
+          baslik="SGK"
+          tutar={`${paraYaz(toplamlar.sgk)} TL`}
+          alt={`${toplamlar.sgkAdet} müşteride borç${(() => {
+            const donemler = [...new Set(liste.filter(g => g.sgk?.detayYil && g.sgk?.detayAy).map(g => `${g.sgk.detayYil}/${String(g.sgk.detayAy).padStart(2, '0')}`))]
+            return donemler.length ? ` · ${donemler.slice(0, 3).join(', ')}` : ''
+          })()}`}
+          ikon={Landmark}
+          renk="amber"
+        />
         <KpiKart baslik="Vergi (GİB)" tutar={`${paraYaz(toplamlar.vergi)} TL`} alt={`${toplamlar.vergiAdet} müşteride borç`} ikon={Building2} renk="sky" />
         <KpiKart
           baslik="Muhasebe"

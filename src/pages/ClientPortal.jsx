@@ -2829,11 +2829,14 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
         const satirlar = []
         const ekle = (kaynak, liste) => {
           for (const k of (liste || [])) {
-            const borc = Number(k?.borc ?? k?.tutar) || 0
+            // 2.8.343: GIB PDF'inden gelen kalemlerde anapara "asilBorc" alaninda
+            const borc = Number(k?.borc ?? k?.asilBorc ?? k?.tutar) || 0
             const gz = Number(k?.gz) || 0
             const toplam = Number(k?.toplam) || (borc + gz)
-            const turOtomatik = (k?.tur && String(k.tur).trim()) ? k.tur : (kaynak === 'sgk' ? (gz > 0 ? 'Vadesi Gecmis' : 'Vadesi Gelmemis') : (k?.tur || ''))
-    satirlar.push({ kaynak, donem: k?.donem || k?.vade || '', tur: turOtomatik, borc, gz, toplam })
+            const turOtomatik = (k?.tur && String(k.tur).trim())
+              ? (k?.vergiKodu ? `${k.vergiKodu} ${String(k.tur).trim()}` : k.tur)
+              : (kaynak === 'sgk' ? (gz > 0 ? 'Vadesi Gecmis' : 'Vadesi Gelmemis') : (k?.tur || ''))
+            satirlar.push({ kaynak, donem: k?.donem || k?.vade || '', tur: turOtomatik, borc, gz, toplam })
           }
         }
         ekle('vergi', borcKalemler.vergi)

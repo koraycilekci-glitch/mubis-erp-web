@@ -10,7 +10,7 @@ import {
   User, Settings, Send, Receipt, CreditCard, Calendar,
   Phone, Mail, MapPin, Building2, Save, DollarSign, Copy, ExternalLink,
   FileSearch, ChevronRight, ChevronDown, Folder, X, RefreshCw, Users, ChevronLeft, Camera, Calculator,
-  Home as HomeIcon, Megaphone, Mic, Menu as MenuIcon, Headphones, LayoutGrid, ArrowRight, KeyRound, Monitor, Inbox, BookOpen, LogOut, ScanLine
+  Home as HomeIcon, Megaphone, Mic, Menu as MenuIcon, Headphones, LayoutGrid, ArrowRight, KeyRound, Monitor, Inbox, BookOpen, LogOut, ScanLine, Landmark
 } from 'lucide-react'
 import { etebligatlariGetir, etebligatlariSorgula, sgkEtebligatlariSorgula, etebligatBelgesiAl, listeCiktisiMi, yeniTebligatlariTemizle, okunduAyarla, kullaniciOkunduSeti } from '../services/etebligatService'
 import EFaturaKesim from './EFaturaKesim'
@@ -219,6 +219,12 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
   const [tebligatSorguluyor, setTebligatSorguluyor] = useState(false)
   const [tebligatMesaj, setTebligatMesaj] = useState('')
 
+  // 2.8.325: Kamu borclari (GIB + SGK) kalem detaylari — "Kamu Borclari"
+  // ekraninda borc listesi olarak gosterilir (e-Tebligat ekrani gibi).
+  const [borcKalemler, setBorcKalemler] = useState({ vergi: [], sgk: [] })
+  const [borcSorguTs, setBorcSorguTs] = useState({ vergi: null, sgk: null })
+  const [borcDetayKaynak, setBorcDetayKaynak] = useState('hepsi') // hepsi | vergi | sgk
+
   // e-Fatura / e-Arsiv faturalari (Faturalarim sekmesi)
   const [faturalar, setFaturalar] = useState([])
   const [kdvDurum, setKdvDurum] = useState(null)
@@ -242,12 +248,16 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
     const uygulaVergi = (v) => {
       setVergiBorcu(v.toplam || 0)
       setVergiBorcMesaj(v.mesaj || '')
+      if (Array.isArray(v.kalemler)) setBorcKalemler(prev => ({ ...prev, vergi: v.kalemler }))
+      if (v.ts) setBorcSorguTs(prev => ({ ...prev, vergi: v.ts }))
     }
     const uygulaSgk = (s) => {
       setSgkBorcu(s.toplam || 0)
       setSgkSadeceBorclar(s.sadeceBorclar || 0)
       setSgkGecikmeZammi(s.gz || 0)
       setSgkBorcMesaj(s.mesaj || '')
+      if (Array.isArray(s.kalemler)) setBorcKalemler(prev => ({ ...prev, sgk: s.kalemler }))
+      if (s.ts) setBorcSorguTs(prev => ({ ...prev, sgk: s.ts }))
     }
     let vLocal = null
     let sLocal = null
@@ -268,7 +278,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
         if (iptal) return
         if (v) {
           const vBulutTs = v.sorgu_ts ? new Date(v.sorgu_ts).getTime() : 0
-          if (!vLocal || vBulutTs >= (vLocal.ts || 0)) uygulaVergi({ toplam: v.toplam, mesaj: v.mesaj })
+          if (!vLocal || vBulutTs >= (vLocal.ts || 0)) uygulaVergi({ toplam: v.toplam, mesaj: v.mesaj, kalemler: v.detay?.kalemler, ts: vBulutTs })
         } else if (vLocal) {
           // Tablo yeni duzeltildi / onceki yazimlar basarisizdi: yerel veriyi buluta tasi
           borcSonucuKaydet(clientId, 'vergi', {
@@ -280,7 +290,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
         if (s) {
           const sBulutTs = s.sorgu_ts ? new Date(s.sorgu_ts).getTime() : 0
           if (!sLocal || sBulutTs >= (sLocal.ts || 0)) {
-            uygulaSgk({ toplam: s.toplam, sadeceBorclar: s.detay?.sadeceBorclar, gz: s.detay?.gz, mesaj: s.mesaj })
+            uygulaSgk({ toplam: s.toplam, sadeceBorclar: s.detay?.sadeceBorclar, gz: s.detay?.gz, mesaj: s.mesaj, kalemler: s.detay?.kalemler, ts: sBulutTs })
           }
         } else if (sLocal) {
           borcSonucuKaydet(clientId, 'sgk', {
@@ -523,17 +533,23 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
       }
       setVergiBorcu(res.toplam || res.borc || 0)
       setVergiBorcMesaj(res.not || '')
+      const vergiKalemler = Array.isArray(res.kalemler) ? res.kalemler : []
+      setBorcKalemler(prev => ({ ...prev, vergi: vergiKalemler }))
+      setBorcSorguTs(prev => ({ ...prev, vergi: Date.now() }))
       try {
         localStorage.setItem(`mubis_vergiBorc_${clientId}`, JSON.stringify({
           toplam: res.toplam || res.borc || 0,
           mesaj: res.not || '',
+          vadesiGecmis: res.vadesiGecmis || 0,
+          vadesiGelmemis: res.vadesiGelmemis || 0,
+          kalemler: vergiKalemler,
           ts: Date.now()
         }))
       } catch (e) { /* yoksay */ }
       borcSonucuKaydet(clientId, 'vergi', {
         toplam: res.toplam || res.borc || 0,
         mesaj: res.not || '',
-        detay: { vadesiGecmis: res.vadesiGecmis || 0, vadesiGelmemis: res.vadesiGelmemis || 0 }
+        detay: { vadesiGecmis: res.vadesiGecmis || 0, vadesiGelmemis: res.vadesiGelmemis || 0, kalemler: vergiKalemler }
       })
     } catch (err) {
       setVergiBorcMesaj('Hata: ' + (err.message || 'Bilinmeyen hata'))
@@ -562,19 +578,23 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
       setSgkGecikmeZammi(res.gecikmeZammi)
       setSgkBorcu(res.toplam)
       setSgkBorcMesaj(res.not || '')
+      const sgkKalemler = Array.isArray(res.kalemler) ? res.kalemler : []
+      setBorcKalemler(prev => ({ ...prev, sgk: sgkKalemler }))
+      setBorcSorguTs(prev => ({ ...prev, sgk: Date.now() }))
       try {
         localStorage.setItem(`mubis_sgkBorc_${clientId}`, JSON.stringify({
           toplam: res.toplam || 0,
           sadeceBorclar: res.sadeceBorclar || 0,
           gz: res.gecikmeZammi || 0,
           mesaj: res.not || '',
+          kalemler: sgkKalemler,
           ts: Date.now()
         }))
       } catch (e) { /* yoksay */ }
       borcSonucuKaydet(clientId, 'sgk', {
         toplam: res.toplam || 0,
         mesaj: res.not || '',
-        detay: { sadeceBorclar: res.sadeceBorclar || 0, gz: res.gecikmeZammi || 0 }
+        detay: { sadeceBorclar: res.sadeceBorclar || 0, gz: res.gecikmeZammi || 0, kalemler: sgkKalemler }
       })
     } catch (err) {
       setSgkBorcMesaj('Hata: ' + (err.message || 'Bilinmeyen hata'))
@@ -1362,6 +1382,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
     ...(clientDetail?.faturalarim_modulu !== false ? [{ id: 'invoices', label: 'Faturalarım', icon: Receipt }] : []),
     ...(clientDetail?.personel_modulu !== false ? [{ id: 'personel', label: 'Personel', icon: Users }] : []),
     ...(clientDetail?.etebligatlarim_modulu !== false ? [{ id: 'tebligatlarim', label: 'e-Tebligatlarım', icon: Inbox }] : []),
+    { id: 'borclarim', label: 'Kamu Borçlarım', icon: Landmark },
     ...(clientDetail?.evraklarim_modulu !== false ? [{ id: 'documents', label: 'Evraklarım', icon: FolderOpen }] : []),
     ...(clientDetail?.beyannamelerim_modulu !== false ? [{ id: 'beyannamelerim', label: 'Beyannamelerim', icon: FileSearch }] : []),
     ...(clientDetail?.muhasebe_borcum_modulu !== false ? [{ id: 'borc', label: 'Muhasebe Borcum', icon: DollarSign }] : []),
@@ -2104,6 +2125,16 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
               ) : (
                 <p className="text-red-300/70 text-xs">GIB'den canli sorgulamak icin tiklayin. Guvenlik kodunu siz gireceksiniz.</p>
               )}
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); setBorcDetayKaynak('vergi'); setActiveTab('borclarim') }}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setBorcDetayKaynak('vergi'); setActiveTab('borclarim') } }}
+                className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-semibold text-red-100 bg-red-500/20 hover:bg-red-500/35 border border-red-400/40 rounded-lg px-2.5 py-1 transition-colors cursor-pointer"
+                title="Vergi borcu listesini kalem kalem görüntüle"
+              >
+                <FileSearch className="w-3.5 h-3.5" /> Detay
+              </span>
             </button>
             <button
               onClick={handleSgkBorcSorgula}
@@ -2128,6 +2159,16 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
                   <div>e-Bildirge'den sorgulamak icin tiklayin.</div>
                 </div>
               )}
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); setBorcDetayKaynak('sgk'); setActiveTab('borclarim') }}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setBorcDetayKaynak('sgk'); setActiveTab('borclarim') } }}
+                className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-semibold text-orange-100 bg-orange-500/20 hover:bg-orange-500/35 border border-orange-400/40 rounded-lg px-2.5 py-1 transition-colors cursor-pointer"
+                title="SGK borç listesini kalem kalem görüntüle"
+              >
+                <FileSearch className="w-3.5 h-3.5" /> Detay
+              </span>
             </button>
             <button
               onClick={() => setActiveTab('tebligatlarim')}
@@ -2751,6 +2792,180 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
           )}
         </div>
       )}
+
+      {activeTab === 'borclarim' && (() => {
+        const tl = (n) => formatMoney(Number(n) || 0)
+        const satirlar = []
+        const ekle = (kaynak, liste) => {
+          for (const k of (liste || [])) {
+            const borc = Number(k?.borc ?? k?.tutar) || 0
+            const gz = Number(k?.gz) || 0
+            const toplam = Number(k?.toplam) || (borc + gz)
+            satirlar.push({ kaynak, donem: k?.donem || k?.vade || '', tur: k?.tur || '', borc, gz, toplam })
+          }
+        }
+        ekle('vergi', borcKalemler.vergi)
+        ekle('sgk', borcKalemler.sgk)
+        // Yardimci kalem listesi dondurmediyse toplam satiri olarak goster
+        if (!(borcKalemler.vergi || []).length && vergiBorcu > 0) {
+          satirlar.push({ kaynak: 'vergi', donem: '', tur: 'Toplam (kalem detayı alınamadı)', borc: vergiBorcu, gz: 0, toplam: vergiBorcu })
+        }
+        if (!(borcKalemler.sgk || []).length && sgkBorcu > 0) {
+          satirlar.push({ kaynak: 'sgk', donem: '', tur: 'Toplam (kalem detayı alınamadı)', borc: sgkSadeceBorclar || sgkBorcu, gz: sgkGecikmeZammi || 0, toplam: sgkBorcu })
+        }
+        const gorunen = satirlar.filter(s => borcDetayKaynak === 'hepsi' || s.kaynak === borcDetayKaynak)
+        const toplamVergi = gorunen.filter(s => s.kaynak === 'vergi').reduce((a, s) => a + s.toplam, 0)
+        const toplamSgk = gorunen.filter(s => s.kaynak === 'sgk').reduce((a, s) => a + s.toplam, 0)
+        const kaynakEtiket = (k) => k === 'sgk' ? 'SGK' : 'GİB (Vergi Dairesi)'
+        const kaynakRenk = (k) => k === 'sgk'
+          ? 'bg-orange-500/15 text-orange-300 border-orange-500/30'
+          : 'bg-red-500/15 text-red-300 border-red-500/30'
+        return (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <Landmark className="w-6 h-6 text-cyan-300" /> Kamu Borçlarım
+                </h2>
+                <p className="text-gray-400 text-sm mt-1">
+                  GİB (Vergi Dairesi) ve SGK&apos;dan sorgulanan borçlar kalem kalem listelenir. Kartlardaki
+                  tutarların dökümünü burada görebilirsiniz.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={handleVergiBorcSorgula}
+                  disabled={vergiBorcuYukleniyor}
+                  className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600/25 border border-red-500/40 text-red-100 hover:bg-red-600/45 transition-all flex items-center gap-2 disabled:opacity-50"
+                >
+                  {vergiBorcuYukleniyor ? <RefreshCw className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+                  Vergi Borcu Sorgula
+                </button>
+                <button
+                  onClick={handleSgkBorcSorgula}
+                  disabled={sgkBorcuYukleniyor}
+                  className="px-4 py-2 rounded-lg text-sm font-medium bg-orange-600/25 border border-orange-500/40 text-orange-100 hover:bg-orange-600/45 transition-all flex items-center gap-2 disabled:opacity-50"
+                >
+                  {sgkBorcuYukleniyor ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Users className="w-4 h-4" />}
+                  SGK Borcu Sorgula
+                </button>
+              </div>
+            </div>
+
+            {/* Ozet kartlari */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="bg-gradient-to-br from-blue-900/40 to-blue-800/20 border border-blue-700/30 rounded-2xl p-4">
+                <div className="text-gray-400 text-xs">Listelenen borç toplamı</div>
+                <div className="text-2xl font-bold text-white mt-1">{tl(toplamVergi + toplamSgk)} TL</div>
+                <div className="text-[11px] text-gray-500 mt-1">{gorunen.length} kalem</div>
+              </div>
+              <div className="bg-gradient-to-br from-red-900/30 to-red-800/15 border border-red-700/30 rounded-2xl p-4">
+                <div className="text-gray-400 text-xs">GİB (Vergi Dairesi)</div>
+                <div className="text-2xl font-bold text-white mt-1">{tl(vergiBorcu)} TL</div>
+                <div className="text-[11px] text-gray-500 mt-1">
+                  Son sorgu: {borcSorguTs.vergi ? formatDateTimeTR(new Date(borcSorguTs.vergi)) : '—'}
+                </div>
+              </div>
+              <div className="bg-gradient-to-br from-orange-900/30 to-orange-800/15 border border-orange-700/30 rounded-2xl p-4">
+                <div className="text-gray-400 text-xs">SGK</div>
+                <div className="text-2xl font-bold text-white mt-1">{tl(sgkBorcu)} TL</div>
+                <div className="text-[11px] text-gray-500 mt-1">
+                  Son sorgu: {borcSorguTs.sgk ? formatDateTimeTR(new Date(borcSorguTs.sgk)) : '—'}
+                </div>
+              </div>
+            </div>
+
+            {/* Kaynak secimi */}
+            <div className="inline-flex rounded-xl border border-blue-700/40 overflow-hidden">
+              {[
+                { k: 'hepsi', baslik: 'Tümü', sayi: satirlar.length },
+                { k: 'vergi', baslik: 'GİB (Vergi Dairesi)', sayi: satirlar.filter(s => s.kaynak === 'vergi').length },
+                { k: 'sgk', baslik: 'SGK', sayi: satirlar.filter(s => s.kaynak === 'sgk').length }
+              ].map(g => (
+                <button
+                  key={g.k}
+                  onClick={() => setBorcDetayKaynak(g.k)}
+                  className={`px-4 py-2.5 text-sm font-medium flex items-center gap-2 transition-colors ${borcDetayKaynak === g.k ? 'bg-yellow-500 text-blue-950' : 'bg-blue-900/30 text-gray-300 hover:bg-blue-900/50'}`}
+                >
+                  {g.baslik}
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${borcDetayKaynak === g.k ? 'bg-blue-950/25 text-blue-950' : 'bg-white/10 text-gray-300'}`}>
+                    {g.sayi}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {gorunen.length === 0 ? (
+              <div className="bg-blue-900/20 rounded-xl p-10 text-center border border-blue-700/30">
+                <Landmark className="w-12 h-12 text-gray-600 mx-auto mb-3" />
+                <p className="text-gray-400">
+                  {satirlar.length === 0
+                    ? 'Henüz borç kaydı yok. Yukarıdaki "Sorgula" butonlarıyla GİB ve SGK’dan güncel borç durumunu çekebilirsiniz.'
+                    : 'Seçilen kaynakta borç kalemi bulunmuyor.'}
+                </p>
+              </div>
+            ) : (
+              <div className="bg-blue-900/20 rounded-xl border border-blue-700/30 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-blue-900/40 text-gray-400 text-xs uppercase">
+                    <tr>
+                      <th className="px-3 py-2.5 text-left font-medium">Kaynak</th>
+                      <th className="px-3 py-2.5 text-left font-medium">Dönem / Vade</th>
+                      <th className="px-3 py-2.5 text-left font-medium">Tür / Açıklama</th>
+                      <th className="px-3 py-2.5 text-right font-medium">Borç</th>
+                      <th className="px-3 py-2.5 text-right font-medium">Gecikme Zammı</th>
+                      <th className="px-3 py-2.5 text-right font-medium">Toplam</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gorunen.map((s, i) => (
+                      <tr key={i} className="border-t border-blue-800/30 hover:bg-blue-900/20">
+                        <td className="px-3 py-2.5">
+                          <span className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold border ${kaynakRenk(s.kaynak)}`}>
+                            {kaynakEtiket(s.kaynak)}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5 text-gray-200">{s.donem || '—'}</td>
+                        <td className="px-3 py-2.5 text-gray-300 max-w-[320px] truncate" title={s.tur}>{s.tur || '—'}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-gray-200">{tl(s.borc)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-gray-200">{tl(s.gz)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-white">{tl(s.toplam)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-blue-900/30 border-t border-blue-700/40">
+                    <tr>
+                      <td className="px-3 py-2.5 text-xs text-gray-400" colSpan={5}>TOPLAM</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums font-bold text-yellow-300">{tl(toplamVergi + toplamSgk)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+
+            {/* Sorgu notlari */}
+            {(vergiBorcMesaj || sgkBorcMesaj) && (
+              <details className="rounded-xl border border-blue-800/40 bg-blue-900/20 px-4 py-3">
+                <summary className="text-xs text-gray-400 cursor-pointer select-none">Sorgu notu / ham yanıt</summary>
+                <div className="mt-2 space-y-2">
+                  {vergiBorcMesaj && (
+                    <div>
+                      <div className="text-[11px] text-red-300/80 font-semibold">GİB (Vergi Dairesi)</div>
+                      <pre className="text-[10px] leading-relaxed text-gray-500 whitespace-pre-wrap break-words">{vergiBorcMesaj}</pre>
+                    </div>
+                  )}
+                  {sgkBorcMesaj && (
+                    <div>
+                      <div className="text-[11px] text-orange-300/80 font-semibold">SGK</div>
+                      <pre className="text-[10px] leading-relaxed text-gray-500 whitespace-pre-wrap break-words">{sgkBorcMesaj}</pre>
+                    </div>
+                  )}
+                </div>
+              </details>
+            )}
+          </div>
+        )
+      })()}
 
       {activeTab === 'tebligatlarim' && (
         <div className="space-y-6">

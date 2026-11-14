@@ -240,17 +240,65 @@ const KUYRUK_DISI_ISLER = new Set([
 ])
 let isKuyrugu = Promise.resolve()
 let kuyruktaBekleyen = 0
+// 2.8.58: ELLE (kullanici) islerinin onceligi. Otomatik cron isleri
+// (e-Tebligat / fatura cron) tarayici kuyrugunu dakikalarca tutuyor ve
+// kullanicinin "Vergi borcu sorgula" istegi dakikalarca "sorgu suruyor"
+// durumunda bekliyordu. Elle is geldiginde otomatik isler siradan cikar.
+let elleBekleyen = 0
+
+// 2.8.61: GIB "Servis Istek Limiti Asildi" korumasi. Otomatik e-Tebligat /
+// fatura cron'lari her dakika onlarca plan denedigi icin GIB bu IP'yi
+// kisitliyor; ardindan kullanicinin elle borc sorgusu da basarisiz oluyordu.
+// Limit metni gorulunce tum GIB isleri 30 dk boyunca durdurulur.
+let GIB_LIMIT_ASIMI_ZAMANI = 0
+const GIB_LIMIT_BEKLEME_MS = 30 * 60 * 1000
+function gibLimitAsimiMi(metin) {
+  const t = String(metin || "").toLocaleLowerCase("tr").replace(/\s+/g, " ")
+  return /servis\s*istek\s*limiti\s*a[şs]ild/i.test(t) || /istek\s*limiti\s*a[şs]ild/i.test(t)
+}
+function gibLimitIsaretle(kaynak) {
+  const onceki = GIB_LIMIT_ASIMI_ZAMANI
+  GIB_LIMIT_ASIMI_ZAMANI = Date.now()
+  if (!onceki || Date.now() - onceki > 5 * 60 * 1000) {
+    console.log(`[gib-limit] "${kaynak}" GIB servis istek limiti asildi \u2014 GIB isleri 30 dk durduruldu`)
+  }
+}
+function gibLimitBeklemeKaldi() {
+  if (!GIB_LIMIT_ASIMI_ZAMANI) return 0
+  const kalan = GIB_LIMIT_BEKLEME_MS - (Date.now() - GIB_LIMIT_ASIMI_ZAMANI)
+  return kalan > 0 ? kalan : 0
+}
+// 2.8.63: ACIL FREN — otomatik GIB cron'lari (e-Tebligat / fatura) tamamen
+// kapatilabilir. VPS'te MUBIS_CRON_KAPALI=1 iken cron'lar hic calismaz;
+// kullanicinin elle sorgulari GIB limitine takilmadan calisir.
+const CRON_KAPALI = /^(1|true|evet|on)$/i.test(String(process.env.MUBIS_CRON_KAPALI || ""))
+function cronKapaliMi(kaynak) {
+  if (!CRON_KAPALI) return false
+  const simdi = Date.now()
+  if (!global.__cronKapaliLog || simdi - global.__cronKapaliLog > 30 * 60 * 1000) {
+    global.__cronKapaliLog = simdi
+    console.log(`[cron] otomatik ${kaynak} turu KAPALI (MUBIS_CRON_KAPALI=1)`)
+  }
+  return true
+}
 function kuyrukGerekli(isAdi) { return !KUYRUK_DISI_ISLER.has(String(isAdi || '')) }
-function kuyruktaCalistir(isAdi, fn, zamanAsimiMs = 60 * 60 * 1000) {
+function kuyruktaCalistir(isAdi, fn, zamanAsimiMs = 60 * 60 * 1000, secenek = {}) {
   if (!kuyrukGerekli(isAdi)) return fn()
+  const elle = secenek.elle === true
   kuyruktaBekleyen++
+  if (elle) elleBekleyen++
   const onceki = isKuyrugu
   let serbest
   isKuyrugu = new Promise((r) => { serbest = r })
   return (async () => {
+    let elleDusuldu = false
+    const elleDus = () => {
+      if (elle && !elleDusuldu) { elleDusuldu = true; elleBekleyen = Math.max(0, elleBekleyen - 1) }
+    }
     try {
       if (kuyruktaBekleyen > 1) console.log(`[kuyruk] ${isAdi} sirada; onundeki isler bitince baslayacak`)
       await onceki.catch(() => {})
+      elleDus()
       // 2.8.32: "Tum isleri durdur" basilmissa siradaki isler HIC baslamaz.
       if (TUM_ISLER_DURDUR) throw new Error('KULLANICI_DURDURDU: tum isler durduruldu')
       let zamanlayici = null
@@ -275,6 +323,7 @@ function kuyruktaCalistir(isAdi, fn, zamanAsimiMs = 60 * 60 * 1000) {
         if (yoklayici) clearInterval(yoklayici)
       }
     } finally {
+      elleDus()
       kuyruktaBekleyen = Math.max(0, kuyruktaBekleyen - 1)
       serbest()
       // 2.8.31: kuyruk bosaldi — birikmis sekmeleri kapat (bellek).
@@ -13814,6 +13863,13 @@ const ISLER = {
     };
   },
   "sgk-borc-sorgula": async (p) => {
+    // 2.8.58: onceki turdan kalan popup dinleyicisi varsa kaldir (birikmesin).
+    try {
+      if (global.__sgkPopupOnceki) {
+        browser.off("targetcreated", global.__sgkPopupOnceki);
+        global.__sgkPopupOnceki = null;
+      }
+    } catch (e) { }
     let kullaniciAdi = p.kullaniciAdi || p.sgkKullaniciAdi;
     let kullaniciEki = String(p.isyeriKodu || p.sgkIsyeriKodu || "").trim();
     if (!kullaniciEki) {
@@ -13857,25 +13913,45 @@ const ISLER = {
       await d.dismiss().catch(() => {
       });
     });
+    // 2.8.58 DUZELTME: `about:blank` de eslesiyordu. Her yeni bos sekme
+    // "popup algilandi" diye calisma sayfasi yapiliyor, gercek SGK sayfasi
+    // kaybediliyor ve akis sonsuz donguye giriyordu (loglarda ard arda
+    // "calisma sayfasi devraliniyor: about:blank"). Artik yalniz gercek SGK
+    // adresi olan sekmeler devralinir; bos sekme kisa bir sure izlenip
+    // yonlendirme olursa o zaman alinir. Dinleyici is sonunda kaldirilir.
+    let sgkPopupDinleyici = null;
     try {
-      browser.on("targetcreated", async (target) => {
+      sgkPopupDinleyici = async (target) => {
         try {
           if (target.type() !== "page") return;
           const yeni = await target.page();
           if (!yeni) return;
-          const u = (yeni.url() || "") + " " + (target.name ? target.name() : "");
-          if (/sgk\.gov\.tr|ebildirge|EBildirgeUygulamaPopup|about:blank/i.test(u)) {
-            console.log("[sgk-borc-sorgula] popup algilandi, calisma sayfasi devraliniyor:", u.trim());
+          const devral = async () => {
+            const url = yeni.url() || "";
+            if (!/sgk\.gov\.tr|ebildirge|EBildirgeUygulamaPopup/i.test(url)) return false;
+            console.log("[sgk-borc-sorgula] SGK popup sayfasi devralindi:", url.slice(0, 90));
             yeni.on("dialog", async (d) => {
               console.log("[sgk-borc-sorgula] JS dialog(popup):", d.type(), "-", d.message());
               await d.dismiss().catch(() => {
               });
             });
             page = yeni;
+            // Tek seferlik: devraldiktan sonra dinleyici kaldirilir (sizinti yok).
+            try { browser.off("targetcreated", sgkPopupDinleyici); } catch (e) { }
+            return true;
+          };
+          if (await devral()) return;
+          // Bos acilmis popup olabilir: 6 sn icinde SGK'ya yonlenirse al.
+          for (let i = 0; i < 6; i++) {
+            await new Promise((r) => setTimeout(r, 1000));
+            if (yeni.isClosed && yeni.isClosed()) return;
+            if (await devral()) return;
           }
         } catch (e) {
         }
-      });
+      };
+      browser.on("targetcreated", sgkPopupDinleyici);
+      global.__sgkPopupOnceki = sgkPopupDinleyici;
     } catch (e) {
     }
     page.on("response", async (res) => {
@@ -14474,6 +14550,7 @@ const ISLER = {
     let borc = null;
     let gz = null;
     let borcYok = false;
+    let sgkKalemler = [];
     const t0 = Date.now();
     try {
       const gurl = page.url() || "";
@@ -14899,11 +14976,13 @@ const ISLER = {
             let borcDeger = null;
             let gzDeger = null;
             let tabloBos = false;
+            let kalemler = [];
+            const yuvarla = (n) => n == null ? null : Math.round(n * 100) / 100;
             for (const tb of document.querySelectorAll("table")) {
               const trlar = [...tb.querySelectorAll("tr")];
-              const baslikTr = trlar.find((tr) => /DONEM YIL|DONEM NO|PRIM BORCU|SADECE BORCLAR/i.test(normalize(tr.textContent)));
+              const baslikTr = trlar.find((tr) => /DONEM YIL|DONEM NO|PRIM BORCU|SADECE BORCLAR|AYLIK PRIM/i.test(normalize(tr.textContent)));
               if (!baslikTr) continue;
-              const kolonAdi = /* @__PURE__ */ new Map();
+              const kolonAdi = new Map();
               for (const h of baslikTr.querySelectorAll("th, td")) kolonAdi.set(h.cellIndex, normalize(h.textContent));
               const idxBul = (test) => {
                 for (const [i, ad] of kolonAdi) {
@@ -14914,18 +14993,22 @@ const ISLER = {
               const primIdx = idxBul((h) => h.includes("PRIM") && h.includes("BORC"));
               const issizlikIdx = idxBul((h) => h.includes("ISSIZLIK"));
               const sadeceIdx = idxBul((h) => h.includes("SADECE") && h.includes("BORC"));
-              if (sadeceIdx < 0 && primIdx < 0 && issizlikIdx < 0) continue;
+              const kalanIdx = idxBul((h) => (h.includes("KALAN") || h.includes("GUNCEL") || h.includes("TOPLAM")) && h.includes("BORC"));
+              const odenenIdx = idxBul((h) => h.includes("ODENEN") || h.includes("TAHSIL") || h.includes("MAHSUP"));
+              const donemIdx = idxBul((h) => h.includes("DONEM") || h.includes("AY/YIL") || h.includes("AY YIL"));
+              const turIdx = idxBul((h) => h.includes("BELGE") || h.includes("TUR") || h.includes("ACIKLAMA"));
+              if (sadeceIdx < 0 && primIdx < 0 && issizlikIdx < 0 && kalanIdx < 0) continue;
               const gzIndeksler = [];
               for (const [i, ad] of kolonAdi) {
-                // 2.7.623: "ODENEN GECIKME ZAMMI" borc degil, odeme kolonu — haric tut
                 if (ad.includes("ODENEN")) continue;
                 const duz = ad.replace(/[.]/g, "");
                 if (duz === "GZ" || ad.includes("GECIKME") && ad.includes("ZAM")) gzIndeksler.push(i);
               }
               gzIndeksler.sort((a, b) => a - b);
+              const tabanIdx = sadeceIdx >= 0 ? sadeceIdx : primIdx >= 0 ? primIdx : kalanIdx;
               let gzIdx = -1;
-              if (sadeceIdx >= 0) {
-                const sag = gzIndeksler.find((i) => i > sadeceIdx);
+              if (tabanIdx >= 0) {
+                const sag = gzIndeksler.find((i) => i > tabanIdx);
                 gzIdx = sag !== void 0 ? sag : gzIndeksler.length ? gzIndeksler[gzIndeksler.length - 1] : -1;
               } else if (gzIndeksler.length) {
                 gzIdx = gzIndeksler[gzIndeksler.length - 1];
@@ -14935,24 +15018,55 @@ const ISLER = {
                 tabloBos = true;
                 continue;
               }
-              const sonTr = veriTrleri[veriTrleri.length - 1];
-              const degerMap = /* @__PURE__ */ new Map();
-              for (const td of sonTr.querySelectorAll("td, th")) {
-                const v = parsePara(td.textContent);
-                if (v !== null) degerMap.set(td.cellIndex, v);
-              }
-              const hucreOku = (idx) => idx >= 0 && degerMap.has(idx) ? degerMap.get(idx) : null;
-              let sadece = hucreOku(sadeceIdx);
-              if (sadece === null) {
+              // 2.8.325: TOPLAM satiri varsa kalem olarak sayilmaz (cift sayim olmasin)
+              const toplamAday = veriTrleri.filter((tr) => /^(GENEL )?TOPLAM/.test(normalize(tr.textContent)));
+              const toplamTr = toplamAday.length && veriTrleri.length > toplamAday.length ? toplamAday[0] : null;
+              const kalemTrleri = veriTrleri.filter((tr) => tr !== toplamTr);
+              let borcToplam = 0;
+              let gzToplam = 0;
+              let kalemSayisi = 0;
+              const liste = [];
+              for (const tr of kalemTrleri) {
+                const degerMap = new Map();
+                for (const td of tr.querySelectorAll("td, th")) {
+                  const v = parsePara(td.textContent);
+                  if (v !== null) degerMap.set(td.cellIndex, v);
+                }
+                if (!degerMap.size) continue;
+                const hucreOku = (idx) => idx >= 0 && degerMap.has(idx) ? degerMap.get(idx) : null;
+                const metinler = [...tr.querySelectorAll("td, th")].map((td) => (td.textContent || "").replace(/\s+/g, " ").trim());
+                const sadece = hucreOku(sadeceIdx);
+                const kalan = hucreOku(kalanIdx);
                 const prim = hucreOku(primIdx);
                 const issizlik = hucreOku(issizlikIdx);
-                if (prim !== null || issizlik !== null) sadece = (prim || 0) + (issizlik || 0);
+                const odenen = hucreOku(odenenIdx);
+                let tutar = null;
+                if (kalan !== null) tutar = kalan;
+                else if (sadece !== null) tutar = sadece;
+                else if (prim !== null || issizlik !== null) tutar = (prim || 0) + (issizlik || 0) - (odenen || 0);
+                if (tutar === null) continue;
+                if (tutar < 0) tutar = 0;
+                const gz2 = hucreOku(gzIdx) || 0;
+                const donem = donemIdx >= 0 && metinler[donemIdx] ? metinler[donemIdx] : "";
+                const tur = turIdx >= 0 && metinler[turIdx] ? metinler[turIdx] : "";
+                const satirToplam = yuvarla(tutar + gz2);
+                if (satirToplam > 0 || veriTrleri.length === 1) {
+                  liste.push({ donem, tur, borc: yuvarla(tutar), gz: yuvarla(gz2), toplam: satirToplam });
+                }
+                borcToplam += tutar;
+                gzToplam += gz2;
+                kalemSayisi++;
               }
-              const gz2 = hucreOku(gzIdx);
-              if (sadece !== null) borcDeger = sadece;
-              if (gz2 !== null) gzDeger = gz2;
-              if (borcDeger !== null || gzDeger !== null) break;
+              if (!kalemSayisi) {
+                tabloBos = true;
+                continue;
+              }
+              borcDeger = yuvarla(borcToplam);
+              gzDeger = yuvarla(gzToplam);
+              kalemler = liste.slice(0, 200);
+              break;
             }
+            return { borcDeger, gzDeger, tabloBos, kalemler };
             // 2.7.623: teshis — okunan tablonun basliklari ve son satirlari loglanir
             const ozetler = [];
             for (const tb of document.querySelectorAll("table")) {
@@ -14963,11 +15077,12 @@ const ISLER = {
               if (/DONEM|BORC|GZ|PRIM/i.test(baslik)) ozetler.push(baslik + " ## " + sonSatirlar.join(" ## "));
             }
             const sayfaUst = (document.body?.innerText || "").replace(/\s+/g, " ").trim().slice(0, 500);
-            return { borcDeger, gzDeger, tabloBos, tabloOzet: (sayfaUst + " ### " + ozetler.join(" ||| ")).slice(0, 1600) };
+            return { borcDeger, gzDeger, tabloBos, kalemler, tabloOzet: (sayfaUst + " ### " + ozetler.join(" ||| ")).slice(0, 1600) };
           });
           if (sonuc.borcDeger !== null || sonuc.gzDeger !== null) {
             borc = sonuc.borcDeger;
             gz = sonuc.gzDeger;
+            if (Array.isArray(sonuc.kalemler)) sgkKalemler = sonuc.kalemler;
             if (sonuc.tabloOzet) console.log("[sgk-borc-sorgula] asama2 tablo:", sonuc.tabloOzet);
             console.log(`[sgk-borc-sorgula] asama2: TUTARLAR OKUNDU -> Sadece Borclar: ${borc}, GZ: ${gz}`);
             clearInterval(interval);
@@ -14997,6 +15112,7 @@ const ISLER = {
       gecikmeZammi,
       toplam,
       borcYok,
+      kalemler: sgkKalemler,
       not: borcYok ? "\u015Eirketin SGK borcu yok (0,00 TL). Gecikme zamm\u0131: 0,00 TL. Toplam: 0,00 TL" : borc !== null || gz !== null ? `Sadece Borclar Toplami: ${sadeceBorclar.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL, GZ: ${gecikmeZammi.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL, Toplam: ${toplam.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL` : "Borc tablosuna ulasildi ancak tutarlar okunamadi."
     };
   },
@@ -15017,6 +15133,11 @@ const ISLER = {
   // guvenlik kodu kullaniciya birakilir -> giris sonrasi "Vadesi Gecmis Borclar"
   // kutusundaki rakam okunur.
   "gib-borc-sorgula": async (p) => {
+    // 2.8.61: GIB limiti asilmissa bos yere denemeyip net mesaj ver.
+    const limitKalan = gibLimitBeklemeKaldi()
+    if (limitKalan > 0) {
+      throw new Error(`GIB servis istek limiti asildi; yaklasik ${Math.ceil(limitKalan / 60000)} dakika sonra tekrar deneyin.`)
+    }
     const kull = p.kullaniciKodu || p.dvs_username || CONFIG.gib?.kullaniciKodu;
     const parola = p.parola || p.dvs_password || CONFIG.gib?.parola;
     if (!kull || !parola) throw new Error("GIB giris bilgileri yok: musteri kaydinda kullanici kodu/parola eksik");
@@ -15249,7 +15370,29 @@ const ISLER = {
       const kod = cozum.kod;
       console.log(`[gib-borc-sorgula] captcha deneme ${deneme} (${cozum.yontem}): kod=`, kod);
       if (!kod || kod.length < 4) return { ok: false, neden: "kod-okunamadi", yontem: cozum.yontem, inputAdi: captchaBilgi.inputName };
-      const doldu = await page.evaluate(({ kod: kod2, sel }) => {
+      const doldu = await page.evaluate(({ kod: kod2, sel, kullanici, sifre }) => {
+        // 2.8.62 DUZELTME: captcha yenilendiginde GIB formu kimlik alanlarini
+        // TEMIZLIYOR. Yalniz captcha yazilip "Giris Yap"a basildiginda portal
+        // "Sifre alani bos birakilamaz" hatasi veriyor ve giris asla
+        // tamamlanmiyordu (kullanicinin yasadigi durum). Bos ise yeniden doldur.
+        const yaz = (el, v) => {
+          if (!el || !v) return false;
+          const st = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+          if (st) st.call(el, v); else el.value = v;
+          el.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          el.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+          return true;
+        };
+        const tumInputlar = [...document.querySelectorAll("input")];
+        const sifreEl = tumInputlar.find((i) => i.type === "password");
+        const sifreBos = !sifreEl || !String(sifreEl.value || "").trim();
+        if (sifreBos && sifreEl && sifre) yaz(sifreEl, sifre);
+        // Kullanici kodu: sifre alanindan onceki gorunur metin alani
+        const metinler = tumInputlar.filter((i) => i.type === "text" || !i.type);
+        const kullEl = metinler.find((i) => /kullan|userid|username|vkn|tckn/i.test(String(i.name || "") + String(i.id || "") + String(i.placeholder || ""))) || metinler[0];
+        if (kullEl && !String(kullEl.value || "").trim() && kullanici) yaz(kullEl, kullanici);
         let inp = null;
         if (sel) inp = document.querySelector(sel);
         if (!inp) inp = document.querySelector('input#dk, input[name="dk"]');
@@ -15263,9 +15406,84 @@ const ISLER = {
         inp.dispatchEvent(new Event("change", { bubbles: true }));
         inp.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
         return true;
-      }, { kod, sel: captchaBilgi.inputSelector });
+      }, { kod, sel: captchaBilgi.inputSelector, kullanici: kull, sifre: parola });
       if (!doldu) return { ok: false, neden: "input-yok" };
       await new Promise((r) => setTimeout(r, 500));
+      // 2.8.64: Gonderimden hemen once alanlari SON KEZ kontrol et. GIB'in
+      // kendi JS'i captcha alanina odaklaninca sifre alanini temizleyebiliyor;
+      // bu yuzden "Sifre alani bos birakilamaz" hatasi alinip giris hic
+      // tamamlanmiyordu. Doldurma + gonderim TEK adimda yapilir.
+      const gonderim = await page.evaluate(({ kullanici, sifre }) => {
+        const yaz = (el, v) => {
+          if (!el || !v) return false;
+          const st = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+          if (st) st.call(el, v); else el.value = v;
+          el.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          el.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+          return true;
+        };
+        const tumInputlar = [...document.querySelectorAll("input")];
+        const sifreEl = tumInputlar.find((i) => i.type === "password");
+        const metinler = tumInputlar.filter((i) => i.type === "text" || !i.type);
+        const kullEl = metinler.find((i) => /kullan|userid|username|vkn|tckn/i.test(String(i.name || "") + String(i.id || "") + String(i.placeholder || ""))) || metinler[0];
+        const durum = {
+          sifreDolu: !!(sifreEl && String(sifreEl.value || "").trim()),
+          kullaniciDolu: !!(kullEl && String(kullEl.value || "").trim())
+        };
+        if (!durum.sifreDolu) yaz(sifreEl, sifre);
+        if (!durum.kullaniciDolu) yaz(kullEl, kullanici);
+        return {
+          sifreBosBirakilacakti: !durum.sifreDolu,
+          kullaniciBosBirakilacakti: !durum.kullaniciDolu,
+          sifreVarMi: !!sifreEl,
+          sifreSonDolu: !!(sifreEl && String(sifreEl.value || "").trim()),
+          sifreUzunluk: sifreEl ? String(sifreEl.value || "").length : 0
+        };
+      }, { kullanici: kull, sifre: parola }).catch(() => null);
+      if (gonderim) console.log("[gib-borc-sorgula] gonderim oncesi alanlar:", JSON.stringify(gonderim));
+      // 2.8.66: GIB formu REACT kontrollu — programatik value yazimi aninda
+      // geri siliniyor ("sifreSonDolu:false, uzunluk:0"). Bu yuzden once
+      // gercek klavye ile yazilir (kanitlanmis yontem), sonra giris yapilir.
+      if (gonderim && !gonderim.sifreSonDolu) {
+        try {
+          const sifreH = await page.$("input[type=password]");
+          if (sifreH) {
+            await sifreH.click({ clickCount: 3 }).catch(() => { });
+            await sifreH.type(String(parola || ""), { delay: 12 });
+            console.log("[gib-borc-sorgula] sifre gercek klavye ile yazildi");
+          }
+        } catch (e) {
+          console.log("[gib-borc-sorgula] klavye ile yazma hatasi:", e && e.message || e);
+        }
+        // Kullanici kodu da bosalttiysa yenile
+        if (!gonderim.kullaniciBosBirakilacakti) {
+          try {
+            const metinler = await page.$$("input[type=text]");
+            const kullH = metinler[0];
+            if (kullH) {
+              const deger = await kullH.evaluate((el) => el.value || "");
+              if (!deger) {
+                await kullH.click({ clickCount: 3 }).catch(() => { });
+                await kullH.type(String(kull || ""), { delay: 12 });
+                console.log("[gib-borc-sorgula] kullanici kodu gercek klavye ile yazildi");
+              }
+            }
+          } catch (e) { /* yoksay */ }
+        }
+      }
+      // Captcha alani da klavye ile yazilir (ayni React sorunu)
+      try {
+        const captchaH = await page.$('input#dk, input[name="dk"]');
+        if (captchaH) {
+          const mevcut = await captchaH.evaluate((el) => el.value || "");
+          if (!mevcut) {
+            await captchaH.click({ clickCount: 3 }).catch(() => { });
+            await captchaH.type(String(kod || ""), { delay: 15 });
+          }
+        }
+      } catch (e) { /* yoksay */ }
       await page.evaluate(() => {
         const btn = [...document.querySelectorAll("button, input[type=submit], input[type=button]")].find((el) => /giri[şs] yap|giri[şs]/i.test((el.value || el.textContent || "").trim()));
         if (btn) btn.click();
@@ -15309,6 +15527,10 @@ const ISLER = {
     let taniTur = 0;
     let taniHataLoglandi = false;
     while (Date.now() - t0 < 5 * 60 * 1e3) {
+      // 2.8.61: GIB limiti tespit edildiyse donguyu hemen bitir.
+      if (p.__gibLimitAsildi) {
+        throw new Error("GIB servis istek limiti asildi; yaklasik 30 dakika sonra tekrar deneyin.");
+      }
       await new Promise((r) => setTimeout(r, 2500));
       try {
         await wafChallengeCoz(page, "gib-borc-sorgula");
@@ -15366,10 +15588,48 @@ const ISLER = {
                   }
                   return null;
                 };
+                // 2.8.325: borc/tahakkuk tablosu varsa kalem kalem oku
+                const kalemleriOku = () => {
+                  const liste = [];
+                  for (const tb of document.querySelectorAll("table")) {
+                    const trlar = [...tb.querySelectorAll("tr")];
+                    const baslikTr = trlar.find((tr) => /VADE/.test(txt(tr.textContent)) && /TUTAR|BORC|TAHAKKUK/.test(txt(tr.textContent)));
+                    if (!baslikTr) continue;
+                    const kolon = new Map();
+                    for (const h of baslikTr.querySelectorAll("th, td")) kolon.set(h.cellIndex, txt(h.textContent));
+                    const idxBul = (test) => {
+                      for (const [i, ad] of kolon) {
+                        if (test(ad)) return i;
+                      }
+                      return -1;
+                    };
+                    const vadeIdx = idxBul((h) => h.includes("VADE"));
+                    const turIdx = idxBul((h) => h.includes("VERGI") || h.includes("TUR") || h.includes("ACIKLAMA") || h.includes("TAHAKKUK"));
+                    const tutarIdx = idxBul((h) => h.includes("TUTAR") || h.includes("KALAN") || h.includes("BORC"));
+                    if (vadeIdx < 0 || tutarIdx < 0) continue;
+                    for (const tr of trlar) {
+                      if (tr === baslikTr) continue;
+                      const hucreler = [...tr.querySelectorAll("td, th")];
+                      if (!hucreler.length) continue;
+                      const metinler = hucreler.map((td) => (td.textContent || "").replace(/\s+/g, " ").trim());
+                      const t = parseFloat(String(metinler[tutarIdx] || "").replace(/[^\d.,]/g, "").replace(/\./g, "").replace(/,/g, "."));
+                      if (isNaN(t) || t <= 0) continue;
+                      liste.push({
+                        donem: metinler[vadeIdx] || "",
+                        tur: turIdx >= 0 ? metinler[turIdx] || "" : "",
+                        toplam: Math.round(t * 100) / 100
+                      });
+                      if (liste.length >= 200) break;
+                    }
+                    if (liste.length) break;
+                  }
+                  return liste;
+                };
                 const sonuc = {
                   vadesiGecmis: oku("VADES", "GECMIS"),
                   vadesiGelmemis: oku("VADES", "GELMEMIS"),
-                  toplam: oku("TOPLAM", "BORC")
+                  toplam: oku("TOPLAM", "BORC"),
+                  kalemler: kalemleriOku()
                 };
                 if (sonuc.vadesiGecmis === null && sonuc.vadesiGelmemis === null && sonuc.toplam === null) return null;
                 return sonuc;
@@ -15441,6 +15701,13 @@ const ISLER = {
                       const { tam, ...ust } = pr;
                       console.log("[gib-borc-sorgula] tani:", JSON.stringify(ust));
                       const temiz = String(tam || "").replace(/\s+/g, " ");
+                      // 2.8.61: GIB limiti asildiysa beklemeden net hata ver.
+                      // (throw burada yutuluyor; bayrakla disariya tasiyoruz)
+                      if (gibLimitAsimiMi(temiz)) {
+                        gibLimitIsaretle("gib-borc-sorgula");
+                        p.__gibLimitAsildi = true;
+                        break;
+                      }
                       const adet = Math.min(8, Math.ceil(temiz.length / 600));
                       for (let k = 0; k < adet; k++) {
                         console.log("[gib-borc-sorgula] metin-" + k + ":", temiz.substring(k * 600, (k + 1) * 600));
@@ -15472,6 +15739,7 @@ const ISLER = {
       vadesiGecmis: v.vadesiGecmis ?? 0,
       vadesiGelmemis: v.vadesiGelmemis ?? 0,
       toplam: v.toplam ?? (v.vadesiGecmis ?? 0) + (v.vadesiGelmemis ?? 0),
+      kalemler: Array.isArray(v.kalemler) ? v.kalemler : [],
       not: !okunamadi ? `Vadesi gecmis: ${fmt(v.vadesiGecmis)} TL, Vadesi gelmemis: ${fmt(v.vadesiGelmemis)} TL, Toplam: ${fmt(v.toplam)} TL` : "Giris tamamlandi ancak borc tutarlari okunamadi."
     };
   },
@@ -19459,6 +19727,11 @@ function lucaYonKanoni(y) {
   if (/satis|giden|kesilen/.test(yon)) return "satis";
   return "alis";
 }
+function lucaSayfaliFaturaMi(p = {}) {
+  const tip = String(p.sorguTip || "efatura").trim();
+  return /^(efatura|earsiv)$/.test(tip) || tip === "esmm" && lucaYonKanoni(p.yon) === "alis";
+}
+
 // 2.8.48: Masaustu otomasyonundaki yontem — Luca'nin menu.do cercevesindeki
 // `window.menuItems` kaydindan gercek `tur` kodunu bul ve fatura ekranini
 // icerik cercevesinden (frames[2]) DOGRUDAN ac. Menu tiklama zinciri (ust menu
@@ -20062,7 +20335,7 @@ async function lucaGibdenGetir(page, etiket, p = {}, sadeceTamamla = false) {
       adim: "yok",
       tarihAdet: tarihAlanlari.length,
       butonVar: !!getirBtn,
-      inputOzeti: tarihInputlari.slice(0, 4).map((i) => `${i.type || "?"}|ro=${i.readOnly}|v=${i.value}`).join(";"),
+      inputOzeti: tarihInputlari.slice(0, 4).map((i) => `${i.type || "?"}|ro=${i.readOnly}`).join(";"),
       // TANI: diyalogun div'i (#indir-window-div) bu frame'de mi? Varsa icerigini
       // dok ï¿½ inputlarin tipi/readonly/degeri ve div'in gorunurlugu buradan okunur
       // TANI: ekranda "getir" iceren görünür ogeler kimler? (buton bulunamazsa
@@ -20098,7 +20371,7 @@ async function lucaGibdenGetir(page, etiket, p = {}, sadeceTamamla = false) {
         try {
           const s = window.getComputedStyle(div);
           const ii = [];
-          div.querySelectorAll("input").forEach((x) => ii.push(`${x.type || "?"}|ro=${x.readOnly}|v=${x.value}|id=${x.id || ""}`));
+          div.querySelectorAll("input").forEach((x) => ii.push(`${x.type || "?"}|ro=${x.readOnly}|id=${x.id || ""}`));
           let btnHTML = "";
           const adayBtn = div.querySelectorAll("button, a, input[type=button], input[type=submit], span, div");
           for (const b of adayBtn) {
@@ -20840,6 +21113,8 @@ async function etebligatOtomatikGonder(clientId, belgeNo, dosyaAdi, tebligatlar)
   }
 }
 var etebligatCronCalisiyor = false;
+// 2.8.61: GIB limiti log spam'ini onlemek icin son log zamanini tut.
+var etebligatCronLimitLog = 0;
 var etebligatGonderimCalisiyor = false;
 async function etebligatGonderimKontrol() {
   if (etebligatGonderimCalisiyor) return;
@@ -20861,6 +21136,7 @@ async function etebligatGonderimKontrol() {
 
 async function etebligatCronKontrol() {
   if (etebligatCronCalisiyor) return;
+  if (cronKapaliMi("e-tebligat")) return;
   let planlar = [];
   try {
     const r = await fetch("https://mubiserp.com/api/etebligat-cron?sunucu=1", { signal: AbortSignal.timeout(15e3) });
@@ -20890,21 +21166,25 @@ async function etebligatCronKontrol() {
     return true;
   });
   if (!vadesiGelenler.length) return;
+  // 2.8.61: GIB istek limiti asildiysa otomatik tur HIC baslamaz (30 dk).
+  const limitKalan = gibLimitBeklemeKaldi();
+  if (limitKalan > 0) {
+    if (!etebligatCronLimitLog || Date.now() - etebligatCronLimitLog > 10 * 60 * 1000) {
+      etebligatCronLimitLog = Date.now();
+      console.log(`[etebligat-cron] GIB istek limiti nedeniyle ${Math.ceil(limitKalan / 60000)} dk bekleniyor (otomatik tur atlandi)`);
+    }
+    return;
+  }
   etebligatCronCalisiyor = true;
   console.log(`[etebligat-cron] ${vadesiGelenler.length} plan vadesi geldi:`, vadesiGelenler.map((p) => `${p.client_id}@${p.saat}`).join(", "));
   try {
     for (const p of vadesiGelenler) {
-      // 2.8.49: Kullanici elle sorgu baslattiysa otomatik GIB cron'u BEKLETILIR.
-      // Aksi halde 45 musterilik e-Tebligat turu, ayni kuyrugu kullandigi icin
-      // fatura sorgusunu 20+ dk geciktiriyordu (eski sistemde ise ayni
-      // tarayicida calisip Luca oturumunu bozuyordu).
-      let bekleme = 0;
-      while ((kuyruktaBekleyen > 0 || aktifIsSayisi > 0) && bekleme < 30) {
-        await new Promise((r) => setTimeout(r, 3000));
-        bekleme++;
-      }
-      if (kuyruktaBekleyen > 0 || aktifIsSayisi > 0) {
-        console.log("[etebligat-cron] elle calisan is var — bu tur erteleniyor (sonraki turda devam)");
+      // 2.8.58 DUZELTME: onceki kontrol `kuyruktaBekleyen > 0` idi ve bu sayac
+      // cron isinin KENDISINI de kapsadigi icin her turda 90 sn bekleyip
+      // kiriliyordu. Artik yalniz ELLE bekleyen is sayilir; elle is varsa
+      // otomatik GIB turu hemen birakilir (kullanici beklemez).
+      if (elleBekleyen > 0) {
+        console.log("[etebligat-cron] elle sorgu bekliyor — otomatik tur ertelendi (sonraki turda devam)");
         break;
       }
       let tebligatlar = [];
@@ -20928,6 +21208,14 @@ async function etebligatCronKontrol() {
       } catch (e) {
         hata = String(e && e.message);
         console.log(`[etebligat-cron] musteri ${p.client_name || p.client_id} hata: ${hata}`);
+      }
+      // 2.8.61: GIB "Servis Istek Limiti Asildi" gorulduyse tum otomatik tur
+      // durdurulur — aksi halde her dakika tekrar deneyip IP'yi kilitliyor ve
+      // kullanicinin elle borc sorgusunu da bozuyordu.
+      const limitAsildi = !!(hata && gibLimitAsimiMi(hata));
+      if (limitAsildi) {
+        gibLimitIsaretle("etebligat-cron");
+        console.log(`[etebligat-cron] GIB limiti nedeniyle tur durduruldu (${p.client_name || p.client_id})`);
       }
       let yeniler = [];
       let clientId = p.client_id;
@@ -20954,6 +21242,7 @@ async function etebligatCronKontrol() {
         }
       }
       await new Promise((r) => setTimeout(r, 15e3));
+      if (limitAsildi) break;
     }
   } finally {
     etebligatCronCalisiyor = false;
@@ -21419,6 +21708,7 @@ async function faturaIsle(musteri, yil, ay, tur, yon, luca) {
 }
 async function faturaCronKontrol() {
   if (faturaCronCalisiyor) return;
+  if (cronKapaliMi("fatura")) return;
   let paket = null;
   try {
     const r = await fetch(FATURA_CRON_WEB + "/api/fatura-cron?sunucu=1", { headers: faturaCronBasliklar(), signal: AbortSignal.timeout(2e4) });
@@ -21472,6 +21762,16 @@ async function faturaCronKontrol() {
       let toplamYuklenen = 0;
       let hataliMusteri = 0;
       for (const m of musteriler) {
+        // 2.8.58: kullanici elle sorgu baslattiysa otomatik fatura turu birakilir.
+        if (elleBekleyen > 0) {
+          console.log("[fatura-cron] elle sorgu bekliyor — otomatik tur ertelendi (sonraki turda devam)");
+          break;
+        }
+        // 2.8.61: GIB istek limiti asildiysa otomatik tur durdurulur.
+        if (gibLimitBeklemeKaldi() > 0) {
+          console.log("[fatura-cron] GIB istek limiti nedeniyle tur durduruldu");
+          break;
+        }
         let musteriYuklenen = 0;
         let musteriHata = "";
         for (const tur of turlar) {
@@ -21874,6 +22174,7 @@ async function dvsSorgulaTek(musteri, tur, yil, ay) {
 }
 async function dvsCronKontrol() {
   if (dvsCronCalisiyor) return;
+  if (cronKapaliMi("POS/KDV")) return;
   let paket = null;
   try {
     const r = await fetch(DVS_CRON_WEB + "/api/dvs-cron?sunucu=1", { headers: dvsCronBasliklar(), signal: AbortSignal.timeout(2e4) });
@@ -22025,7 +22326,7 @@ setTimeout(() => {
   } catch {
   }
 }, 180 * 1e3);
-var zipYakalamaKurFn = () => {
+var zipYakalamaKurFn = (guvenli = false) => {
   try {
     if (window.__mubisZipKap) return "zaten";
     const L = window.Luca;
@@ -22039,6 +22340,10 @@ var zipYakalamaKurFn = () => {
         state.base64 = "";
         state.hata = "";
         const url = new URL(action, location.href).href;
+        if (guvenli) {
+          const adres = new URL(url);
+          if (adres.protocol !== "https:" || !/(^|\.)luca\.com\.tr$/i.test(adres.hostname) || adres.origin !== location.origin || !/^\/Luca\/gib530\//i.test(adres.pathname)) throw new Error("Luca indirme adresi doğrulanamadı.");
+        }
         try {
           state.ad = decodeURIComponent(new URL(url).pathname.split("/").pop() || "") || "luca.zip";
         } catch (e) {
@@ -22049,8 +22354,10 @@ var zipYakalamaKurFn = () => {
         fetch(url, {
           method: String(method || "post").toUpperCase(),
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          ...(guvenli ? { redirect: "error" } : {}),
           body
         }).then(async (r) => {
+          if (guvenli && !r.ok) throw new Error(`Luca indirme HTTP ${r.status}.`);
           const buf = new Uint8Array(await r.arrayBuffer());
           state.boyut = buf.length;
           state.ct = String(r.headers.get("content-type") || "");
@@ -22074,7 +22381,7 @@ var zipYakalamaKurFn = () => {
               // ZIP imzasi base64'te "UEsDB" ile baslar
               if (/^UEsDB/.test(b64)) {
                 state.base64 = b64;
-                state.boyut = Math.floor(b64.length * 3 / 4);
+                state.boyut = atob(b64).length;
                 state.faz = "hazir";
                 return;
               }
@@ -22083,6 +22390,11 @@ var zipYakalamaKurFn = () => {
             const mesaj = String((j && (j.error || j.message || j.data && j.data.error)) || metin).replace(/\s+/g, " ").slice(0, 300);
             if (mesaj) state.hata = mesaj;
           } catch (e4) { /* JSON degil */ }
+          if (guvenli) {
+            state.hata = state.hata || "Luca geçerli ZIP döndürmedi.";
+            state.faz = "hata";
+            return;
+          }
           // (3) Bilinmeyen yanit: yedek indirme yolu
           try {
             const blob = new Blob([buf], { type: r.headers.get("content-type") || "application/octet-stream" });
@@ -22110,6 +22422,8 @@ var zipYakalamaKurFn = () => {
         state.faz = "hata";
       }
     };
+    const yakalayici = L.downloadPost;
+    state.restoreLegacy = () => { if (L.downloadPost === yakalayici) L.downloadPost = orijinal; };
     return "kurulu";
   } catch (e) {
     return "hata: " + (e && e.message);
@@ -22138,6 +22452,30 @@ function faturaZipDosyalariniCikar(zipYolu, hedefKlasor = indirmeKlasoru) {
   ac(new AdmZip(zipYolu));
   return cikarilan;
 }
+async function lucaDogrulanmisZipKaydet(zipYol, faturalar, p, etiket) {
+  const { arsiviDogrula } = require("./luca-fatura-sayfalama");
+  arsiviDogrula(fs.readFileSync(zipYol), faturalar);
+  const hedefKlasor = p.cronYukle ? path.join(indirmeKlasoru, "mubis-fatura-cron") : indirmeKlasoru;
+  fs.mkdirSync(hedefKlasor, { recursive: true });
+  const dosyalar = faturaZipDosyalariniCikar(zipYol, hedefKlasor);
+  if (!dosyalar.length) throw new Error("Luca ZIP içinde indirilebilir fatura dosyası bulunamadı.");
+  const kaydedilecek = new Set(dosyalar);
+  for (const ad of dosyalar.filter((ad) => /\.html?$/i.test(ad)).concat(dosyalar.filter((ad) => /\.xml$/i.test(ad)))) {
+    try {
+      if (await faturaPdfDosyasi(ad, p, hedefKlasor)) kaydedilecek.add(ad.replace(/\.(xml|html?)$/i, ".pdf"));
+    } catch (error) { console.log(`[${etiket}] Fatura PDF dönüştürülemedi:`, error.message); }
+  }
+  for (const ad of kaydedilecek) {
+    const yol = path.join(hedefKlasor, ad);
+    const stat = fs.statSync(yol);
+    if (p.cronYukle) faturaCronDosyaKuyrugu.push({ ad, boyut: stat.size, yol });
+    else edtOrphanKaydet(ad, { ...p, yon: lucaYonKanoni(p.yon) });
+    lucaSonIndirilenDosyalar.push({ ad, boyut: stat.size, tarih: stat.mtimeMs });
+  }
+  lucaJqZipIle = true;
+  console.log(`[${etiket}] Luca ZIP doğrulandı: ${faturalar.length} fatura, ${dosyalar.length} dosya`);
+}
+
 async function lucaTekilFaturaIndir(frame, etiket, p = {}) {
   const log = (m, ek) => console.log(`[${etiket}] ${m}`, ek === void 0 ? "" : ek);
   const bugun = /* @__PURE__ */ new Date();
@@ -22435,7 +22773,7 @@ function lucaZipAgIzleyici(browser, hedefKlasor) {
   };
 }
 
-async function lucaGorunurTopluZip(frame, etiket, p = {}, page = null) {
+async function lucaGorunurTopluZip(frame, etiket, p = {}, page = null, beklenenFaturalar = null) {
   const log = (m, ek) => console.log(`[${etiket}] ${m}`, ek === void 0 ? "" : ek);
   // Tum cerceveleri taramak icin sayfa gerekli; verilmezse frame'in sahibi
   // sayfa bulunamaz (Puppeteer'da Frame.page() yok).
@@ -22460,14 +22798,27 @@ async function lucaGorunurTopluZip(frame, etiket, p = {}, page = null) {
   // (window.Luca.downloadPost) her zaman fatura listesi cercevesinde degil;
   // bazen ust pencere/yardimci cercevede oluyor. Tek cerceveye kurmak
   // "bekliyor"da sonsuz beklemeye yol aciyordu.
+  if (beklenenFaturalar) {
+    for (const cerceve of cerceveler()) {
+      await cerceve.evaluate(() => {
+        window.__mubisZipKap?.restoreModern?.();
+        window.__mubisZipKap?.restoreLegacy?.();
+        window.__mubisZipKap = null;
+      }).catch(() => {});
+    }
+  }
   let kurulan = 0;
   for (const f of cerceveler()) {
-    const r = await f.evaluate(zipYakalamaKurFn).catch(() => "hata");
+    const r = await f.evaluate(zipYakalamaKurFn, !!beklenenFaturalar).catch(() => "hata");
     if (String(r) === "kurulu" || String(r) === "zaten") kurulan++;
     await f.evaluate(() => {
       const v = window.__mubisZipKap;
       if (v) { v.faz = "bekliyor"; v.base64 = ""; v.boyut = 0; v.hata = ""; v.ad = ""; }
     }).catch(() => { });
+  }
+  if (beklenenFaturalar) {
+    const { modernZipYakala } = require("./luca-fatura-sayfalama");
+    if (await frame.evaluate(modernZipYakala)) kurulan++;
   }
   log(`gorunur toplu indirme: ZIP yakalayici ${kurulan}/${cerceveler().length} cerceveye kuruldu`);
   if (!kurulan) {
@@ -22525,7 +22876,7 @@ async function lucaGorunurTopluZip(frame, etiket, p = {}, page = null) {
   // (prototype'lere mudahale ediyorlar). "onay verilemedi: [...].find is not a
   // function" hatasi bundan dolayiydi ve toplu ZIP hic baslamiyordu. Tum
   // eslesmeler duz for dongusuyle yapilir.
-  const onay = await frame.evaluate(async () => {
+  const onay = await frame.evaluate(async (beklenen) => {
     const norm = (s) => String(s || "").replace(/\s+/g, " ").trim().toLocaleLowerCase("tr");
     const gorunur = (el) => !!(el && el.getClientRects().length > 0);
     const d = document.querySelector("#indir-window-div");
@@ -22539,13 +22890,30 @@ async function lucaGorunurTopluZip(frame, etiket, p = {}, page = null) {
       const t = norm(el.textContent || el.title);
       if (/hepsini_sec/.test(oc) || t.startsWith("buraya")) { tumu = el; break; }
     }
-    if (tumu) { tumu.click(); await new Promise((r) => setTimeout(r, 400)); }
+    if (tumu && !beklenen) { tumu.click(); await new Promise((r) => setTimeout(r, 400)); }
     let secili = 0;
     const kutular = [...document.querySelectorAll(".sec")];
     for (let i = 0; i < kutular.length; i++) {
       const cb = kutular[i];
       const tr = cb.closest("tr");
       if (tr && tr.getAttribute("fatura") && cb.checked) secili++;
+    }
+    if (beklenen) {
+      const secilen = [];
+      for (const cb of kutular) {
+        const tr = cb.closest("tr");
+        if (!cb.checked || !tr?.getAttribute("fatura")) continue;
+        const invoice = JSON.parse(tr.getAttribute("fatura"));
+        const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
+        const no = clean(invoice.belge_numarasi || invoice.belgeNumarasi || invoice.evrak_no).toUpperCase();
+        const ettn = clean(invoice.ettn || invoice.uuid).toLowerCase();
+        const cells = Array.from(tr.cells).map((cell) => clean(cell.innerText || ""));
+        secilen.push(ettn ? JSON.stringify(["ettn", no, ettn]) : JSON.stringify(["row", Object.keys(invoice).sort().map((key) => [key, invoice[key]]), cells]));
+      }
+      if (secilen.length !== beklenen.length) return { ok: false, neden: "fatura-secimi-degisti", secili };
+      for (let i = 0; i < secilen.length; i++) {
+        if (beklenen.indexOf(secilen[i]) === -1) return { ok: false, neden: "fatura-secimi-degisti", secili };
+      }
     }
     let btn = null;
     let btnUzunluk = 1e9;
@@ -22576,18 +22944,18 @@ async function lucaGorunurTopluZip(frame, etiket, p = {}, page = null) {
       downloadPostVar: typeof (window.Luca && window.Luca.downloadPost),
       diyalogAcik: !!(document.querySelector("#indir-window-div") && document.querySelector("#indir-window-div").getClientRects().length > 0)
     };
-  }).catch((e) => ({ ok: false, neden: String(e && e.message || e) }));
+  }, beklenenFaturalar?.map((fatura) => fatura.key) || null).catch((e) => ({ ok: false, neden: String(e && e.message || e) }));
   if (!onay?.ok) { log("gorunur toplu indirme: onay verilemedi (" + (onay?.neden || "?") + ")"); return null; }
   log(`gorunur toplu indirme onayi verildi (${onay.secili} fatura secili) | ${onay.html || ""} | Luca=${onay.lucaVar} downloadPost=${onay.downloadPostVar}`);
 
   // 2.8.57: AG IZLEYICI — yeni sekmede gelen ZIP yaniti buradan yakalanir.
-  const agIzleyici = kokSayfa && kokSayfa.browser
+  const agIzleyici = !beklenenFaturalar && kokSayfa && kokSayfa.browser
     ? lucaZipAgIzleyici(kokSayfa.browser(), indirmeKlasoru)
     : null;
 
   // 2.8.56: JS click bazen Luca'nin submit'ini tetiklemiyor. Isaretlenmis
   // dugme uzerinden sirayla: gonder('zip') -> gercek fare tiklamasi.
-  {
+  if (!beklenenFaturalar) {
     {
       // 2 sn bekle: istek yakalandi mi? (tum cerceveler)
       let basladi = false;
@@ -22679,33 +23047,43 @@ async function lucaGorunurTopluZip(frame, etiket, p = {}, page = null) {
 
   // 7) base64'u parca parca diske yaz
   try { fs.mkdirSync(indirmeKlasoru, { recursive: true }); } catch { }
-  const zipYol = path.join(indirmeKlasoru, "luca-toplu-" + Date.now() + ".zip");
-  const DILIM = 1024 * 1024;
-  const fd = fs.openSync(zipYol, "w");
+  const geciciKlasor = beklenenFaturalar ? fs.mkdtempSync(path.join(os.tmpdir(), "mubis-luca-zip-")) : null;
+  const zipYol = path.join(geciciKlasor || indirmeKlasoru, "luca-toplu-" + Date.now() + ".zip");
   try {
-    for (let off = 0; off < durum.boyut * 2; off += DILIM) {
-      const parca = await zipCerceve.evaluate((o, c) => {
-        const v = window.__mubisZipKap && window.__mubisZipKap.base64 || "";
-        return v.slice(o, o + c);
-      }, off, DILIM).catch(() => "");
-      if (!parca) break;
-      fs.writeSync(fd, Buffer.from(parca, "base64"));
+    const DILIM = 1024 * 1024;
+    const fd = fs.openSync(zipYol, "w");
+    try {
+      for (let off = 0; off < durum.boyut * 2; off += DILIM) {
+        const parca = await zipCerceve.evaluate((o, c) => {
+          const v = window.__mubisZipKap && window.__mubisZipKap.base64 || "";
+          return v.slice(o, o + c);
+        }, off, DILIM).catch(() => "");
+        if (!parca) break;
+        fs.writeSync(fd, Buffer.from(parca, "base64"));
+      }
+    } finally {
+      fs.closeSync(fd);
+      await zipCerceve.evaluate(() => { if (window.__mubisZipKap) window.__mubisZipKap.base64 = ""; }).catch(() => { });
     }
+    const boyut = fs.statSync(zipYol).size;
+    const imza = Buffer.alloc(2);
+    const ifd = fs.openSync(zipYol, "r");
+    try { fs.readSync(imza, 0, 2, 0); } finally { fs.closeSync(ifd); }
+    if (boyut < 4 || imza[0] !== 80 || imza[1] !== 75) throw new Error("Luca gorunur toplu indirme gecerli bir ZIP degil");
+    if (beklenenFaturalar) {
+      if (boyut !== durum.boyut) throw new Error("Luca ZIP aktarımı eksik; dosya boyutu eşleşmiyor.");
+      await lucaDogrulanmisZipKaydet(zipYol, beklenenFaturalar, p, etiket);
+      return "tamam";
+    }
+    log("gorunur toplu ZIP kaydedildi (" + Math.round(boyut / 1024) + " KB) \u2014 aciliyor");
+    zipCikar(zipYol, indirmeKlasoru, 18e4);
+    try { fs.unlinkSync(zipYol); } catch { }
+    lucaJqZipIle = true;
+    log("gorunur toplu indirme tamam: ZIP acildi");
+    return "tamam";
   } finally {
-    fs.closeSync(fd);
-    await zipCerceve.evaluate(() => { if (window.__mubisZipKap) window.__mubisZipKap.base64 = ""; }).catch(() => { });
+    if (geciciKlasor) fs.rmSync(geciciKlasor, { recursive: true, force: true });
   }
-  const boyut = fs.statSync(zipYol).size;
-  const imza = Buffer.alloc(2);
-  const ifd = fs.openSync(zipYol, "r");
-  try { fs.readSync(imza, 0, 2, 0); } finally { fs.closeSync(ifd); }
-  if (boyut < 4 || imza[0] !== 80 || imza[1] !== 75) throw new Error("Luca gorunur toplu indirme gecerli bir ZIP degil");
-  log("gorunur toplu ZIP kaydedildi (" + Math.round(boyut / 1024) + " KB) \u2014 aciliyor");
-  zipCikar(zipYol, indirmeKlasoru, 18e4);
-  try { fs.unlinkSync(zipYol); } catch { }
-  lucaJqZipIle = true;
-  log("gorunur toplu indirme tamam: ZIP acildi");
-  return "tamam";
 }
 
 async function lucaJqTopluIndir(page, etiket, p = {}) {
@@ -22907,10 +23285,11 @@ async function lucaDahiliTopluZip(frame, etiket, p = {}) {
 //   "125 adet fatura bulundu. (Sayfa No: 1)"
 // Boylece kac belge geldigini biliriz; 0 ise 45 sn bos bekleme yapmayiz,
 // >0 ise liste hazir demektir.
-async function lucaListeBilgisi(page) {
+async function lucaListeBilgisi(page, hedefMenu = null) {
   try {
     for (const f of page.frames()) {
-      const r = await f.evaluate(() => {
+      const r = await f.evaluate((beklenenMenu) => {
+        if (beklenenMenu && String(window.menu_tur || "") !== beklenenMenu) return null;
         const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
         const adaylar = document.querySelectorAll("div, span, td, p, b, strong");
         let adet = null, sayfa = null;
@@ -22925,15 +23304,17 @@ async function lucaListeBilgisi(page) {
         }
         const gorunur = (el) => el.getClientRects().length > 0;
         let satir = 0;
-        const kutular = document.querySelectorAll('input[type="checkbox"]');
+        const faturaEkrani = /^gib_(?:efatura|ebelge)_/.test(String(window.menu_tur || ""));
+        const kutular = document.querySelectorAll(faturaEkrani ? '.sec' : 'input[type="checkbox"]');
         for (let i = 0; i < kutular.length; i++) {
           const cb = kutular[i];
-          if (!gorunur(cb) || cb.disabled) continue;
-          if (cb.closest("th") || cb.closest("thead")) continue;
+          if (faturaEkrani) {
+            if (!cb.closest("tr")?.getAttribute("fatura")) continue;
+          } else if (!gorunur(cb) || cb.disabled || cb.closest("th") || cb.closest("thead")) continue;
           satir++;
         }
         return { adet, sayfa, satir };
-      }).catch(() => null);
+      }, hedefMenu).catch(() => null);
       if (r && (r.adet !== null || r.satir > 0)) return r;
       if (r && r.adet === null && r.satir === 0) {
         // devam: diger frame'lerde olabilir
@@ -22942,6 +23323,97 @@ async function lucaListeBilgisi(page) {
     }
   } catch (e) { /* yoksay */ }
   return null;
+}
+
+async function lucaGibIslemTakibiniBekle(browser, etiket) {
+  const baslangic = Date.now();
+  let goruldu = false;
+  while (Date.now() - baslangic < 240000) {
+    if (LUCA_GETIR_IPTAL) throw new Error("KULLANICI_DURDURDU");
+    let acik = false;
+    let kapatildi = false;
+    const sayfalar = await browser.pages().catch(() => []);
+    for (const sayfa of sayfalar) {
+      if (sayfa.isClosed?.()) continue;
+      for (const frame of sayfa.frames()) {
+        const sonuc = await frame.evaluate(() => {
+          const panel = document.querySelector("#luca-board");
+          if (!panel || !panel.getClientRects().length || getComputedStyle(panel).display === "none" || getComputedStyle(panel).visibility === "hidden") return null;
+          const metin = String(panel.innerText || "").toLocaleLowerCase("tr").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i").replace(/\s+/g, " ");
+          if (!metin.includes("islem takip")) return null;
+          if (/sirket bilgilerinden tc kimlik veya vergi numarasi girilmelidir|yetki sozlesmesi bulunmamaktadir/.test(metin)) return "hata";
+          if (!/fatura kaydetme islemi sona erdi|islem tamamlandi|islem basariyla tamamlandi|belirtilen tarih araliginda sorgulamalar tamamlandi/.test(metin)) return "bekliyor";
+          let kapat = null;
+          for (const el of panel.querySelectorAll("button, input, a, [onclick]")) {
+            if (el.getClientRects().length && String(el.innerText || el.textContent || el.value || "").trim().toLocaleLowerCase("tr") === "kapat") { kapat = el; break; }
+          }
+          if (!kapat) return "bekliyor";
+          kapat.click();
+          return "kapatildi";
+        }).catch(() => null);
+        if (sonuc === "hata") throw new Error("Luca GIB sorgusunda yetki veya firma kimlik hatasi bildirdi.");
+        if (sonuc) { goruldu = true; acik = true; }
+        if (sonuc === "kapatildi") kapatildi = true;
+      }
+    }
+    if (kapatildi) {
+      console.log(`[${etiket}] Luca islem takibi tamamlandi; Kapat dugmesine basildi`);
+      return "tamamlandi";
+    }
+    if (!acik && (goruldu || Date.now() - baslangic >= 5000)) {
+      console.log(`[${etiket}] Luca islem takibi gorunmuyor; sonuc ekrani ayrica dogrulanacak`);
+      return "ekran-dogrulanacak";
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error("Luca GIB islem takibi suresinde tamamlanmadi; sonraki asamaya gecilmedi.");
+}
+
+async function lucaFaturaListeDurumu(page, hedefMenu) {
+  if (!hedefMenu) return { durum: "bekliyor" };
+  let sonuc = null;
+  let islemAcik = false;
+  for (const f of page.frames()) {
+    const bilgi = await f.evaluate((beklenenMenu) => {
+      const gorunur = (el) => !!el && el.getClientRects().length > 0 && getComputedStyle(el).display !== "none" && getComputedStyle(el).visibility !== "hidden";
+      const panel = document.querySelector("#luca-board");
+      const panelMetni = String(panel?.innerText || "").toLocaleLowerCase("tr").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i").replace(/\s+/g, " ");
+      const panelAcik = gorunur(panel) && panelMetni.includes("islem takip");
+      if (panelAcik) {
+        const metin = panelMetni;
+        if (/sirket bilgilerinden tc kimlik veya vergi numarasi girilmelidir|yetki sozlesmesi bulunmamaktadir/.test(metin)) return { panelAcik, hata: true };
+        if (/fatura kaydetme islemi sona erdi|islem tamamlandi|islem basariyla tamamlandi|belirtilen tarih araliginda sorgulamalar tamamlandi/.test(metin)) {
+          let kapat = null;
+          for (const el of panel.querySelectorAll("button, input, a, [onclick]")) {
+            if (gorunur(el) && String(el.innerText || el.textContent || el.value || "").trim().toLocaleLowerCase("tr") === "kapat") { kapat = el; break; }
+          }
+          if (kapat) kapat.click();
+        }
+      }
+      if (String(window.menu_tur || "") !== beklenenMenu) return { panelAcik };
+      const satirlar = [...document.querySelectorAll(".sec")].filter((cb) => cb.closest("tr")?.getAttribute("fatura"));
+      let gecersiz = false;
+      for (const cb of satirlar) {
+        try {
+          const fatura = JSON.parse(cb.closest("tr").getAttribute("fatura"));
+          if (!(fatura.belge_numarasi || fatura.belgeNumarasi || fatura.evrak_no)) gecersiz = true;
+        } catch { gecersiz = true; }
+      }
+      const metin = document.body?.innerText || "";
+      const adet = metin.match(/(\d+)\s+adet\s+(?:fatura|belge)\s+bulundu/i);
+      const bos = /her\s*hangi\s+bir\s+fatura\s+bulunamad[ıi]/i.test(metin) || !!adet && Number(adet[1]) === 0;
+      const bekliyor = document.readyState !== "complete" || (typeof window.jQuery?.active === "number" && window.jQuery.active > 0);
+      return { panelAcik, dogruEkran: true, satir: satirlar.length, gecersiz, bos, bekliyor };
+    }, hedefMenu).catch(() => null);
+    if (bilgi?.hata) throw new Error("Luca GIB sorgusunda yetki veya firma kimlik hatasi bildirdi; sonuc bos kabul edilmedi.");
+    if (bilgi?.panelAcik) islemAcik = true;
+    if (bilgi?.dogruEkran) sonuc = bilgi;
+  }
+  if (!sonuc || sonuc.bekliyor || islemAcik) return { durum: "bekliyor" };
+  if (sonuc.gecersiz) throw new Error("Luca fatura satirinin kimligi okunamadi; indirme baslatilmadi.");
+  if (sonuc.satir > 0) return { durum: "hazir", satir: sonuc.satir };
+  if (sonuc.bos) return { durum: "bos", satir: 0 };
+  return { durum: "bekliyor" };
 }
 
 async function lucaBelgeleriIndir(page, etiket, durum, p = {}) {
@@ -22956,7 +23428,134 @@ async function lucaBelgeleriIndir(page, etiket, durum, p = {}) {
     }
   }
   const sorguTipStr0 = String(p.sorguTip || "efatura");
-  if (!/^(efatura|earsiv)/.test(sorguTipStr0)) {
+  const faturaListeKontrolu = p.mod === "indir" && !p.canliSorgu && lucaSayfaliFaturaMi(p);
+  if (faturaListeKontrolu && !durum.listeDogrulandi) {
+    const hedefMenu = lucaMenuKodu(p);
+    const sonSure = Date.now() + 30000;
+    let liste = { durum: "bekliyor" };
+    while (Date.now() < sonSure) {
+      if (LUCA_GETIR_IPTAL) throw new Error("KULLANICI_DURDURDU");
+      liste = await lucaFaturaListeDurumu(page, hedefMenu);
+      if (liste.durum !== "bekliyor") break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    if (liste.durum === "bos") {
+      log("indir modu: Luca bos fatura listesini dogruladi; indirme atlandi");
+      return "bos";
+    }
+    if (liste.durum !== "hazir") throw new Error("Luca fatura listesi 30 saniye icinde dogrulanamadi; bos liste veya basarili indirme olarak kabul edilmedi.");
+    durum.listeDogrulandi = true;
+    log(`indir modu: ${liste.satir} gercek fatura satiri dogrulandi`);
+  }
+  if (faturaListeKontrolu) {
+    const { sayfalariIndir } = require("./luca-fatura-sayfalama");
+    const menu = lucaMenuKodu(p);
+    const yil = Number(p.yil), ay = Number(p.ay);
+    if (!Number.isInteger(yil) || yil < 2000 || !Number.isInteger(ay) || ay < 1 || ay > 12) throw new Error("Fatura indirme dönemi doğrulanamadı.");
+    const iki = (sayi) => String(sayi).padStart(2, "0");
+    const bugun = new Date();
+    let sonGun = new Date(yil, ay, 0).getDate();
+    if (yil === bugun.getFullYear() && ay === bugun.getMonth() + 1) sonGun = Math.min(sonGun, bugun.getDate());
+    const bas = String(p.gibdenBasTarihi || `01/${iki(ay)}/${yil}`);
+    const bit = String(p.gibdenBitTarihi || `${iki(sonGun)}/${iki(ay)}/${yil}`);
+    let frame = null;
+    for (const aday of page.frames()) {
+      if (await aday.evaluate((beklenen) => window.menu_tur === beklenen && !!document.querySelector("tr[fatura] .sec"), menu).catch(() => false)) {
+        if (frame) throw new Error("Luca fatura ekranı tekil olarak doğrulanamadı.");
+        frame = aday;
+      }
+    }
+    if (!frame) throw new Error("Luca fatura ekranı doğrulanamadı.");
+    const sonuc = await sayfalariIndir({
+      frame, menu, bas, bit,
+      log: (mesaj) => log(mesaj),
+      iptal: () => { if (LUCA_GETIR_IPTAL) throw new Error("KULLANICI_DURDURDU"); },
+      indir: async (faturalar) => {
+        try {
+          const sonuc = await lucaGorunurTopluZip(frame, etiket, p, page, faturalar);
+          if (sonuc !== "tamam") throw new Error("Luca toplu fatura indirmesi doğrulanamadı.");
+        } finally {
+          for (const cerceve of page.frames()) {
+            await cerceve.evaluate(() => {
+              window.__mubisZipKap?.restoreModern?.();
+              window.__mubisZipKap?.restoreLegacy?.();
+              window.__mubisZipKap = null;
+            }).catch(() => {});
+          }
+        }
+      }
+    });
+    log(`Luca sayfaları doğrulandı: ${sonuc.pages} sayfa, ${sonuc.listed} satır, ${sonuc.downloaded} hedef dönem faturası`);
+    return sonuc.downloaded ? "tamam" : "bos";
+  }
+  // 2.8.68: INDIR modunda liste gercekten bossa (0 satir) "buraya" /
+  // "Secilenleri Indir" dongusune girmeden temiz bir "belge yok" sonucu ver.
+  // Onceden ekran yeniden acildiginda liste sifirlaniyor, 6 dakika boyunca
+  // "isaretli satir 0" loglaniyor ve belge indirilemiyordu. UTTS kendi Excel
+  // yolunu kullandigi icin bu kontrolun disinda tutulur.
+  if (p.mod === "indir" && !/^utts/.test(sorguTipStr0) && !p.canliSorgu && !faturaListeKontrolu) {
+    const bekleBas = Date.now();
+    let satirEn = 0, adetEn = 0, bosDiyalogTur = 0;
+    for (let turB = 0; turB < 16; turB++) {
+      let satirB = 0, adetB = 0, bosD = false;
+      for (const f of page.frames()) {
+        const r = await f.evaluate(() => {
+          const gorunur = (el) => el.getClientRects().length > 0;
+          let n = 0;
+          try {
+            n = [...document.querySelectorAll('input[type="checkbox"]')].filter((cb) => gorunur(cb) && !cb.disabled && !cb.closest("th") && !cb.closest("thead")).length;
+          } catch (e) {
+          }
+          let adet = null;
+          try {
+            const norm = (x) => String(x || "").replace(/\s+/g, " ").trim();
+            for (const el of document.querySelectorAll("div, span, td, p, b, strong")) {
+              const t = norm(el.innerText || el.textContent || "");
+              if (!t || t.length > 220) continue;
+              const m = t.match(/(\d+)\s+adet\s+(?:fatura|belge)\s+bulundu/i);
+              if (m) {
+                adet = Number(m[1]);
+                break;
+              }
+            }
+          } catch (e) {
+          }
+          let bulunamadi = false;
+          try {
+            const norm = (x) => String(x || "").toLocaleLowerCase("tr");
+            for (const d of document.querySelectorAll("div, span, td")) {
+              if (!gorunur(d)) continue;
+              const t = norm(d.innerText || "");
+              if (t.length >= 10 && t.length <= 400 && t.includes("bulunamad") && !t.includes("islem takip") && !t.includes("plaka")) {
+                bulunamadi = true;
+                break;
+              }
+            }
+          } catch (e) {
+          }
+          return { satir: n, adet, bulunamadi };
+        }).catch(() => null);
+        if (r) {
+          satirB = Math.max(satirB, r.satir || 0);
+          adetB = Math.max(adetB, r.adet || 0);
+          bosD = bosD || r.bulunamadi === true;
+        }
+      }
+      satirEn = Math.max(satirEn, satirB);
+      adetEn = Math.max(adetEn, adetB);
+      if (satirB > 0) break;
+      bosDiyalogTur = bosD ? bosDiyalogTur + 1 : 0;
+      if (bosDiyalogTur >= 3) break;
+      if (Date.now() - bekleBas > 2e4) break;
+      await new Promise((r) => setTimeout(r, 1200));
+    }
+    if (satirEn <= 0 && adetEn <= 0) {
+      log(`indir modu: liste bos (0 satir${bosDiyalogTur ? ", 'bulunamadi' diyalogu goruldu" : ""}) \u2014 indirme atlandi`);
+      return "bos";
+    }
+    if (satirEn > 0) log(`indir modu: liste hazir (${satirEn} satir) \u2014 indirmeye geciliyor`);
+  }
+  if (!lucaSayfaliFaturaMi(p)) {
     // 2.7.580: e-SMM/UTTS/5000'de Luca "Her hangi bir fatura bulunamadi..."
     // jQuery diyaloğu SAYFA ICINDE acilir (native dialog degil) ve bos listede
     // INDIR diyaloğu da acilabilir â€” ikisi de akisi donguye sokuyordu. Bu
@@ -24020,6 +24619,31 @@ async function lucaBelgeleriIndir(page, etiket, durum, p = {}) {
       }
     }
     if (durum.adim === "sec") {
+      // 2.8.70: "sorgula" adimindan hazir liste devralindiysa "Belge Sec"
+      // diyalogunu YENIDEN ACMA — belgeSecDivAc() listeyi sifirliyor.
+      // Dogrudan mevcut tablodaki satirlar isaretlenip "Secilenleri Indir"
+      // tiklanir.
+      if (durum.hazirEkran) {
+        durum.adim = "indir";
+        log("indir modu: hazir liste devralindi \u2014 belge sec diyalogu acilmadan mevcut tablo kullanilacak");
+        return false;
+      }
+      if (!durum.ekranDumpLoglandi) {
+        durum.ekranDumpLoglandi = true;
+        try {
+          for (const f of await tumSayfaFrame()) {
+            const d = await f.evaluate(() => {
+              const gorunur = (el) => el.getClientRects().length > 0;
+              const div = document.querySelector("#indir-window-div");
+              const belgeSec = document.querySelectorAll(".belge-sec tr").length;
+              const secili = document.querySelectorAll(".belge-sec tr td .sec:checked").length;
+              const btn = [...document.querySelectorAll("button, a, input[type=button], span, div")].filter((x) => gorunur(x) && !x.disabled).map((x) => ({ t: String(x.tagName === "INPUT" ? x.value : x.textContent || "").replace(/\s+/g, " ").trim().slice(0, 26), id: String(x.id || "").slice(0, 24), oc: String(x.getAttribute("onclick") || "").slice(0, 44) })).filter((x) => x.t && /indir|belge|se[cç]|tamam|getir|kapat|buraya/i.test(x.t + " " + x.oc)).slice(0, 24);
+              return { url: location.href.slice(0, 70), menu_tur: String(window.menu_tur || ""), belgeSec, secili, indirDiv: div ? { gorunur: gorunur(div), metin: String(div.innerText || "").replace(/\s+/g, " ").slice(0, 260) } : null, btn };
+            }).catch(() => null);
+            if (d && (d.belgeSec > 0 || d.indirDiv || d.btn.length)) log("ekran dump:", JSON.stringify(d).slice(0, 1600));
+          }
+        } catch (e) { }
+      }
       let diyalogAcik = false;
       for (const f of await tumSayfaFrame()) {
         try {
@@ -24160,7 +24784,7 @@ async function lucaBelgeleriIndir(page, etiket, durum, p = {}) {
       return false;
     }
     if (durum.adim === "indir") {
-      if (!durum.secLinkTiklandi && !durum.hizliYolTiklandi) {
+      if (!durum.secLinkTiklandi && !durum.hizliYolTiklandi && !durum.hazirEkran) {
         durum.hizliYolTurlar = (durum.hizliYolTurlar || 0) + 1;
         let hizliSonuc = null;
         for (const f of await tumSayfaFrame()) {
@@ -24592,6 +25216,12 @@ async function lucaBelgeleriIndir(page, etiket, durum, p = {}) {
           }
           if (bosSinyal) break;
         }
+        if (durum.hazirEkran) {
+          // 2.8.71: hazir liste devralindi — bostaki "th var, satir yok"
+          // sinyali baska bir cerceveden gelebiliyor; bos sayip atlama.
+          bosSinyal = false;
+          bosSonaErdi = false;
+        }
         if (bosSinyal) {
           if (!bosSonaErdi) {
             durum.bosTurlar = 0;
@@ -24713,7 +25343,7 @@ async function lucaBelgeleriIndir(page, etiket, durum, p = {}) {
           }
           if (bosMetinSinyal) break;
         }
-        if (bosMetinSinyal && bosMetinSonaErdi) {
+        if (bosMetinSinyal && bosMetinSonaErdi && !durum.hazirEkran) {
           log("fatura yok (bos liste) - indirme atlandi");
           return "tamam";
         }
@@ -24803,7 +25433,20 @@ async function lucaBelgeleriIndir(page, etiket, durum, p = {}) {
         let isaretliToplam = 0;
         for (const f of await tumSayfaFrame()) {
           try {
-            const n = await f.evaluate(() => document.querySelectorAll(".belge-sec tr td .sec:checked").length).catch(() => 0);
+            const n = await f.evaluate((beklenenMenu) => {
+              if (beklenenMenu) {
+                if (String(window.menu_tur || "") !== beklenenMenu) return 0;
+                return [...document.querySelectorAll(".sec:checked")].filter((cb) => !!cb.closest("tr")?.getAttribute("fatura")).length;
+              }
+              const belge = document.querySelectorAll(".belge-sec tr td .sec:checked").length;
+              const gorunur = (el) => el.getClientRects().length > 0;
+              let satir = 0;
+              try {
+                satir = [...document.querySelectorAll('input[type="checkbox"]')].filter((cb) => gorunur(cb) && !cb.disabled && !cb.closest("th") && !cb.closest("thead") && cb.checked).length;
+              } catch (e) {
+              }
+              return satir || belge;
+            }, lucaSayfaliFaturaMi(p) ? lucaMenuKodu(p) : null).catch(() => 0);
             isaretliToplam += n || 0;
           } catch (e) {
           }
@@ -29921,6 +30564,78 @@ async function lucaSorguEkraniZatenAcik(sayfalar, hedefEtiket, p, taniLog) {
   if (taniLog) taniLog("hizli gecis tespiti basarisiz â€” " + JSON.stringify(tani));
   return null;
 }
+// 2.8.69: "indir" cagrisi, az once yapilan "sorgula" cagrisindan acik kalan
+// Luca sorgu ekranini SATIRLARDAN tespit eder. Etiket tabanli
+// lucaSorguEkraniZatenAcik bazi Luca surumlerinde ekran basligini
+// body.innerText'te goremiyor (etiket:false). Burada "GIB'den Getir" dugmesi +
+// secili musteri + listesinde satir/adet olan sayfa yeterli; menu_tur varsa
+// tur/yon da dogrulanir. Boylece ekran yeniden acilip liste sifirlanmaz.
+async function lucaIndirEkraniBul(sayfalar, p = {}, taniLog) {
+  const hedefKod = lucaMenuKodu(p);
+  const ad = String(p.shortName || "").trim();
+  const vkn = String(p.vkn || "").replace(/\D/g, "");
+  const tani = [];
+  for (const s of sayfalar) {
+    let url = "?";
+    try { url = (s.url() || "").slice(0, 70); } catch (e) { }
+    if (!/luca|turmob/i.test(url)) continue;
+    const d = { url, menuTurler: [], buton: false, musteri: false, liste: null };
+    for (const f of s.frames()) {
+      try {
+        const r = await f.evaluate((adAd, vknS) => {
+          const norm = (x) => String(x || "").toLocaleLowerCase("tr").replace(/['\u2019`"]/g, "").replace(/\s+/g, "");
+          const gorunur = (el) => el.getClientRects().length > 0;
+          const menuTur = String(window.menu_tur || "");
+          let buton = false;
+          for (const x of document.querySelectorAll("a, button, input[type=button], span, div, [role=button], li, td")) {
+            if (!gorunur(x)) continue;
+            const t = norm((x.textContent ?? x.value ?? "") + " " + (x.title || "") + " " + (x.getAttribute("aria-label") || ""));
+            if (t.length <= 60 && t.includes("gibdengetir")) { buton = true; break; }
+          }
+          const adN = norm(adAd);
+          let musteri = false;
+          if (adN) {
+            for (const sel of document.querySelectorAll("select")) {
+              const opt = sel.selectedOptions && sel.selectedOptions[0];
+              if (opt && norm(opt.textContent) === adN) { musteri = true; break; }
+            }
+            if (!musteri) {
+              for (const x of document.querySelectorAll("input, span, a, div, td, li")) {
+                if (gorunur(x) && norm(x.tagName === "INPUT" ? x.value : x.textContent) === adN) { musteri = true; break; }
+              }
+            }
+          } else if (vknS) {
+            const metin = norm(document.body ? document.body.innerText : "");
+            musteri = metin.includes(norm(vknS));
+          } else {
+            musteri = true;
+          }
+          return { menuTur, buton, musteri };
+        }, ad, vkn).catch(() => null);
+        if (r) {
+          if (r.menuTur && !d.menuTurler.includes(r.menuTur)) d.menuTurler.push(r.menuTur);
+          if (r.buton) d.buton = true;
+          if (r.musteri) d.musteri = true;
+        }
+      } catch (e) { }
+    }
+    const faturaMenu = lucaSayfaliFaturaMi(p) ? hedefKod : null;
+    const listeDurumu = faturaMenu ? await lucaFaturaListeDurumu(s, faturaMenu) : null;
+    const liste = listeDurumu?.durum === "bos"
+      ? { adet: 0, satir: 0, sayfa: null, bos: true }
+      : await lucaListeBilgisi(s, faturaMenu).catch(() => null) || (faturaMenu && d.menuTurler.includes(faturaMenu) ? { adet: null, satir: 0, sayfa: null, bekliyor: true } : null);
+    d.liste = liste;
+    const satirVar = !!(liste && ((liste.satir || 0) > 0 || (liste.adet || 0) > 0 || liste.bos || liste.bekliyor));
+    const turOk = faturaMenu ? d.menuTurler.includes(faturaMenu) : !hedefKod || d.menuTurler.length === 0 || d.menuTurler.includes(hedefKod);
+    if (d.buton && d.musteri && satirVar && turOk) {
+      if (taniLog) taniLog(`indir ekrani satirlardan bulundu: ${d.menuTurler.join(",") || "menu_tur yok"} (adet=${liste.adet === null ? "?" : liste.adet}, satir=${liste.satir})`);
+      return { sayfa: s, liste };
+    }
+    tani.push({ url: d.url, menuTurler: d.menuTurler, buton: d.buton, musteri: d.musteri, liste: liste ? { adet: liste.adet, satir: liste.satir, sayfa: liste.sayfa } : null });
+  }
+  if (taniLog && tani.length) taniLog("indir ekrani (satir tabanli) bulunamadi \u2014 " + JSON.stringify(tani).slice(0, 900));
+  return null;
+}
 async function lucaAnaSayfaBekle(page, etiket, log, sureSn = 20) {
   const durumFn = () => {
     const metin = document.body ? document.body.innerText : "";
@@ -30029,6 +30744,9 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   let indirmeBitti = false;
   let ustMenuTaniLoglandi = false;
   let hazirEkran = null;
+  // 2.8.68: "indir" cagrisi, ayni tur+yon icin az once yapilan "sorgula"
+  // cagrisinin biraktigi Luca sorgu ekranini yeniden kullanmalidir.
+  const indirModu = p.mod === "indir";
   const indirDurum = { adim: "sec", indirmeBaslangici: Date.now() };
   let ssoSonYenile = 0;
   let ssoBeklemeBaslangici = 0;
@@ -30146,6 +30864,50 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
       }
     }
     if (hazirEkran && !sayfalar.includes(hazirEkran)) hazirEkran = null;
+    // 2.8.68: INDIR MODU — "sorgula" adimindan acik kalan Luca sorgu ekranini
+    // KORU. Once musteri/yil/menu adimlari yeniden calisiyor, luca.do ana
+    // sayfasina donuluyor ve lucaFaturaEkraniniAcdogrudan listeyi sifirliyordu.
+    // Sonuc: tum turlerde "isaretli satir 0" -> belge indirilemiyordu.
+    // Ekran zaten acik ve listesinde satir varsa gezinme tamamen atlanir.
+    if (!hazirEkran && !musteriSecildi && !menuSecildi && indirModu) {
+      const hedefEtiketI = lucaMenuHedefi(p);
+      const faturaMenuI = lucaSayfaliFaturaMi(p) ? lucaMenuKodu(p) : null;
+      let ekranI = null;
+      let lbI = null;
+      if (hedefEtiketI && !faturaMenuI) {
+        ekranI = await lucaSorguEkraniZatenAcik(sayfalar, hedefEtiketI, p, log);
+        if (ekranI) lbI = await lucaListeBilgisi(ekranI).catch(() => null);
+      }
+      // 2.8.68: ekran basligi bazi Luca surumlerinde body.innerText'te
+      // gorunmuyor (etiket:false). Bu yuzden baslik eslesmesi basarisizsa
+      // SATIRLARDAN tespit edilir: "GIB'den Getir" dugmesi + secili musteri +
+      // listesinde satir olan Luca sayfasi, az once sorgulanan ekrandir.
+      if (!(lbI && ((lbI.satir || 0) > 0 || (lbI.adet || 0) > 0))) {
+        const bulunanI = await lucaIndirEkraniBul(sayfalar, p, log);
+        if (bulunanI) {
+          ekranI = bulunanI.sayfa;
+          lbI = bulunanI.liste;
+        }
+      }
+      if (ekranI) {
+        // Satirlar cizilmekte olabilir — kisa bir sure bekle.
+        for (let bekleI = 0; bekleI < 8 && !(lbI && ((lbI.satir || 0) > 0 || (lbI.adet || 0) > 0 || lbI.bos || lbI.bekliyor)); bekleI++) {
+          await new Promise((r) => setTimeout(r, 1200));
+          lbI = await lucaListeBilgisi(ekranI, faturaMenuI).catch(() => null);
+        }
+        if (lbI && ((lbI.satir || 0) > 0 || (lbI.adet || 0) > 0 || lbI.bos || lbI.bekliyor)) {
+          hazirEkran = ekranI;
+          musteriSecildi = true;
+          yilSecildi = true;
+          menuSecildi = true;
+          gibdenGetirildi = true;
+          indirDurum.hazirEkran = true;
+          log(`indir modu: acik sorgu ekrani korunuyor (adet=${lbI.adet === null ? "?" : lbI.adet}, satir=${lbI.satir}) \u2014 yeniden gezinme atlandi`);
+        } else {
+          log("indir modu: acik sorgu ekrani var ama liste bos \u2014 normal akisa birakiliyor");
+        }
+      }
+    }
     if (!hazirEkran && !musteriSecildi && !menuSecildi && p.mod === "sorgula" && (p.gibdenBasTarihi || p.gibdenBitTarihi)) {
       // 2.7.581: 7/30 gunluk parcali sorgularda hedef sorgu ekrani (orn. e-SMM
       // Alis) onceki parcadan hala aciksa ana sayfa donusu + musteri/yil/menu
@@ -30254,6 +31016,9 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
           gibdenGetirildi = true;
           if (p.sadeceSorgu) {
             log("gib'den getir tetiklendi (sadeceSorgu) \u2014 GIB isleminin bitmesi bekleniyor");
+            if (lucaSayfaliFaturaMi(p)) {
+              await lucaGibIslemTakibiniBekle(browser, etiket);
+            } else {
             const gibIslemBittiFn = () => {
               const normL = (s) => String(s || "").toLocaleLowerCase("tr").replace(/ç/g, "c").replace(/ğ/g, "g").replace(/ı/g, "i").replace(/ö/g, "o").replace(/ş/g, "s").replace(/ü/g, "u").replace(/\s+/g, "");
               const t = normL(document.body ? document.body.innerText : "");
@@ -30339,6 +31104,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
             }
             if (bitisSinyali) log(`GIB islemi tamamlandi (${bitisSinyali} sinyali, ${Math.round((Date.now() - islemBaslangici) / 1e3)} sn)`);
             else log("GIB islem bitis sinyali 4 dk icinde gelmedi \u2014 siradaki periyoda geciliyor");
+            }
             indirmeBitti = true;
           } else {
             log("gib'den getir diyalogu tamamlandi, belgeler bekleniyor");
@@ -30366,10 +31132,11 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
         sDurum.zaman = Date.now();
       }
       const guncel = (await canliSayfalar()).filter((s) => /luca|turmob/i.test(s.url() || ""));
-      const isonuc = await lucaBelgeleriIndir(guncel[guncel.length - 1] || aktif, etiket, indirDurum, p);
-      if (isonuc === "tamam" || isonuc === "zamanasimi") {
+      const isonuc = await lucaBelgeleriIndir(hazirEkran || guncel[guncel.length - 1] || aktif, etiket, indirDurum, p);
+      if (isonuc === "tamam" || isonuc === "zamanasimi" || isonuc === "bos") {
         indirmeBitti = true;
         if (isonuc === "tamam") log("fatura belgeleri indirildi (zip/xml)");
+        if (isonuc === "bos") log("indir modu: indirilecek belge yok (liste bos)");
       }
     }
     if (indirmeBitti) {
@@ -30449,7 +31216,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis sure siniri doldu — tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.60";
+var SURUM = "2.8.325";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {
@@ -31623,7 +32390,7 @@ document.getElementById('gir').addEventListener('click', async () => {
               if (aktifIsSayisi === 1) { otomasyonSeansAktif = true; indirmeModuUygula(true).catch(() => {}); }
               let sonuc2;
               try {
-                sonuc2 = await kuyruktaCalistir(p.is, () => isFonksiyonu(isParams));
+                sonuc2 = await kuyruktaCalistir(p.is, () => isFonksiyonu(isParams), undefined, { elle: !OTOMATIK_ISLER.has(p.is) });
               } finally {
                 if (elleIs2) elleIsAktif = Math.max(0, elleIsAktif - 1);
                 aktifIsSayisi = Math.max(0, aktifIsSayisi - 1);
@@ -31677,7 +32444,11 @@ document.getElementById('gir').addEventListener('click', async () => {
         if (aktifIsSayisi === 1) { otomasyonSeansAktif = true; indirmeModuUygula(true).catch(() => {}); }
         let sonuc;
         try {
-          sonuc = await isFonksiyonu(p);
+          // 2.8.58: elle isler kuyrukta oncelikli sayilir (otomatik cron
+          // isleri kullaniciyi bekletmesin).
+          sonuc = elleIs
+            ? await kuyruktaCalistir(p.is, () => isFonksiyonu(p), undefined, { elle: true })
+            : await isFonksiyonu(p);
         } finally {
           if (elleIs) elleIsAktif = Math.max(0, elleIsAktif - 1);
           aktifIsSayisi = Math.max(0, aktifIsSayisi - 1);

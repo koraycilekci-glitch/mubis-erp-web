@@ -555,6 +555,8 @@ export async function gibBorcSorgula(clientId) {
     vadesiGecmis: Number(res.vadesiGecmis) || 0,
     vadesiGelmemis: Number(res.vadesiGelmemis) || 0,
     toplam: Number(res.toplam) || 0,
+    // 2.8.325: GIB borc tablosundan okunan kalemler (vade / tur / tutar)
+    kalemler: Array.isArray(res.kalemler) ? res.kalemler : [],
     not: res.not
   }
 }
@@ -591,6 +593,9 @@ export async function sgkBorcSorgula(clientId) {
     sadeceBorclar: Number(res.sadeceBorclar) || 0,
     gecikmeZammi: Number(res.gecikmeZammi) || 0,
     toplam: Number(res.toplam) || 0,
+    // 2.8.325: SGK borc tablosundan okunan donem bazli kalemler
+    kalemler: Array.isArray(res.kalemler) ? res.kalemler : [],
+    borcYok: res.borcYok === true,
     not: res.not
   }
 }

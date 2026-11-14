@@ -15493,85 +15493,236 @@ const ISLER = {
       try {
         const indirmeDizini = path.join(os.tmpdir(), "gib_borc_detay_" + Date.now());
         fs.mkdirSync(indirmeDizini, { recursive: true });
-        // CDP indirme izni
+        const browserRef = page.browser();
+        const indirmeAyarla = async (pg) => {
+          try {
+            const cdp = await pg.target().createCDPSession();
+            await cdp.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: indirmeDizini });
+            return true;
+          } catch (e) {
+            return false;
+          }
+        };
+        await indirmeAyarla(page);
         try {
-          const cdp = await page.target().createCDPSession();
-          await cdp.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: indirmeDizini });
-          console.log("[gib-borc-sorgula] CDP indirme izni verildi:", indirmeDizini);
-        } catch (e) {
-          console.log("[gib-borc-sorgula] CDP hatasi:", e?.message || String(e));
-        }
-        // Ana sayfaya geri don (URL denemelerinden sonra)
-        await page.goto("https://dijital.gib.gov.tr/portal", { waitUntil: "networkidle2", timeout: 15000 }).catch(() => {});
-        await new Promise((r) => setTimeout(r, 3000));
-        // "Indir" butonunu bul ve tikla
-        const indirTiklandi = await page.evaluate(() => {
+          for (const pg of await browserRef.pages()) await indirmeAyarla(pg);
+        } catch (e) {}
+        console.log("[gib-borc-sorgula] indirme dizini hazir:", indirmeDizini);
+
+        const yakalananUrl = [];
+        const dinleyici = (req) => {
+          try {
+            const u = (req && req.url()) || "";
+            if (/xlsx|xls\b|pdf|dokum|excel|indir|rapor|borc/i.test(u)) yakalananUrl.push(u);
+          } catch (e) {}
+        };
+        try { page.on("request", dinleyici); } catch (e) {}
+
+        const butonlariListele = async () => page.evaluate(() => {
+          const liste = [];
+          for (const el of document.querySelectorAll("a, button, input[type=button], input[type=submit]")) {
+            const t = (el.textContent || el.value || "").replace(/\s+/g, " ").trim();
+            if (!t) continue;
+            if (!/indir|excel|xls|pdf|dokum|döküm|rapor|liste/i.test(t)) continue;
+            liste.push({
+              text: t.substring(0, 60),
+              tag: el.tagName,
+              id: el.id || "",
+              cls: String(el.className || "").substring(0, 60),
+              href: el.getAttribute("href") || ""
+            });
+          }
+          return liste;
+        }).catch(() => []);
+
+        const tiklaIndir = async () => page.evaluate(() => {
           const adaylar = [...document.querySelectorAll("a, button, input[type=button], input[type=submit]")];
           const hedef = adaylar.find((el) => {
-            const t = (el.textContent || el.value || "").trim().toLocaleLowerCase("tr");
-            return t === "indir" || t.includes("indir") || t.includes("excel") || t.includes("pdf") || t.includes("detay liste") || t.includes("borc detay") || t.includes("borc dokum");
+            const t = (el.textContent || el.value || "").replace(/\s+/g, " ").trim().toLocaleLowerCase("tr");
+            return t === "indir" || t.startsWith("indir") || t.includes("excel") || t.includes("dokum") || t.includes("döküm") || t.includes("detay liste");
           });
           if (!hedef) return null;
-          try { hedef.click(); return (hedef.textContent || hedef.value || "").trim(); } catch { return null; }
+          try {
+            hedef.scrollIntoView({ block: "center" });
+            hedef.click();
+            return (hedef.textContent || hedef.value || "").trim();
+          } catch (e) {
+            return null;
+          }
         }).catch(() => null);
-        console.log("[gib-borc-sorgula] Indir butonu:", indirTiklandi ? indirTiklandi : "BULUNAMADI");
-        if (indirTiklandi) {
-          // Indirme tamamlanana kadar bekle (max 20 sn)
-          await new Promise((r) => setTimeout(r, 15000));
-          let dosyalar = [];
-          try { dosyalar = fs.readdirSync(indirmeDizini); } catch (e) {}
-          console.log("[gib-borc-sorgula] Indirilen dosyalar:", JSON.stringify(dosyalar));
-          if (dosyalar.length) {
-            const dosyaAdi = dosyalar[0].toLowerCase();
-            const dosyaYolu = path.join(indirmeDizini, dosyalar[0]);
-            console.log("[gib-borc-sorgula] Indirilen dosya:", dosyaAdi, fs.statSync(dosyaYolu).size, "bayt");
-            // Dosyanin ilk 200 byte'ini logla (tip tespiti)
-            try {
-              const buf = fs.readFileSync(dosyaYolu);
-              const ilk200 = buf.slice(0, 200);
-              console.log("[gib-borc-sorgula] Dosya ilk byte'lar (hex):", ilk200.slice(0, 16).toString("hex"));
-              console.log("[gib-borc-sorgula] Dosya ilk byte'lar (text):", ilk200.toString("utf8").substring(0, 200).replace(/\\n/g, " "));
-            } catch (e) {}
-            // PDF parse
-            if (dosyaAdi.endsWith(".pdf")) {
+
+        const dosyaBekle = async (bekleMs) => {
+          const bitis = Date.now() + bekleMs;
+          let sonBoyut = -1;
+          let sabit = 0;
+          while (Date.now() < bitis) {
+            let adlar = [];
+            try { adlar = fs.readdirSync(indirmeDizini); } catch (e) {}
+            const gecerli = adlar.filter((a) => !/\.crdownload$|\.part$|\.tmp$/i.test(a));
+            if (gecerli.length) {
               try {
-                const pdfParse = require("pdf-parse");
-                const buf = fs.readFileSync(dosyaYolu);
-                const data = await pdfParse(buf);
-                const text = data.text || "";
-                console.log("[gib-borc-sorgula] PDF metin (ilk 500):", text.substring(0, 500).replace(/\\n/g, " | "));
-                // Parse rows from PDF text
-                const satirlar = text.split(/\\n/).map((l) => l.trim()).filter((l) => l.length > 0);
-                const kalemler = [];
-                for (const satir of satirlar) {
-                  const parcalar = satir.split(/\\s{2,}|\\t/).map((p) => p.trim()).filter((p) => p);
-                  if (parcalar.length < 4) continue;
-                  const sayisallar = parcalar.filter((p) => /^-?[\\d.,]+$/.test(p));
-                  if (sayisallar.length < 1) continue;
-                  const toplam = parseFloat((sayisallar[sayisallar.length - 1] || "0").replace(/\./g, "").replace(/,/g, "."));
-                  if (isNaN(toplam) || toplam === 0) continue;
-                  const asil = sayisallar.length >= 3 ? parseFloat((sayisallar[sayisallar.length - 3] || "0").replace(/\./g, "").replace(/,/g, ".")) : 0;
-                  const gz = sayisallar.length >= 2 ? parseFloat((sayisallar[sayisallar.length - 2] || "0").replace(/\./g, "").replace(/,/g, ".")) : 0;
-                  kalemler.push({
-                    donem: parcalar.length >= 5 ? parcalar[parcalar.length - 5] || "" : "",
-                    vade: parcalar.length >= 6 ? parcalar[parcalar.length - 6] || "" : "",
-                    tur: parcalar.length >= 4 ? parcalar[parcalar.length - 4] || "" : "",
-                    belgeNo: parcalar.length >= 7 ? parcalar[parcalar.length - 7] || "" : "",
-                    asilBorc: isNaN(asil) ? 0 : Math.round(asil * 100) / 100,
-                    gz: isNaN(gz) ? 0 : Math.round(gz * 100) / 100,
-                    toplam: Math.round(toplam * 100) / 100
-                  });
-                  if (kalemler.length >= 500) break;
+                const boy = fs.statSync(path.join(indirmeDizini, gecerli[0])).size;
+                if (boy > 0 && boy === sonBoyut) {
+                  sabit++;
+                  if (sabit >= 2) return gecerli[0];
+                } else {
+                  sabit = 0;
+                  sonBoyut = boy;
                 }
-                if (kalemler.length) {
-                  borc.kalemler = kalemler;
-                  console.log("[gib-borc-sorgula] PDF'den " + kalemler.length + " kalem okundu");
-                }
-              } catch (e) {
-                console.log("[gib-borc-sorgula] PDF parse hatasi:", e?.message || String(e));
+              } catch (e) {}
+            }
+            await new Promise((r) => setTimeout(r, 1500));
+          }
+          return null;
+        };
+
+        console.log("[gib-borc-sorgula] indirme adaylari (borc sayfasi):", JSON.stringify(await butonlariListele()));
+        let tiklandi = await tiklaIndir();
+        console.log("[gib-borc-sorgula] Indir butonu (borc sayfasi):", tiklandi || "BULUNAMADI");
+        let dosyaAdi = tiklandi ? await dosyaBekle(30000) : null;
+
+        if (!dosyaAdi) {
+          console.log("[gib-borc-sorgula] borc sayfasinda dosya inmedi, /portal deneniyor");
+          await page.goto("https://dijital.gib.gov.tr/portal", { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+          await new Promise((r) => setTimeout(r, 3000));
+          await indirmeAyarla(page);
+          console.log("[gib-borc-sorgula] indirme adaylari (/portal):", JSON.stringify(await butonlariListele()));
+          tiklandi = await tiklaIndir();
+          console.log("[gib-borc-sorgula] Indir butonu (/portal):", tiklandi || "BULUNAMADI");
+          if (tiklandi) dosyaAdi = await dosyaBekle(30000);
+        }
+
+        try { page.off("request", dinleyici); } catch (e) {}
+        if (yakalananUrl.length) {
+          console.log("[gib-borc-sorgula] yakalanan urller:", JSON.stringify([...new Set(yakalananUrl)].slice(0, 20)));
+        }
+        let mevcutDosyalar = [];
+        try { mevcutDosyalar = fs.readdirSync(indirmeDizini); } catch (e) {}
+        console.log("[gib-borc-sorgula] Indirilen dosyalar:", JSON.stringify(mevcutDosyalar));
+
+        const paraOku = (v) => {
+          const n = parseFloat(String(v == null ? "" : v).replace(/\./g, "").replace(/,/g, ".").replace(/[^\d.-]/g, ""));
+          return isNaN(n) ? 0 : n;
+        };
+
+        let kalemler = [];
+        if (dosyaAdi) {
+          const dosyaYolu = path.join(indirmeDizini, dosyaAdi);
+          const kucuk = dosyaAdi.toLowerCase();
+          console.log("[gib-borc-sorgula] Indirilen dosya:", kucuk, fs.statSync(dosyaYolu).size, "bayt");
+          try {
+            const buf = fs.readFileSync(dosyaYolu);
+            console.log("[gib-borc-sorgula] Dosya ilk byte (hex):", buf.slice(0, 8).toString("hex"), "| text:", buf.slice(0, 160).toString("utf8").replace(/\s+/g, " "));
+          } catch (e) {}
+
+          if (kucuk.endsWith(".pdf")) {
+            try {
+              const pdfParse = require("pdf-parse");
+              const data = await pdfParse(fs.readFileSync(dosyaYolu));
+              const text = data.text || "";
+              console.log("[gib-borc-sorgula] PDF metin (ilk 600):", text.replace(/\s+/g, " ").substring(0, 600));
+              const satirlar = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+              for (const satir of satirlar) {
+                const parcalar = satir.split(/\s{2,}|\t/).map((p) => p.trim()).filter(Boolean);
+                if (parcalar.length < 4) continue;
+                const sayisallar = parcalar.filter((p) => /^-?[\d.,]+$/.test(p));
+                if (!sayisallar.length) continue;
+                const toplam = paraOku(sayisallar[sayisallar.length - 1]);
+                if (!toplam) continue;
+                const asil = sayisallar.length >= 3 ? paraOku(sayisallar[sayisallar.length - 3]) : 0;
+                const gz = sayisallar.length >= 2 ? paraOku(sayisallar[sayisallar.length - 2]) : 0;
+                const metinler = parcalar.filter((p) => !/^-?[\d.,]+$/.test(p));
+                kalemler.push({
+                  donem: metinler[1] || "",
+                  vade: metinler[2] || "",
+                  tur: metinler[0] || "",
+                  belgeNo: metinler[3] || "",
+                  asilBorc: Math.round(asil * 100) / 100,
+                  gz: Math.round(gz * 100) / 100,
+                  toplam: Math.round(toplam * 100) / 100
+                });
+                if (kalemler.length >= 500) break;
               }
+            } catch (e) {
+              console.log("[gib-borc-sorgula] PDF parse hatasi:", e?.message || String(e));
             }
           }
+
+          if (kucuk.endsWith(".xlsx") || kucuk.endsWith(".xls")) {
+            try {
+              const AdmZip = require("adm-zip");
+              const zip = new AdmZip(dosyaYolu);
+              const entries = zip.getEntries();
+              console.log("[gib-borc-sorgula] xlsx entries:", entries.map((e) => e.entryName).slice(0, 15).join(", "));
+              const sheetEntry = entries.find((e) => /xl\/worksheets\/sheet\d*\.xml/i.test(e.entryName));
+              const ssEntry = entries.find((e) => /xl\/sharedStrings\.xml/i.test(e.entryName));
+              let paylasilan = [];
+              if (ssEntry) {
+                const ssXml = ssEntry.getData().toString("utf8");
+                const esles = ssXml.match(/<si>[\s\S]*?<\/si>/g) || [];
+                paylasilan = esles.map((si) => (si.match(/<t[^>]*>([\s\S]*?)<\/t>/g) || []).map((x) => x.replace(/<[^>]+>/g, "")).join(""));
+              }
+              if (sheetEntry) {
+                const sheetXml = sheetEntry.getData().toString("utf8");
+                const satirXml = sheetXml.match(/<row[^>]*>[\s\S]*?<\/row>/g) || [];
+                const satirlar = satirXml.map((rowXml) => {
+                  const hucreXml = rowXml.match(/<c[^>]*>[\s\S]*?<\/c>/g) || [];
+                  return hucreXml.map((c) => {
+                    const tip = (c.match(/t="([^"]*)"/) || [])[1] || "n";
+                    const v = (c.match(/<v>([\s\S]*?)<\/v>/) || [])[1] || "";
+                    if (tip === "s") return paylasilan[parseInt(v, 10)] || "";
+                    if (tip === "inlineStr") return ((c.match(/<t[^>]*>([\s\S]*?)<\/t>/) || [])[1] || "");
+                    return v;
+                  });
+                });
+                console.log("[gib-borc-sorgula] xlsx satir sayisi:", satirlar.length);
+                let baslikIdx = -1;
+                for (let i = 0; i < Math.min(satirlar.length, 15); i++) {
+                  const t = (satirlar[i] || []).join(" ").toLocaleUpperCase("tr");
+                  if (/BELGE|VERGI|VADE|BORC|DONEM/.test(t)) { baslikIdx = i; break; }
+                }
+                if (baslikIdx >= 0) {
+                  const baslik = (satirlar[baslikIdx] || []).map((h) => String(h || "").toLocaleUpperCase("tr").trim());
+                  const bul = (fn) => baslik.findIndex((h) => fn(h));
+                  const iBelge = bul((h) => h.includes("BELGE"));
+                  const iTur = bul((h) => h.includes("VERGI") && h.includes("TUR"));
+                  const iDonem = bul((h) => h.includes("DONEM"));
+                  const iVade = bul((h) => h.includes("VADE"));
+                  const iAsil = bul((h) => h.includes("ASIL"));
+                  const iGz = bul((h) => h.includes("GECIKME"));
+                  const iToplam = bul((h) => h.includes("TOPLAM"));
+                  for (let i = baslikIdx + 1; i < satirlar.length; i++) {
+                    const r = satirlar[i] || [];
+                    if (!r.some((c) => String(c || "").trim())) continue;
+                    const al = (idx) => (idx >= 0 ? String(r[idx] || "") : "");
+                    const asil = iAsil >= 0 ? paraOku(al(iAsil)) : 0;
+                    const gz = iGz >= 0 ? paraOku(al(iGz)) : 0;
+                    const toplam = iToplam >= 0 ? paraOku(al(iToplam)) : asil + gz;
+                    if (!toplam && !asil) continue;
+                    kalemler.push({
+                      donem: al(iDonem),
+                      vade: al(iVade),
+                      tur: al(iTur),
+                      belgeNo: al(iBelge),
+                      asilBorc: Math.round(asil * 100) / 100,
+                      gz: Math.round(gz * 100) / 100,
+                      toplam: Math.round(toplam * 100) / 100
+                    });
+                    if (kalemler.length >= 500) break;
+                  }
+                }
+              }
+            } catch (e) {
+              console.log("[gib-borc-sorgula] Excel parse hatasi:", e?.message || String(e));
+            }
+          }
+        }
+
+        if (kalemler.length) {
+          borc.kalemler = kalemler;
+          console.log("[gib-borc-sorgula] dosyadan " + kalemler.length + " kalem okundu");
+        } else {
+          console.log("[gib-borc-sorgula] dosyadan kalem okunamadi");
         }
       } catch (e) {
         console.log("[gib-borc-sorgula] indirme hatasi:", e?.message || String(e));

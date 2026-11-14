@@ -2159,7 +2159,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
               <span
                 role="button"
                 tabIndex={0}
-                onClick={(e) => { e.stopPropagation(); setBorcDetayKaynak('vergi'); setActiveTab('borclarim') }}
+                onClick={(e) => { e.stopPropagation(); setBorcDetayKaynak('hepsi'); setActiveTab('borclarim') }}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setBorcDetayKaynak('vergi'); setActiveTab('borclarim') } }}
                 className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-semibold text-red-100 bg-red-500/20 hover:bg-red-500/35 border border-red-400/40 rounded-lg px-2.5 py-1 transition-colors cursor-pointer"
                 title="Vergi borcu listesini kalem kalem görüntüle"
@@ -2193,7 +2193,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
               <span
                 role="button"
                 tabIndex={0}
-                onClick={(e) => { e.stopPropagation(); setBorcDetayKaynak('sgk'); setActiveTab('borclarim') }}
+                onClick={(e) => { e.stopPropagation(); setBorcDetayKaynak('hepsi'); setActiveTab('borclarim') }}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setBorcDetayKaynak('sgk'); setActiveTab('borclarim') } }}
                 className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-semibold text-orange-100 bg-orange-500/20 hover:bg-orange-500/35 border border-orange-400/40 rounded-lg px-2.5 py-1 transition-colors cursor-pointer"
                 title="SGK borç listesini kalem kalem görüntüle"
@@ -2989,22 +2989,18 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
               )
               return (
                 <>
-                  {(borcDetayKaynak === 'hepsi' || borcDetayKaynak === 'vergi') && (
                   <div className="space-y-2">
                     <h3 className="text-sm font-semibold text-red-300 flex items-center gap-2">
                       <FileText className="w-4 h-4" /> GİB (Vergi Dairesi)
                     </h3>
                     {bolumTablo(vergiSatirlar, vergiBorcu > 0 ? 'Borc yok' : 'Borcu yok (firma alacakli)')}
                   </div>
-                  )}
-                  {(borcDetayKaynak === 'hepsi' || borcDetayKaynak === 'sgk') && (
                   <div className="space-y-2">
                     <h3 className="text-sm font-semibold text-orange-300 flex items-center gap-2">
                       <Users className="w-4 h-4" /> SGK
                     </h3>
                     {bolumTablo(sgkBorcu > 0 ? sgkSatirlar : [], sgkBorcu > 0 ? 'Borc yok' : 'Borcu yok (firma alacakli)')}
                   </div>
-                  )}
                 </>
               )
             })()}

@@ -2160,7 +2160,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
                 role="button"
                 tabIndex={0}
                 onClick={(e) => { e.stopPropagation(); setBorcDetayKaynak('hepsi'); setActiveTab('borclarim') }}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setBorcDetayKaynak('vergi'); setActiveTab('borclarim') } }}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setBorcDetayKaynak('hepsi'); setActiveTab('borclarim') } }}
                 className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-semibold text-red-100 bg-red-500/20 hover:bg-red-500/35 border border-red-400/40 rounded-lg px-2.5 py-1 transition-colors cursor-pointer"
                 title="Vergi borcu listesini kalem kalem görüntüle"
               >
@@ -2194,7 +2194,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
                 role="button"
                 tabIndex={0}
                 onClick={(e) => { e.stopPropagation(); setBorcDetayKaynak('hepsi'); setActiveTab('borclarim') }}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setBorcDetayKaynak('sgk'); setActiveTab('borclarim') } }}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setBorcDetayKaynak('hepsi'); setActiveTab('borclarim') } }}
                 className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-semibold text-orange-100 bg-orange-500/20 hover:bg-orange-500/35 border border-orange-400/40 rounded-lg px-2.5 py-1 transition-colors cursor-pointer"
                 title="SGK borç listesini kalem kalem görüntüle"
               >
@@ -2832,7 +2832,8 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
             const borc = Number(k?.borc ?? k?.tutar) || 0
             const gz = Number(k?.gz) || 0
             const toplam = Number(k?.toplam) || (borc + gz)
-            satirlar.push({ kaynak, donem: k?.donem || k?.vade || '', tur: k?.tur || '', borc, gz, toplam })
+            const turOtomatik = (k?.tur && String(k.tur).trim()) ? k.tur : (kaynak === 'sgk' ? (gz > 0 ? 'Vadesi Gecmis' : 'Vadesi Gelmemis') : (k?.tur || ''))
+    satirlar.push({ kaynak, donem: k?.donem || k?.vade || '', tur: turOtomatik, borc, gz, toplam })
           }
         }
         ekle('vergi', borcKalemler.vergi)

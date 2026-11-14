@@ -15045,12 +15045,11 @@ const ISLER = {
                 else if (sadece !== null) tutar = sadece;
                 else if (prim !== null || issizlik !== null) tutar = (prim || 0) + (issizlik || 0) - (odenen || 0);
                 if (tutar === null) continue;
-                if (tutar < 0) tutar = 0;
                 const gz2 = hucreOku(gzIdx) || 0;
                 const donem = donemIdx >= 0 && metinler[donemIdx] ? metinler[donemIdx] : "";
                 const tur = turIdx >= 0 && metinler[turIdx] ? metinler[turIdx] : "";
                 const satirToplam = yuvarla(tutar + gz2);
-                if (satirToplam > 0 || veriTrleri.length === 1) {
+                if (satirToplam !== 0 || veriTrleri.length === 1) {
                   liste.push({ donem, tur, borc: yuvarla(tutar), gz: yuvarla(gz2), toplam: satirToplam });
                 }
                 borcToplam += tutar;
@@ -15061,8 +15060,8 @@ const ISLER = {
                 tabloBos = true;
                 continue;
               }
-              borcDeger = yuvarla(borcToplam);
-              gzDeger = yuvarla(gzToplam);
+              borcDeger = yuvarla(Math.max(0, borcToplam));
+              gzDeger = yuvarla(Math.max(0, gzToplam));
               kalemler = liste.slice(0, 200);
               break;
             }
@@ -31216,7 +31215,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis sure siniri doldu — tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.325";
+var SURUM = "2.8.326";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

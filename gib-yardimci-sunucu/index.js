@@ -31430,7 +31430,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis sure siniri doldu — tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.334";
+var SURUM = "2.8.335";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

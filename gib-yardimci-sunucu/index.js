@@ -15628,8 +15628,8 @@ const ISLER = {
                   const liste = [];
                   for (const tb of document.querySelectorAll("table")) {
                     const trlar = [...tb.querySelectorAll("tr")];
-                    const baslikTr = trlar.find((tr) => /VADE/.test(txt(tr.textContent)) && /TUTAR|BORC|TAHAKKUK/.test(txt(tr.textContent)));
-                    if (!baslikTr) continue;
+                    if (trlar.length < 2) continue;
+                    const baslikTr = trlar[0];
                     const kolon = new Map();
                     for (const h of baslikTr.querySelectorAll("th, td")) kolon.set(h.cellIndex, txt(h.textContent));
                     const idxBul = (test) => {
@@ -15638,25 +15638,86 @@ const ISLER = {
                       }
                       return -1;
                     };
+                    // GIB "Borc Detay Listesi" tablosu mu?
+                    const belgeIdx = idxBul((h) => h.includes("BELGE") && h.includes("NO"));
+                    const vergiTuruIdx = idxBul((h) => h.includes("VERGI") && h.includes("TUR"));
+                    const donemIdx = idxBul((h) => h.includes("VERGI") && h.includes("DONEM"));
                     const vadeIdx = idxBul((h) => h.includes("VADE"));
-                    const turIdx = idxBul((h) => h.includes("VERGI") || h.includes("TUR") || h.includes("ACIKLAMA") || h.includes("TAHAKKUK"));
-                    const tutarIdx = idxBul((h) => h.includes("TUTAR") || h.includes("KALAN") || h.includes("BORC"));
-                    if (vadeIdx < 0 || tutarIdx < 0) continue;
+                    const asilIdx = idxBul((h) => h.includes("ASIL") && h.includes("BORC"));
+                    const gzIdx = idxBul((h) => h.includes("GECIKME") && h.includes("ZAM"));
+                    const toplamIdx = idxBul((h) => h.includes("TOPLAM") && h.includes("BORC"));
+                    const plakaIdx = idxBul((h) => h.includes("PLAKA"));
+                    const isGibDetay = belgeIdx >= 0 || vergiTuruIdx >= 0 || (vadeIdx >= 0 && (asilIdx >= 0 || toplamIdx >= 0));
+                    if (!isGibDetay) continue;
+                    // en az vade veya toplam olmali
+                    if (vadeIdx < 0 && toplamIdx < 0 && asilIdx < 0) continue;
                     for (const tr of trlar) {
                       if (tr === baslikTr) continue;
                       const hucreler = [...tr.querySelectorAll("td, th")];
-                      if (!hucreler.length) continue;
+                      if (hucreler.length < 3) continue;
                       const metinler = hucreler.map((td) => (td.textContent || "").replace(/\s+/g, " ").trim());
-                      const t = parseFloat(String(metinler[tutarIdx] || "").replace(/[^\d.,]/g, "").replace(/\./g, "").replace(/,/g, "."));
-                      if (isNaN(t) || t <= 0) continue;
+                      // tum hucreler bos mu?
+                      if (metinler.every((m) => !m)) continue;
+                      const parseP = (s) => {
+                        const m = String(s || "").match(/-?[\d.,]+/);
+                        if (!m) return 0;
+                        const v = parseFloat(m[0].replace(/\./g, "").replace(/,/g, "."));
+                        return isNaN(v) ? 0 : v;
+                      };
+                      const vade = vadeIdx >= 0 ? metinler[vadeIdx] : "";
+                      const tur = vergiTuruIdx >= 0 ? metinler[vergiTuruIdx] : (turIdx >= 0 ? metinler[turIdx] : "");
+                      const donem = donemIdx >= 0 ? metinler[donemIdx] : "";
+                      const asil = asilIdx >= 0 ? parseP(metinler[asilIdx]) : 0;
+                      const gz = gzIdx >= 0 ? parseP(metinler[gzIdx]) : 0;
+                      const toplam = toplamIdx >= 0 ? parseP(metinler[toplamIdx]) : (asil + gz);
+                      const belge = belgeIdx >= 0 ? metinler[belgeIdx] : "";
+                      const plaka = plakaIdx >= 0 ? metinler[plakaIdx] : "";
+                      if (toplam === 0 && asil === 0) continue;
                       liste.push({
-                        donem: metinler[vadeIdx] || "",
-                        tur: turIdx >= 0 ? metinler[turIdx] || "" : "",
-                        toplam: Math.round(t * 100) / 100
+                        donem: donem || vade,
+                        vade,
+                        tur: tur || belge,
+                        belgeNo: belge,
+                        plaka,
+                        asilBorc: Math.round(asil * 100) / 100,
+                        gz: Math.round(gz * 100) / 100,
+                        toplam: Math.round(toplam * 100) / 100
                       });
-                      if (liste.length >= 200) break;
+                      if (liste.length >= 500) break;
                     }
                     if (liste.length) break;
+                  }
+                  // Fallback: eski VADE+TUTAR tablosu
+                  if (liste.length === 0) {
+                    for (const tb of document.querySelectorAll("table")) {
+                      const trlar = [...tb.querySelectorAll("tr")];
+                      if (trlar.length < 2) continue;
+                      const baslikTr = trlar.find((tr) => /VADE/.test(txt(tr.textContent)) && /TUTAR|BORC|TAHAKKUK/.test(txt(tr.textContent)));
+                      if (!baslikTr) continue;
+                      const kolon = new Map();
+                      for (const h of baslikTr.querySelectorAll("th, td")) kolon.set(h.cellIndex, txt(h.textContent));
+                      const idxBul = (test) => { for (const [i, ad] of kolon) { if (test(ad)) return i; } return -1; };
+                      const vadeIdx = idxBul((h) => h.includes("VADE"));
+                      const turIdx = idxBul((h) => h.includes("VERGI") || h.includes("TUR") || h.includes("ACIKLAMA") || h.includes("TAHAKKUK"));
+                      const tutarIdx = idxBul((h) => h.includes("TUTAR") || h.includes("KALAN") || h.includes("BORC"));
+                      if (vadeIdx < 0 || tutarIdx < 0) continue;
+                      for (const tr of trlar) {
+                        if (tr === baslikTr) continue;
+                        const hucreler = [...tr.querySelectorAll("td, th")];
+                        if (!hucreler.length) continue;
+                        const metinler = hucreler.map((td) => (td.textContent || "").replace(/\s+/g, " ").trim());
+                        const t = parseFloat(String(metinler[tutarIdx] || "").replace(/[^\d.,-]/g, "").replace(/\./g, "").replace(/,/g, "."));
+                        if (isNaN(t) || t === 0) continue;
+                        liste.push({
+                          donem: metinler[vadeIdx] || "",
+                          vade: metinler[vadeIdx] || "",
+                          tur: turIdx >= 0 ? metinler[turIdx] || "" : "",
+                          toplam: Math.round(t * 100) / 100
+                        });
+                        if (liste.length >= 500) break;
+                      }
+                      if (liste.length) break;
+                    }
                   }
                   return liste;
                 };
@@ -15765,6 +15826,73 @@ const ISLER = {
     if (!borc && borcKismi) {
       borc = borcKismi;
       console.log("[gib-borc-sorgula] tam okuma yapilamadi, kismi sonuc kullaniliyor");
+    }
+    // 2.8.331: GIB "Borc Detay Listesi" sayfasina git ve tabloyu oku
+    // (belge no, vergi turu, donem, vade, asil borc, GZ, toplam)
+    if (borc) {
+      try {
+        const detayLinki = await page.evaluate(() => {
+          const adaylar = [...document.querySelectorAll("a, button, input[type=button], input[type=submit]")];
+          const hedef = adaylar.find((el) => /detay|dokum|liste|borc.?bilgi/i.test((el.textContent || el.value || "").trim()));
+          if (!hedef) return null;
+          try { hedef.click(); return true; } catch { return null; }
+        }).catch(() => null);
+        if (detayLinki) {
+          await new Promise((r) => setTimeout(r, 6000));
+          try { await wafChallengeCoz(page, "gib-borc-sorgula"); } catch {}
+          const extra = await page.evaluate(() => {
+            const txt = (s) => (s || "").toLocaleUpperCase("tr").replace(/\s+/g, " ").trim();
+            const parseP = (s) => {
+              const m = String(s || "").match(/-?[\d.,]+/);
+              if (!m) return 0;
+              const v = parseFloat(m[0].replace(/\./g, "").replace(/,/g, "."));
+              return isNaN(v) ? 0 : v;
+            };
+            const liste = [];
+            for (const tb of document.querySelectorAll("table")) {
+              const trlar = [...tb.querySelectorAll("tr")];
+              if (trlar.length < 2) continue;
+              const baslikTr = trlar[0];
+              const kolon = new Map();
+              for (const h of baslikTr.querySelectorAll("th, td")) kolon.set(h.cellIndex, txt(h.textContent));
+              const idxBul = (test) => { for (const [i, ad] of kolon) { if (test(ad)) return i; } return -1; };
+              const belgeIdx = idxBul((h) => h.includes("BELGE"));
+              const turIdx = idxBul((h) => h.includes("VERGI") && h.includes("TUR"));
+              const donemIdx = idxBul((h) => h.includes("DONEM"));
+              const vadeIdx = idxBul((h) => h.includes("VADE"));
+              const asilIdx = idxBul((h) => h.includes("ASIL"));
+              const gzIdx = idxBul((h) => h.includes("GECIKME"));
+              const toplamIdx = idxBul((h) => h.includes("TOPLAM"));
+              if (belgeIdx < 0 && turIdx < 0 && vadeIdx < 0) continue;
+              for (const tr of trlar) {
+                if (tr === baslikTr) continue;
+                const hucreler = [...tr.querySelectorAll("td, th")];
+                if (hucreler.length < 3) continue;
+                const metinler = hucreler.map((td) => (td.textContent || "").replace(/\s+/g, " ").trim());
+                if (metinler.every((m) => !m)) continue;
+                const belge = belgeIdx >= 0 ? metinler[belgeIdx] : "";
+                const tur = turIdx >= 0 ? metinler[turIdx] : "";
+                const donem = donemIdx >= 0 ? metinler[donemIdx] : (vadeIdx >= 0 ? metinler[vadeIdx] : "");
+                const vade = vadeIdx >= 0 ? metinler[vadeIdx] : "";
+                const asil = asilIdx >= 0 ? parseP(metinler[asilIdx]) : 0;
+                const gz = gzIdx >= 0 ? parseP(metinler[gzIdx]) : 0;
+                const toplam = toplamIdx >= 0 ? parseP(metinler[toplamIdx]) : (asil + gz);
+                if (toplam === 0 && asil === 0) continue;
+                liste.push({ donem, vade, tur, belgeNo: belge, asilBorc: Math.round(asil*100)/100, gz: Math.round(gz*100)/100, toplam: Math.round(toplam*100)/100 });
+                if (liste.length >= 500) break;
+              }
+              if (liste.length) break;
+            }
+            return liste;
+          }).catch(() => []);
+          if (Array.isArray(extra) && extra.length) {
+            borc.kalemler = extra;
+            console.log("[gib-borc-sorgula] detay tablosundan " + extra.length + " kalem okundu");
+          }
+        }
+      } catch (e) {
+        console.log("[gib-borc-sorgula] detay sayfasi okuma hatasi:", e?.message || String(e));
+      }
     }
     const okunamadi = !borc;
     const v = borc || { vadesiGecmis: 0, vadesiGelmemis: 0, toplam: 0 };
@@ -31261,7 +31389,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis sure siniri doldu — tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.330";
+var SURUM = "2.8.331";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

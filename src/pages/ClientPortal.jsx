@@ -251,8 +251,23 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
     const uygulaVergi = (v) => {
       setVergiBorcu(v.toplam || 0)
       setVergiBorcMesaj(v.mesaj || '')
-      setVergiDetay({ vadesiGecmis: v.vadesiGecmis || 0, vadesiGelmemis: v.vadesiGelmemis || 0 })
-      if (Array.isArray(v.kalemler)) setBorcKalemler(prev => ({ ...prev, vergi: v.kalemler }))
+      let vadesiGecmis = Number(v.vadesiGecmis) || 0
+      let vadesiGelmemis = Number(v.vadesiGelmemis) || 0
+      let kalemler = Array.isArray(v.kalemler) ? v.kalemler : []
+      // Eski kayitlar (vadesi/kalem yok): mesajdan parse et
+      if (v.mesaj && vadesiGecmis === 0 && vadesiGelmemis === 0 && kalemler.length === 0) {
+        const m = String(v.mesaj)
+        const g = m.match(/Vadesi gecmis:\s*([\d.,]+)/i)
+        const g2 = m.match(/Vadesi gelmemis:\s*([\d.,]+)/i)
+        if (g) vadesiGecmis = Number(g[1].replace(/\./g, '').replace(',', '.')) || 0
+        if (g2) vadesiGelmemis = Number(g2[1].replace(/\./g, '').replace(',', '.')) || 0
+        if (kalemler.length === 0 && (vadesiGecmis > 0 || vadesiGelmemis > 0)) {
+          if (vadesiGecmis > 0) kalemler.push({ donem: '', tur: 'Vadesi Geçmiş', toplam: vadesiGecmis })
+          if (vadesiGelmemis > 0) kalemler.push({ donem: '', tur: 'Vadesi Gelmemiş', toplam: vadesiGelmemis })
+        }
+      }
+      setVergiDetay({ vadesiGecmis, vadesiGelmemis })
+      if (kalemler.length) setBorcKalemler(prev => ({ ...prev, vergi: kalemler }))
       if (v.ts) setBorcSorguTs(prev => ({ ...prev, vergi: v.ts }))
     }
     const uygulaSgk = (s) => {
@@ -260,7 +275,17 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
       setSgkSadeceBorclar(s.sadeceBorclar || 0)
       setSgkGecikmeZammi(s.gz || 0)
       setSgkBorcMesaj(s.mesaj || '')
-      if (Array.isArray(s.kalemler)) setBorcKalemler(prev => ({ ...prev, sgk: s.kalemler }))
+      let kalemler = Array.isArray(s.kalemler) ? s.kalemler : []
+      // Eski kayitlar (kalem yok): mesajdan ozet satiri uret
+      if (kalemler.length === 0 && s.mesaj) {
+        const m = String(s.mesaj)
+        const sadece = m.match(/Sadece Bor[a-zçğıöşü]* Toplami:\s*([\d.,]+)/i)
+        const gz = m.match(/GZ:\s*([\d.,]+)/i)
+        const sv = sadece ? Number(sadece[1].replace(/\./g, '').replace(',', '.')) || 0 : 0
+        const gv = gz ? Number(gz[1].replace(/\./g, '').replace(',', '.')) || 0 : 0
+        if (sv > 0 || gv > 0) kalemler.push({ donem: '', tur: 'Toplam (kalem detayı alınamadı)', borc: sv, gz: gv, toplam: (s.toplam || sv + gv) })
+      }
+      if (kalemler.length) setBorcKalemler(prev => ({ ...prev, sgk: kalemler }))
       if (s.ts) setBorcSorguTs(prev => ({ ...prev, sgk: s.ts }))
     }
     let vLocal = null

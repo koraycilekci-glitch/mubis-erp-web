@@ -15836,10 +15836,10 @@ const ISLER = {
       try {
         const linkler = await page.evaluate(() => {
           return [...document.querySelectorAll("a, button, input[type=button], input[type=submit]")]
-            .map((el) => (el.textContent || el.value || "").trim())
-            .filter((t) => t.length > 0 && t.length < 80);
+            .map((el) => ({ text: (el.textContent || el.value || "").trim(), href: el.href || el.getAttribute("onclick") || "", tag: el.tagName }))
+            .filter((t) => t.text.length > 0 && t.text.length < 80);
         }).catch(() => []);
-        console.log("[gib-borc-sorgula] SAYFA LINKLERI:", JSON.stringify([...new Set(linkler)].slice(0, 50)));
+        console.log("[gib-borc-sorgula] SAYFA LINKLERI:", JSON.stringify(linkler.slice(0, 60)));
         console.log("[gib-borc-sorgula] MEVCUT URL:", page.url());
       } catch (e) {}
       // 2) Tablo headerlarini logla
@@ -31430,7 +31430,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis sure siniri doldu — tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.335";
+var SURUM = "2.8.336";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

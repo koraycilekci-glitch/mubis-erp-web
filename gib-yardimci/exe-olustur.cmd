@@ -3,7 +3,7 @@ title MUBiS GIB Yardimci - EXE Olusturucu
 cd /d "%~dp0"
 
 rem Surum numarasi: index.js icindeki /ping "version" degeriyle ayni tutulmali
-set SURUM=2.8.333
+set SURUM=2.8.334
 
 echo ============================================
 echo  MUBiS GIB Yardimci - EXE olusturuluyor

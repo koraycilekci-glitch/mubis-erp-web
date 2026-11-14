@@ -15487,8 +15487,30 @@ const ISLER = {
       borc = borcKismi;
       console.log("[gib-borc-sorgula] tam okuma yapilamadi, kismi sonuc kullaniliyor");
     }
-    // 2.8.333: GIB borc detay sayfalarini dene ve tabloyu oku
+    // 2.8.334: GIB borc detay - linkleri ve tablolari logla
     if (borc) {
+      // 1) Sayfadaki tum link/button metinlerini logla (teshis)
+      try {
+        const linkler = await page.evaluate(() => {
+          return [...document.querySelectorAll("a, button, input[type=button], input[type=submit]")]
+            .map((el) => (el.textContent || el.value || "").trim())
+            .filter((t) => t.length > 0 && t.length < 80);
+        }).catch(() => []);
+        console.log("[gib-borc-sorgula] SAYFA LINKLERI:", JSON.stringify([...new Set(linkler)].slice(0, 50)));
+        console.log("[gib-borc-sorgula] MEVCUT URL:", page.url());
+      } catch (e) {}
+      // 2) Tablo headerlarini logla
+      try {
+        const tablolar = await page.evaluate(() => {
+          return [...document.querySelectorAll("table")].map((tb, idx) => {
+            const trlar = [...tb.querySelectorAll("tr")];
+            const baslik = trlar.length ? (trlar[0].textContent || "").replace(/\s+/g, " ").trim().slice(0, 250) : "";
+            return { idx, rowCount: trlar.length, baslik };
+          });
+        }).catch(() => []);
+        console.log("[gib-borc-sorgula] SAYFA TABLOLARI:", JSON.stringify(tablolar));
+      } catch (e) {}
+      // 3) URL adaylari
       const detayUrlAdaylari = [
         "https://dijital.gib.gov.tr/portal/borc-bilgileri",
         "https://dijital.gib.gov.tr/portal/borc-detay",
@@ -15502,8 +15524,18 @@ const ISLER = {
           await new Promise((r) => setTimeout(r, 4000));
           try { await wafChallengeCoz(page, "gib-borc-sorgula"); } catch {}
           const urlSimdi = page.url() || "";
-          if (!/gib\.gov\.tr/i.test(urlSimdi)) continue;
-          if (/login|giris/i.test(urlSimdi)) continue;
+          if (!/gib\.gov\.tr/i.test(urlSimdi)) { console.log("[gib-borc-sorgula] detay url atlandi (gib degil):", du, urlSimdi); continue; }
+          if (/login|giris/i.test(urlSimdi)) { console.log("[gib-borc-sorgula] detay url atlandi (login):", du); continue; }
+          const tabloBilgi = await page.evaluate(() => {
+            const tabs = [...document.querySelectorAll("table")];
+            return tabs.map((tb, idx) => {
+              const trlar = [...tb.querySelectorAll("tr")];
+              const baslik = trlar.length ? (trlar[0].textContent || "").replace(/\s+/g, " ").trim().slice(0, 250) : "";
+              return { idx, rowCount: trlar.length, baslik };
+            });
+          }).catch(() => []);
+          console.log("[gib-borc-sorgula] detay url:", du, "=>", urlSimdi);
+          console.log("[gib-borc-sorgula] detay tablolar:", JSON.stringify(tabloBilgi));
           const extra = await page.evaluate(() => {
             const txt = (s) => (s || "").toLocaleUpperCase("tr").replace(/\s+/g, " ").trim();
             const parseP = (s) => {
@@ -27701,7 +27733,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis " + turLimiti + " tur sonunda tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.333";
+var SURUM = "2.8.334";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

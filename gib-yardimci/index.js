@@ -15682,62 +15682,71 @@ const ISLER = {
                   console.log("[gib-borc-sorgula] pdf-parse v2 hatasi:", e2?.message || String(e2));
                 }
               }
-              console.log("[gib-borc-sorgula] PDF metin uzunlugu:", text.length);
-              const satirlar = text.split(/\r?\n/)
-                .map((l) => l.replace(/\s+/g, " ").trim())
-                .filter((l) => l && !/^--\s*\d+\s*of\s*\d+\s*--$/i.test(l));
-              const kayitRe = /^(.+?)\s+(\d{10}[A-Za-z]\S*)\s+(?:(\d{4}\/\d{1,2}-\d{4}\/\d{1,2})\s+)?(\d{4}-\d{2}-\d{2})\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})(?:\s+(\S+))?$/;
-              let aktif = null;
-              let turParcalari = [];
-              const kapatSatir = () => {
-                if (!aktif) return;
-                let tur = turParcalari.join(" ").replace(/\s+/g, " ").trim();
-                const mk = tur.match(/^(\d{3,4})\s*(.*)$/);
-                const kod = mk ? mk[1] : "";
-                tur = mk ? mk[2].trim() : tur;
-                if (aktif.toplam || aktif.asilBorc) {
-                  kalemler.push({
-                    donem: aktif.donem || "",
-                    vade: aktif.vade || "",
-                    tur: tur || "",
-                    vergiKodu: kod,
-                    belgeNo: aktif.belgeNo || "",
-                    vd: aktif.vd || "",
-                    plaka: aktif.plaka || "",
-                    asilBorc: Math.round(aktif.asilBorc * 100) / 100,
-                    gz: Math.round(aktif.gz * 100) / 100,
-                    toplam: Math.round(aktif.toplam * 100) / 100
-                  });
-                }
-                aktif = null;
-                turParcalari = [];
-              };
-              for (const satir of satirlar) {
-                const m = satir.match(kayitRe);
-                if (m) {
-                  kapatSatir();
-                  aktif = {
-                    vd: m[1].trim(),
-                    belgeNo: m[2],
-                    donem: m[3] || "",
-                    vade: m[4],
-                    asilBorc: paraCevir(m[5]),
-                    gz: paraCevir(m[6]),
-                    toplam: paraCevir(m[7]),
-                    plaka: m[8] || ""
-                  };
-                  continue;
-                }
-                if (aktif) {
-                  if (/^Borç Detay Listesi/i.test(satir)) continue;
-                  if (/^Vergi Dairesi Vergi Türü/i.test(satir)) continue;
-                  if (/^TOPLAM\b/i.test(satir)) continue;
-                  turParcalari.push(satir);
-                }
-                if (kalemler.length >= 500) break;
+              console.log("[gib-borc-sorgula] PDF metin uzunlugu:", text.length, "satir:", String(text).split(/\r?\n/).length);
+
+              // 2.8.342: satir sonlarina bagimli degil - tum metin uzerinde global arama.
+              // Kayit bicimi: <VD> <BelgeNo> [<Donem>] <Vade> <Asil> <GZ> <Toplam> [<Plaka>]
+              const temiz = String(text).replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ");
+              const kayitRe = /(\S+)\s+(\d{10}[A-Za-z]\S*)\s+(?:(\d{4}\/\d{1,2}-\d{4}\/\d{1,2})\s+)?(\d{4}-\d{2}-\d{2})\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})(?:\s+(\d{2}[A-Z]{1,3}\d{2,5}))?/g;
+              const eslesmeler = [];
+              let mm;
+              while ((mm = kayitRe.exec(temiz)) !== null) {
+                eslesmeler.push({
+                  vd: mm[1].trim(),
+                  belgeNo: mm[2],
+                  donem: mm[3] || "",
+                  vade: mm[4],
+                  asilBorc: paraCevir(mm[5]),
+                  gz: paraCevir(mm[6]),
+                  toplam: paraCevir(mm[7]),
+                  plaka: mm[8] || "",
+                  bas: mm.index,
+                  son: kayitRe.lastIndex
+                });
+                if (eslesmeler.length >= 500) break;
               }
-              kapatSatir();
+              console.log("[gib-borc-sorgula] PDF kayit eslesmesi:", eslesmeler.length);
+
+              const turTemizle = (ham) => {
+                let t = String(ham || "").replace(/\s+/g, " ").trim();
+                t = t.replace(/^Borç Detay Listesi\s*/i, "");
+                t = t.replace(/^\d{2}\/\d{2}\/\d{4}(\s+\d{2}:\d{2}:\d{2})?\s*/i, "");
+                t = t.replace(/^Vergi Dairesi Vergi Türü Vergi Dönemi Vade Tarihi Asıl Borç Gecikme Zammı Toplam Borç\s*/i, "");
+                t = t.replace(/^Belge No Plaka\s*/i, "");
+                t = t.replace(/--\s*\d+\s*of\s*\d+\s*--/gi, "");
+                t = t.replace(/^TOPLAM\b.*$/i, "");
+                t = t.replace(/\s+/g, " ").trim();
+                return t;
+              };
+
+              for (let i = 0; i < eslesmeler.length; i++) {
+                const e = eslesmeler[i];
+                // tur bilgisi: bu kaydin bitisi ile sonraki kaydin basi arasindaki metin
+                const sonrakiBas = i + 1 < eslesmeler.length ? eslesmeler[i + 1].bas : temiz.length;
+                let tur = turTemizle(temiz.substring(e.son, sonrakiBas));
+                // bastaki sayisal vergi kodu (0033, 4017, 6183 ...)
+                let kod = "";
+                const mk = tur.match(/^(\d{3,4})\s+(.*)$/);
+                if (mk) { kod = mk[1]; tur = mk[2].trim(); }
+                if (tur.length > 90) tur = tur.substring(0, 90).trim();
+                kalemler.push({
+                  donem: e.donem,
+                  vade: e.vade,
+                  tur: tur,
+                  vergiKodu: kod,
+                  belgeNo: e.belgeNo,
+                  vd: e.vd,
+                  plaka: e.plaka,
+                  asilBorc: Math.round(e.asilBorc * 100) / 100,
+                  gz: Math.round(e.gz * 100) / 100,
+                  toplam: Math.round(e.toplam * 100) / 100
+                });
+              }
               console.log("[gib-borc-sorgula] PDF'den " + kalemler.length + " kalem okundu");
+              if (kalemler.length) {
+                const ilk = kalemler[0];
+                console.log("[gib-borc-sorgula] ilk kalem:", JSON.stringify(ilk));
+              }
             } catch (e) {
               console.log("[gib-borc-sorgula] PDF parse hatasi:", e?.message || String(e));
             }
@@ -28026,7 +28035,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis " + turLimiti + " tur sonunda tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.341";
+var SURUM = "2.8.342";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

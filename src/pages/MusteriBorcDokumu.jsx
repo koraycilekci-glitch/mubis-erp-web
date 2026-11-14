@@ -706,8 +706,8 @@ export default function MusteriBorcDokumu() {
             await borcSonucuKaydet(c.id, t, {
               toplam: r.toplam,
               detay: t === 'sgk'
-                ? { sadeceBorclar: r.sadeceBorclar, gz: r.gecikmeZammi }
-                : { vadesiGecmis: r.vadesiGecmis, vadesiGelmemis: r.vadesiGelmemis },
+                ? { sadeceBorclar: r.sadeceBorclar, gz: r.gecikmeZammi, kalemler: Array.isArray(r.kalemler) ? r.kalemler : [] }
+                : { vadesiGecmis: r.vadesiGecmis, vadesiGelmemis: r.vadesiGelmemis, kalemler: Array.isArray(r.kalemler) ? r.kalemler : [] },
               mesaj: r.not || ''
             })
             basarili++

@@ -15488,6 +15488,7 @@ const ISLER = {
       console.log("[gib-borc-sorgula] tam okuma yapilamadi, kismi sonuc kullaniliyor");
     }
     // 2.8.337: GIB "Indir" butonu ile Borc Detay dosyasini indir
+    // 2.8.337: GIB "Indir" butonu ile Borc Detay dosyasini indir
     if (borc) {
       try {
         const indirmeDizini = path.join(os.tmpdir(), "gib_borc_detay_" + Date.now());
@@ -15529,7 +15530,7 @@ const ISLER = {
               const buf = fs.readFileSync(dosyaYolu);
               const ilk200 = buf.slice(0, 200);
               console.log("[gib-borc-sorgula] Dosya ilk byte'lar (hex):", ilk200.slice(0, 16).toString("hex"));
-              console.log("[gib-borc-sorgula] Dosya ilk byte'lar (text):", ilk200.toString("utf8").substring(0, 200).replace(/\n/g, " "));
+              console.log("[gib-borc-sorgula] Dosya ilk byte'lar (text):", ilk200.toString("utf8").substring(0, 200).replace(/\\n/g, " "));
             } catch (e) {}
             // PDF parse
             if (dosyaAdi.endsWith(".pdf")) {
@@ -15538,14 +15539,14 @@ const ISLER = {
                 const buf = fs.readFileSync(dosyaYolu);
                 const data = await pdfParse(buf);
                 const text = data.text || "";
-                console.log("[gib-borc-sorgula] PDF metin (ilk 500):", text.substring(0, 500).replace(/\n/g, " | "));
+                console.log("[gib-borc-sorgula] PDF metin (ilk 500):", text.substring(0, 500).replace(/\\n/g, " | "));
                 // Parse rows from PDF text
-                const satirlar = text.split(/\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+                const satirlar = text.split(/\\n/).map((l) => l.trim()).filter((l) => l.length > 0);
                 const kalemler = [];
                 for (const satir of satirlar) {
-                  const parcalar = satir.split(/\s{2,}|\t/).map((p) => p.trim()).filter((p) => p);
+                  const parcalar = satir.split(/\\s{2,}|\\t/).map((p) => p.trim()).filter((p) => p);
                   if (parcalar.length < 4) continue;
-                  const sayisallar = parcalar.filter((p) => /^-?[\d.,]+$/.test(p));
+                  const sayisallar = parcalar.filter((p) => /^-?[\\d.,]+$/.test(p));
                   if (sayisallar.length < 1) continue;
                   const toplam = parseFloat((sayisallar[sayisallar.length - 1] || "0").replace(/\./g, "").replace(/,/g, "."));
                   if (isNaN(toplam) || toplam === 0) continue;
@@ -27718,7 +27719,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis " + turLimiti + " tur sonunda tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.337";
+var SURUM = "2.8.338";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

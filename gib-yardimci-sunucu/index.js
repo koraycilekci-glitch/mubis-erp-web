@@ -16005,45 +16005,81 @@ const ISLER = {
           console.log("[gib-borc-sorgula] Indirilen dosya:", kucuk, fs.statSync(dosyaYolu).size, "bayt");
           if (kucuk.endsWith(".pdf")) {
             try {
-              const pdfParse = require("pdf-parse");
-              const data = await pdfParse(fs.readFileSync(dosyaYolu));
-              const text = data.text || "";
-              console.log("[gib-borc-sorgula] PDF metin (ilk 900):", text.replace(/\s+/g, " ").substring(0, 900));
-              const satirlar = text.split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
-              for (const satir of satirlar) {
-                // satirda en az 3 sayisal deger + vergi turu metni olmali
-                const sayisallar = satir.match(/-?[\d.]+,\d{2}/g) || [];
-                if (sayisallar.length < 2) continue;
-                if (/TOPLAM/i.test(satir) && sayisallar.length < 3) continue;
-                const vadeEsles = satir.match(/\b\d{2}[./]\d{2}[./]\d{4}\b/);
-                const donemEsles = satir.match(/\b\d{4}-\d{2}\b/g);
-                const tur = satir.replace(/-?[\d.,]+/g, " ").replace(/\s+/g, " ").trim().substring(0, 80);
-                if (!tur) continue;
-                const toplam = paraCevir(sayisallar[sayisallar.length - 1]);
-                if (!toplam) continue;
-                const gz = sayisallar.length >= 2 ? paraCevir(sayisallar[sayisallar.length - 2]) : 0;
-                const asil = sayisallar.length >= 3 ? paraCevir(sayisallar[sayisallar.length - 3]) : 0;
-                kalemler.push({
-                  donem: donemEsles ? donemEsles[0] : "",
-                  vade: vadeEsles ? vadeEsles[0] : "",
-                  tur,
-                  belgeNo: "",
-                  asilBorc: Math.round(asil * 100) / 100,
-                  gz: Math.round(gz * 100) / 100,
-                  toplam: Math.round(toplam * 100) / 100
-                });
-                if (kalemler.length >= 500) break;
-              }
-              // TOPLAM satirini kalemlerden cikar
-              if (kalemler.length > 1) {
-                const toplamSatir = kalemler.find((k) => /TOPLAM/i.test(k.tur));
-                if (toplamSatir) {
-                  const digerleri = kalemler.filter((k) => k !== toplamSatir).reduce((a, k) => a + k.toplam, 0);
-                  if (Math.abs(toplamSatir.toplam - digerleri) < 0.5) {
-                    kalemler = kalemler.filter((k) => k !== toplamSatir);
+              const bufPdf = fs.readFileSync(dosyaYolu);
+              let text = "";
+              try {
+                const pdfParse = require("pdf-parse");
+                const d = await pdfParse(bufPdf);
+                text = (d && d.text) || "";
+              } catch (e1) {
+                try {
+                  const mod = require("pdf-parse");
+                  const P = mod && mod.PDFParse;
+                  if (P) {
+                    const prs = new P({ data: bufPdf });
+                    const r2 = await prs.getText();
+                    text = (r2 && r2.text) || "";
+                    try { await prs.destroy(); } catch (e3) {}
                   }
+                } catch (e2) {
+                  console.log("[gib-borc-sorgula] pdf-parse v2 hatasi:", e2?.message || String(e2));
                 }
               }
+              console.log("[gib-borc-sorgula] PDF metin uzunlugu:", text.length);
+              const satirlar = text.split(/\r?\n/)
+                .map((l) => l.replace(/\s+/g, " ").trim())
+                .filter((l) => l && !/^--\s*\d+\s*of\s*\d+\s*--$/i.test(l));
+              const kayitRe = /^(.+?)\s+(\d{10}[A-Za-z]\S*)\s+(?:(\d{4}\/\d{1,2}-\d{4}\/\d{1,2})\s+)?(\d{4}-\d{2}-\d{2})\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})(?:\s+(\S+))?$/;
+              let aktif = null;
+              let turParcalari = [];
+              const kapatSatir = () => {
+                if (!aktif) return;
+                let tur = turParcalari.join(" ").replace(/\s+/g, " ").trim();
+                const mk = tur.match(/^(\d{3,4})\s*(.*)$/);
+                const kod = mk ? mk[1] : "";
+                tur = mk ? mk[2].trim() : tur;
+                if (aktif.toplam || aktif.asilBorc) {
+                  kalemler.push({
+                    donem: aktif.donem || "",
+                    vade: aktif.vade || "",
+                    tur: tur || "",
+                    vergiKodu: kod,
+                    belgeNo: aktif.belgeNo || "",
+                    vd: aktif.vd || "",
+                    plaka: aktif.plaka || "",
+                    asilBorc: Math.round(aktif.asilBorc * 100) / 100,
+                    gz: Math.round(aktif.gz * 100) / 100,
+                    toplam: Math.round(aktif.toplam * 100) / 100
+                  });
+                }
+                aktif = null;
+                turParcalari = [];
+              };
+              for (const satir of satirlar) {
+                const m = satir.match(kayitRe);
+                if (m) {
+                  kapatSatir();
+                  aktif = {
+                    vd: m[1].trim(),
+                    belgeNo: m[2],
+                    donem: m[3] || "",
+                    vade: m[4],
+                    asilBorc: paraCevir(m[5]),
+                    gz: paraCevir(m[6]),
+                    toplam: paraCevir(m[7]),
+                    plaka: m[8] || ""
+                  };
+                  continue;
+                }
+                if (aktif) {
+                  if (/^Borç Detay Listesi/i.test(satir)) continue;
+                  if (/^Vergi Dairesi Vergi Türü/i.test(satir)) continue;
+                  if (/^TOPLAM\b/i.test(satir)) continue;
+                  turParcalari.push(satir);
+                }
+                if (kalemler.length >= 500) break;
+              }
+              kapatSatir();
               console.log("[gib-borc-sorgula] PDF'den " + kalemler.length + " kalem okundu");
             } catch (e) {
               console.log("[gib-borc-sorgula] PDF parse hatasi:", e?.message || String(e));
@@ -31687,7 +31723,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
   if (!indirmeBitti) log("akis sure siniri doldu — tamamlanamadi; son adim:", sDurum.adim);
   return indirmeBitti;
 }
-var SURUM = "2.8.340";
+var SURUM = "2.8.341";
 var trayBildirimKuyrugu = [];
 var trayBaslatildi = false;
 function trayBaslat() {

@@ -317,6 +317,33 @@ export async function driveHazirMi() {
 }
 
 // ---------------------------------------------------------------
+// 7) Gider fisi yukleme — musteri/yil/ay/GIDER_FISLERI duzeni
+// ---------------------------------------------------------------
+export async function uploadExpenseToDrive(file, { clientId, yil, ay, musteriAdi } = {}) {
+  const bilgi = await driveTokenAl()
+  if (!bilgi.token) return { success: false, error: bilgi.error || 'Drive token alinamadi' }
+
+  // Musteri adi verilmediyse id ile klasorle
+  const klasorAdi = musteriAdi || (clientId != null ? `Musteri_${clientId}` : 'Genel')
+  const yol = [klasorAdi]
+  if (yil) yol.push(String(yil))
+  const ayNo = Number(ay)
+  if (ayNo >= 1 && ayNo <= 12) yol.push(AYLAR_DRIVE[ayNo - 1])
+  yol.push('GIDER_FISLERI')
+
+  const ad = file?.name || `gider_${Date.now()}.jpg`
+  return uploadFileToDrive(file, ad, {
+    clientId: clientId ?? null,
+    belgeTuru: 'gider_fisi',
+    mimeType: file?.type || undefined,
+    yol,
+    yil,
+    ay,
+    musteriAdi,
+  })
+}
+
+// ---------------------------------------------------------------
 // 6) OAuth baglanti adresi (admin ayarlari icin)
 // ---------------------------------------------------------------
 export function driveBaglantiAdresi() {

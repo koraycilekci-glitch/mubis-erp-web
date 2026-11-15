@@ -1,11 +1,26 @@
 // MUBiS ERP — PWA Service Worker
-const CACHE_NAME = 'mubis-erp-v2'
+// v3: respondWith her zaman geçerli bir Response döndürmeli. Aksi halde
+// tarayıcı "Failed to convert value to 'Response'" hatası verir ve sayfa
+// (özellikle /admin/ayarlar gibi derin bağlantılar) açılmaz.
+const CACHE_NAME = 'mubis-erp-v3'
 const PRECACHE = [
   '/manifest.json',
   '/icon-192.png',
   '/icon-512.png',
   '/logo-icon.png'
 ]
+
+// Çevrimdışı yanıtı — her zaman geçerli bir Response.
+const cevrimdisi = (mesaj = 'Cevrimdisisiniz. Internet baglantisini kontrol edin.') =>
+  new Response(
+    `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>MUBiS ERP — Cevrimdisi</title>` +
+      `<meta name="viewport" content="width=device-width,initial-scale=1"></head>` +
+      `<body style="font-family:system-ui,sans-serif;background:#0b2a4a;color:#fff;display:flex;` +
+      `align-items:center;justify-content:center;height:100vh;margin:0;text-align:center">` +
+      `<div><h1 style="font-size:20px;margin:0 0 8px">MUBiS ERP</h1>` +
+      `<p style="opacity:.75;font-size:14px;margin:0">${mesaj}</p></div></body></html>`,
+    { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+  )
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -27,28 +42,43 @@ self.addEventListener('fetch', (event) => {
   const req = event.request
   if (req.method !== 'GET') return
   const url = new URL(req.url)
-  // API / functions: her zaman network
+
+  // Sadece kendi origin'imizle ilgileniyoruz.
+  if (url.origin !== self.location.origin) return
+
+  // API / functions: service worker'a hiç karışma — her zaman network.
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/functions/')) return
-  // Navigasyon: her zaman network-first (cache kullanma, güncel HTML al)
+
+  // Navigasyon: network-first. Başarısızsa önbellekteki kabuk, o da yoksa 503.
   if (req.mode === 'navigate') {
     event.respondWith(
-      fetch(req).then((res) => {
-        return res
-      }).catch(() => caches.match('/').then((r) => r || new Response('Offline', { status: 503 })))
+      fetch(req)
+        .then((res) => res)
+        .catch(async () => {
+          const onbellek = await caches.match('/')
+          return onbellek || cevrimdisi()
+        })
     )
     return
   }
-  // Statik varliklar: cache-first, yoksa network
+
+  // Statik varlıklar: cache-first, yoksa network. Her iki durumda da
+  // mutlaka bir Response dönmeli.
   event.respondWith(
-    caches.match(req).then((cached) => {
-      if (cached) return cached
-      return fetch(req).then((res) => {
+    (async () => {
+      const onbellek = await caches.match(req)
+      if (onbellek) return onbellek
+      try {
+        const res = await fetch(req)
         if (res && res.status === 200 && res.type === 'basic') {
-          const copy = res.clone()
-          caches.open(CACHE_NAME).then((c) => c.put(req, copy)).catch(() => {})
+          const kopya = res.clone()
+          caches.open(CACHE_NAME).then((c) => c.put(req, kopya)).catch(() => {})
         }
         return res
-      }).catch(() => cached)
-    })
+      } catch {
+        // Ağ hatası ve önbellekte yok: 503 döndür (undefined DÖNME).
+        return new Response('', { status: 503, statusText: 'Offline' })
+      }
+    })()
   )
 })

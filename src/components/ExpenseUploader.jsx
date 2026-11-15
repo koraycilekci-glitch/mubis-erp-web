@@ -257,21 +257,46 @@ export default function ExpenseUploader({ clientId, clientName }) {
         const file = selectedFiles[i]
         const ext = file.name.split('.').pop()
         const fileName = `${clientId}/expenses/${selectedYear}/${selectedMonth}/${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${ext}`
-        
-        const { error: upError } = await supabase.storage
-          .from('client-expenses')
-          .upload(fileName, file, { cacheControl: '3600', upsert: false })
-        if (upError) throw upError
 
-        const { data: urlData } = supabase.storage
-          .from('client-expenses')
-          .getPublicUrl(fileName)
+        // 1) Google Drive (bagliysa) — belge Drive'da, referans drive_belgeler'de.
+        //    OCR icin yerel blob/sayfa onizlemesi kullanilir (Drive dosyasi
+        //    herkese acik olmadigi icin public URL gerekmez).
+        let imageUrl = ''
+        let driveFileId = ''
+        setMsg(`${i + 1}/${selectedFiles.length} Drive'a yukleniyor...`)
+        try {
+          const { uploadExpenseToDrive } = await import('../services/googleDriveService')
+          const drive = await uploadExpenseToDrive(file, {
+            clientId,
+            yil: selectedYear,
+            ay: selectedMonth,
+          })
+          if (drive?.success) {
+            imageUrl = drive.web_view_link || ''
+            driveFileId = drive.drive_file_id || ''
+          }
+        } catch (e) {
+          console.warn('Drive gider yuklemesi atlandi:', e?.message || e)
+        }
+
+        // 2) Drive yoksa Supabase Storage'a dus (sistem durmaz)
+        if (!imageUrl) {
+          const { error: upError } = await supabase.storage
+            .from('client-expenses')
+            .upload(fileName, file, { cacheControl: '3600', upsert: false })
+          if (upError) throw upError
+
+          const { data: urlData } = supabase.storage
+            .from('client-expenses')
+            .getPublicUrl(fileName)
+          imageUrl = urlData.publicUrl
+        }
 
         // OCR islemi — PDF'ler tesseract ile okunamaz, resme cevrilmis
-        // onizlemeyi (dataURL) kullan; resimlerde depolanan URL okunur.
+        // onizlemeyi (dataURL) kullan; resimlerde yuklenen dosya okunur.
         setMsg(`${i + 1}/${selectedFiles.length} OCR isleniyor...`)
-        const ocrResult = await processExpenseImage(pdfMi(file) ? previewUrls[i] : urlData.publicUrl)
-        
+        const ocrResult = await processExpenseImage(pdfMi(file) ? previewUrls[i] : imageUrl)
+
         // Gider kaydi olustur
         const { data: expense, error: expenseError } = await supabase
           .from('expense_documents')
@@ -281,7 +306,7 @@ export default function ExpenseUploader({ clientId, clientName }) {
             month: selectedMonth,
             document_date: ocrResult.parsed.tarih || new Date().toISOString().split('T')[0],
             document_no: ocrResult.parsed.fisNo || '',
-            image_url: urlData.publicUrl,
+            image_url: imageUrl,
             file_name: file.name,
             status: 'parsed',
             total_amount: ocrResult.parsed.toplam || 0,
@@ -293,8 +318,18 @@ export default function ExpenseUploader({ clientId, clientName }) {
           })
           .select()
           .single()
-        
+
         if (expenseError) throw expenseError
+
+        // Drive referansini gider kaydina bagla (varsa)
+        if (driveFileId) {
+          try {
+            await supabase
+              .from('drive_belgeler')
+              .update({ expense_document_id: expense.id })
+              .eq('drive_file_id', driveFileId)
+          } catch { /* yoksay */ }
+        }
         
         // Muhasebe kaydi olustur
         const entries = convertToAccountingEntry('individual', ocrResult.parsed)

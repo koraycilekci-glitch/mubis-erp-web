@@ -35,8 +35,6 @@ import MusteriListesi from './pages/MusteriListesi'
 import SetupPage from './pages/SetupPage'
 import ChangePassword from './pages/ChangePassword'
 import Settings from './pages/Settings'
-import MizanKontrol from './pages/MizanKontrol'
-import BeyanZorunlulukMatrisi from './pages/BeyanZorunlulukMatrisi'
 import PratikHesaplamalar from './pages/PratikHesaplamalar'
 import IzinTakip from './pages/IzinTakip'
 import PersonelDuzenle from './pages/PersonelDuzenle'
@@ -236,8 +234,6 @@ function AppContent() {
           <Route path="/admin/fisler" element={<Fisler />} />
           <Route path="/admin/kdv-dokumleri" element={<KdvDokumler />} />
           <Route path="/admin/kredi-karti-hasilat" element={<KrediKartiHasilat />} />
-          <Route path="/admin/mizan-kontrol" element={<MizanKontrol />} />
-          <Route path="/admin/beyan-zorunluluk-matrixi" element={<BeyanZorunlulukMatrisi />} />
           <Route path="/admin/musteri-borc-dokumu" element={<MusteriBorcDokumu />} />
           <Route path="/admin/efatura-islemleri" element={<EFaturaKesim />} />
           <Route path="/admin/z-raporu-yukle" element={<AdminOcrYukle tip="zrapor" />} />

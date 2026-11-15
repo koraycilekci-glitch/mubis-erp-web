@@ -47,6 +47,8 @@ export const MENU = [
   },
   { to: '/admin/kdv-dokumleri', icon: BarChart3, label: 'KDV Dökümleri' },
   { to: '/admin/kredi-karti-hasilat', icon: CreditCard, label: 'Kredi Kartı Hasılatı (POS)' },
+  { to: '/admin/mizan-kontrol', icon: Shield, label: 'Mizan (TDHP) Kontrolü' },
+  { to: '/admin/beyan-zorunluluk-matrixi', icon: FileText, label: 'Beyan Zorunluluk Matrisi' },
   { to: '/admin/musteri-borc-dokumu', icon: Landmark, label: 'Müşteri Borç Dökümü' },
   { to: '/admin/efatura-islemleri', icon: FileText, label: 'E-Fatura İşlemleri' },
   { to: '/admin/etebligatlar', icon: Inbox, label: 'e-Tebligat' },

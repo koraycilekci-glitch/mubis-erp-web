@@ -300,7 +300,9 @@ export default function MusteriBorcDokumu() {
   }, [kapsam, seciliId, siraliMusteriler])
 
   const yukle = async () => {
-    if (!hedefMusteriler.length) { setKayitlar([]); setEskiKayitlar([]); return }
+    // Koruma: hedefMusteriler undefined/null olabilir
+    const target = hedefMusteriler || []
+    if (!target.length) { setKayitlar([]); setEskiKayitlar([]); return }
     setYukleniyor(true)
     setHata('')
     try {
@@ -308,13 +310,13 @@ export default function MusteriBorcDokumu() {
       if (silinen > 0) setSilinenAdet(silinen)
     } catch { /* yoksay */ }
     try {
-      const ids = hedefMusteriler.map(c => c.id)
+      const ids = target.map(c => c.id)
       const veri = await borcDokumuToplu({ clientIds: ids, yil: null, ay: null, tip })
       const ozet = borcOzetle(veri)
       const simdi = Date.now()
       const guncel = []
       const eski = []
-      for (const k of ozet) {
+      for (const k of (ozet || [])) {
         const ts = k?.sorgu_ts ? new Date(k.sorgu_ts).getTime() : 0
         const yasGun = ts ? (simdi - ts) / 86400000 : Infinity
         if (yasGun <= VERI_GECERLILIK_GUN) guncel.push(k)
@@ -327,7 +329,7 @@ export default function MusteriBorcDokumu() {
       try {
         const { getAccountingFee, getPayments, hesaplaBorcOzeti } = await import('../services/paymentService')
         const harita = {}
-        await Promise.all(hedefMusteriler.map(async (c) => {
+        await Promise.all(target.map(async (c) => {
           try {
             const fee = await getAccountingFee(c.id)
             if (!fee) return
@@ -340,6 +342,7 @@ export default function MusteriBorcDokumu() {
       } catch { setMuhasebeBorc({}) }
     } catch (e) {
       setHata(e?.message || 'Borç dökümü yüklenemedi')
+      console.error('MusteriBorcDokumu yukle hatasi:', e)
     } finally {
       setYukleniyor(false)
     }
@@ -396,9 +399,9 @@ export default function MusteriBorcDokumu() {
   }, [liste, arama, siralama, muhasebeDahil, muhasebeBorc])
 
   const toplamlar = useMemo(() => filtreliListe.reduce((t, g) => {
-    const s = sayi(g.sgk?.toplam)
+    const s = Math.max(0, sayi(g.sgk?.toplam)) // Only count debts, not receivables
     const v = sayi(g.vergi?.toplam)
-    const m = muhasebeDahil ? sayi(muhasebeBorc[String(g.client.id)]?.kalanBorc) : 0
+    const m = muhasebeDahil ? Math.max(0, sayi(muhasebeBorc[String(g.client.id)]?.kalanBorc)) : 0
     return {
       sgk: t.sgk + s,
       vergi: t.vergi + v,

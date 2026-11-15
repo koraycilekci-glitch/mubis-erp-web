@@ -1,7 +1,10 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { OFIS, HARITA_URL } from '../data/ofisBilgi'
 
 export default function Footer() {
+  // Görsel henüz yüklenmemiş/bozuksa yazı linkine düşer (kırık resim ikonu görünmez).
+  const [bannerVar, setBannerVar] = useState(true)
   return (
     <footer className="bg-blue-950/80 border-t border-blue-800/50 mt-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -14,9 +17,35 @@ export default function Footer() {
               Mali Müşavirin Dijital Çalışma Masası. Beyanlardan tahakkuklara,
               e-defterden e-tebligata kadar tüm süreçlerinizi tek platformdan yönetin.
             </p>
-            <a href="/pwa-kurulum" target="_blank" rel="noopener noreferrer" className="inline-block mt-3 text-cyan-300 hover:text-cyan-200 text-sm font-medium underline">
-              📱 Mobil Kurulum Kılavuzu
-            </a>
+            {bannerVar ? (
+              <a
+                href="/pwa-kurulum"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group mt-4 inline-block w-full max-w-[170px] sm:max-w-[190px] rounded-lg overflow-hidden ring-1 ring-blue-700/50 hover:ring-cyan-400/70 transition-shadow hover:shadow-lg hover:shadow-cyan-500/10"
+                title="Mobil Kurulum Kılavuzu"
+              >
+                <img
+                  src="/mobil-kurulum-banner.jpg"
+                  alt="MUBİS ERP'yi telefonunuza ekleyin — Android ve iPhone kurulum kılavuzu"
+                  width="840"
+                  height="420"
+                  className="block w-full h-auto object-contain transition-transform duration-300 group-hover:scale-[1.02]"
+                  loading="lazy"
+                  decoding="async"
+                  onError={() => setBannerVar(false)}
+                />
+              </a>
+            ) : (
+              <a
+                href="/pwa-kurulum"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block mt-3 text-cyan-300 hover:text-cyan-200 text-sm font-medium underline"
+              >
+                📱 Mobil Kurulum Kılavuzu
+              </a>
+            )}
           </div>
 
           <div>

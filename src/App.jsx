@@ -234,6 +234,8 @@ function AppContent() {
           <Route path="/admin/fisler" element={<Fisler />} />
           <Route path="/admin/kdv-dokumleri" element={<KdvDokumler />} />
           <Route path="/admin/kredi-karti-hasilat" element={<KrediKartiHasilat />} />
+          <Route path="/admin/mizan-kontrol" element={<MizanKontrol />} />
+          <Route path="/admin/beyan-zorunluluk-matrixi" element={<BeyanZorunlulukMatrisi />} />
           <Route path="/admin/musteri-borc-dokumu" element={<MusteriBorcDokumu />} />
           <Route path="/admin/efatura-islemleri" element={<EFaturaKesim />} />
           <Route path="/admin/z-raporu-yukle" element={<AdminOcrYukle tip="zrapor" />} />

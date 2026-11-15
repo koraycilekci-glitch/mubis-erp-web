@@ -240,6 +240,8 @@ export async function kdv2Listesi({ yil, ay } = {}) {
     // Tek oranli (dokumu olmayan) faturada tevkifat tutari matrah+KDV'den
     // tahmin edilemez; eksik olarak isaretlenir.
     const eksik = hesaplanan == null && faturaKdv > 0
+    const conflict = hesaplanan != null && Math.abs(kurus(hesaplanan - faturaKdv)) > 0.02
+    const belirsiz = oranlar.length === 0 || oranlar.some(o => o.oran == null || Number(o.oran) <= 0)
     const kayit = {
       id: f.id,
       tarih: f.tarih,
@@ -252,18 +254,22 @@ export async function kdv2Listesi({ yil, ay } = {}) {
       tutar: n(f.tutar) || 0,
       oranlar,
       eksik,
+      conflict,
+      belirsiz,
     }
     const g = firmalar.get(f.client_id) || {
       id: f.client_id,
       ad: (adHaritasi.get(f.client_id)?.company || adHaritasi.get(f.client_id)?.name || `Müşteri #${f.client_id}`).trim(),
       vkn: adHaritasi.get(f.client_id)?.vkn || adHaritasi.get(f.client_id)?.tc || '',
-      invoices: [], matrah: 0, kdv: 0, tevkifatKdv: 0, eksik: false,
+      invoices: [], matrah: 0, kdv: 0, tevkifatKdv: 0, eksik: false, conflict: false, belirsiz: false,
     }
     g.invoices.push(kayit)
     g.matrah = kurus(g.matrah + kayit.matrah)
     g.kdv = kurus(g.kdv + kayit.kdv)
     g.tevkifatKdv = kurus(g.tevkifatKdv + kayit.tevkifatKdv)
     if (kayit.eksik) g.eksik = true
+    if (kayit.conflict) g.conflict = true
+    if (kayit.belirsiz) g.belirsiz = true
     firmalar.set(f.client_id, g)
   }
 
@@ -273,6 +279,9 @@ export async function kdv2Listesi({ yil, ay } = {}) {
       ...g,
       invoices: g.invoices.sort((a, b) => String(a.tarih || '').localeCompare(String(b.tarih || '')) || String(a.faturaNo).localeCompare(String(b.faturaNo))),
       sayi: g.invoices.length,
+      status: g.tevkifatKdv > 0 && !g.conflict && !g.belirsiz && !g.eksik
+        ? 'required'
+        : (g.eksik || g.conflict || g.belirsiz) ? 'unknown' : 'not-required',
     }))
 
   const toplam = companies.reduce((t, g) => ({
@@ -282,7 +291,9 @@ export async function kdv2Listesi({ yil, ay } = {}) {
     kdv: kurus(t.kdv + g.kdv),
     tevkifatKdv: kurus(t.tevkifatKdv + g.tevkifatKdv),
     eksikFirma: t.eksikFirma + (g.eksik ? 1 : 0),
-  }), { firmaSayisi: 0, belgeSayisi: 0, matrah: 0, kdv: 0, tevkifatKdv: 0, eksikFirma: 0 })
+    conflictFirma: t.conflictFirma + (g.conflict ? 1 : 0),
+    belirsizFirma: t.belirsizFirma + (g.belirsiz ? 1 : 0),
+  }), { firmaSayisi: 0, belgeSayisi: 0, matrah: 0, kdv: 0, tevkifatKdv: 0, eksikFirma: 0, conflictFirma: 0, belirsizFirma: 0 })
 
   return { yil, ay, companies, toplam }
 }

@@ -1101,6 +1101,9 @@ export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura
         sorgu_ts: new Date().toISOString()
       }
       kayit.mubis = true
+      // 2.8.346: Storage adresi — EDEFTER klasorune (kullanicinin G: diski)
+      // yerel yardimci VPS'teki dosyaya erisemez; URL ile indirilir.
+      kayit.url = url
       kayit.faturaNo = satirlar[uuid].fatura_no || ''
       kayit.unvan = satirlar[uuid].karsi_unvan || ''
       if (!pdfMi && meta?.kdvParcalari?.length >= 1) kdvParcaMap[uuid] = meta.kdvParcalari
@@ -1255,7 +1258,7 @@ export async function edefterTopluKopyala({ client, yil, ay, yon = 'alis', dosya
       ? (kl.faturaGidenKlasoru || '')
       : (kl.faturaGelenKlasoru || '')
   } catch { edefterKok = '' }
-  const sonuc = await (yardimciKaynak === 'yerel' ? yardimciIsYerel : yardimciIsSunucu)('edefter-kopyala', {
+  const istek = {
     shortName: client.shortName || client.name || '',
     fullName: client.name || client.company || '',
     yil: String(yil || ''),
@@ -1263,18 +1266,50 @@ export async function edefterTopluKopyala({ client, yil, ay, yon = 'alis', dosya
     yon: String(yon || 'alis'),
     edefterKok,
     dosyalar: dosyalar.map(d => (typeof d === 'string' ? d : d.ad)).filter(Boolean)
-  }, 5 * 60 * 1000)
-  // 2.8.322: Sorgu VPS'te calisirken EDEFTER klasoru kullanicinin
-  // bilgisayarindadir; VPS Windows surucu yolunu cozumleyemez ve yardimci
-  // "hedef klasor hesaplanamadi" doner. Belgeler zaten MUBiS'e kaydedildigi
-  // icin bu durum HATA degildir - kullaniciya kopyalama atlandi bilgisi verilir.
+  }
+  const hicKopyalanmadi = (s) => !s || s.ok === false || (Number(s.kopya || 0) === 0 && Array.isArray(s.atlanan) && s.atlanan.length > 0)
+
+  // Storage adresleri (VPS'te indirilen dosyalar icin) — yerel kopyalama
+  // dosyayi bulamazsa buradan indirilir.
+  const urlDosyalari = dosyalar
+    .map(d => (typeof d === 'string' ? null : { ad: d.ad, url: d.url }))
+    .filter(x => x && x.ad && x.url)
+
+  // 2.8.346: EDEFTER klasoru KULLANICININ bilgisayarindadir (G:\...). Sorgu
+  // VPS'te calissa bile kopyalama islemi yerelde yapilmalidir; VPS Linux
+  // oldugu icin Windows surucu yolunu cozemez ("hedef klasor hesaplanamadi").
+  // Bu yuzden once sunucu denenir, kopyalayamazsa YEREL yardimciya dusulur.
+  let sonuc
+  if (yardimciKaynak === 'yerel') {
+    sonuc = await yardimciIsYerel('edefter-kopyala', istek, 5 * 60 * 1000)
+  } else {
+    sonuc = await yardimciIsSunucu('edefter-kopyala', istek, 5 * 60 * 1000)
+    if (hicKopyalanmadi(sonuc)) {
+      try { sonuc = await yardimciIsYerel('edefter-kopyala', istek, 5 * 60 * 1000) } catch (e) {
+        console.warn('EDEFTER yerel kopyalama denenemedi:', e?.message || e)
+      }
+    }
+  }
+  // Yerel yardimci dosyalari kendi indirme klasorunde bulamaz (sorgu VPS'te
+  // calistiysa). Bu durumda MUBiS Storage adreslerinden EDEFTER'e yazilir.
+  if (hicKopyalanmadi(sonuc) && urlDosyalari.length) {
+    try {
+      const urlSonuc = await yardimciIsYerel('edefter-url-kopyala', { ...istek, files: urlDosyalari }, 10 * 60 * 1000)
+      if (urlSonuc && (urlSonuc.ok || Number(urlSonuc.kopya || 0) > 0)) sonuc = urlSonuc
+      else if (!sonuc || hicKopyalanmadi(sonuc)) sonuc = urlSonuc || sonuc
+    } catch (e) {
+      console.warn('EDEFTER URL kopyalama denenemedi:', e?.message || e)
+    }
+  }
+  // Kopyalama yine de yapilamadiysa (yerel yardimci kapali ya da G: yok):
+  // belgeler MUBiS'e kaydedildigi icin HATA degildir; bilgi verilir.
   if (sonuc && sonuc.ok === false && /hedef klasor hesaplanamadi/i.test(String(sonuc.error || ''))) {
     return {
       ...sonuc,
       ok: true,
       kopya: 0,
       atlandi: true,
-      not: 'EDEFTER klasörü bu makinede tanımlı değil (sorgu sunucuda çalıştı); belgeler MUBiS’e kaydedildi, klasöre kopyalama atlandı.'
+      not: 'EDEFTER klasörü bu makinede tanımlı değil (G:\\Drive\'ım\\EDEFTER yok veya yerel yardımcı kapalı); belgeler MUBiS’e kaydedildi, klasöre kopyalama atlandı.'
     }
   }
   return sonuc

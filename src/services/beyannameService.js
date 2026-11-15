@@ -9,6 +9,22 @@ import { supabase } from '../lib/supabase'
 import { yardimciIsSunucu } from '../utils/gibOdemeHelper'
 import { getMyOfficeId } from './officeService'
 
+// Supabase tek istekte en fazla 1000 satir dondurur. Donem toplamlari ve
+// listeler eksik kalmasin diye range() ile sayfa sayfa okunur.
+const SAYFA_BOYU = 1000
+
+async function sayfaliGetir(kur) {
+  const hepsi = []
+  for (let bas = 0; ; bas += SAYFA_BOYU) {
+    const { data, error } = await kur().range(bas, bas + SAYFA_BOYU - 1)
+    if (error) throw error
+    const parti = data || []
+    hepsi.push(...parti)
+    if (parti.length < SAYFA_BOYU) break
+  }
+  return hepsi
+}
+
 // GİB dönem metni toleranslı okunur: "02/2026-02/2026" (aylık),
 // "01/2026-03/2026" (üç aylık), "09/2026", "01/09/2026-30/09/2026"
 // (günlük) ve nokta ayraçlı biçimler → metindeki tüm ay/yıl çiftleri
@@ -99,12 +115,11 @@ export function yuklemeAyinda(yuklemeZamani, yil, ay) {
 // Detay: hata yutulmaz — okuma hatasi ekranda gosterilir (2.7.495)
 export async function beyannameKayitlariGetirDetay(yil, ay) {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await sayfaliGetir(() => supabase
       .from('beyanname_kayitlari')
       .select('*')
       .eq('onayli', true)
-      .order('sorgu_ts', { ascending: false })
-      .limit(5000)
+      .order('sorgu_ts', { ascending: false }))
     if (error) return { kayitlar: [], hata: error.message }
     return { kayitlar: (data || []).filter(k => yuklemeAyinda(k.yukleme_zamani, yil, ay)), hata: '' }
   } catch (e) {
@@ -120,10 +135,9 @@ export async function beyannameKayitlariGetir(yil, ay) {
 // Secili donemin kararlarini getirir: [{client_id, tur, donem, karar}]
 export async function beyannameKararlariGetir(yil, ay) {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await sayfaliGetir(() => supabase
       .from('beyanname_kararlar')
-      .select('*')
-      .limit(5000)
+      .select('*'))
     if (error) return []
     return (data || []).filter(k => donemKapsiyor(k.donem, yil, ay))
   } catch {
@@ -143,13 +157,12 @@ export async function beyannameKararKaydet(clientId, tur, donem, karar) {
 
 // Secili yil+ay donemine ait TUM kullanici kararlarini siler (matris sifirlama).
 // donem alanı "AA/YYYY" veya aralık "AA/YYYY-AA/YYYY" olabildiginden once
-// tüm satirlar okunur, donemKapsiyor ile filtrelenir, id bazında silinir.
+// tüm satirlar okunur, donemKapsiyor ile filtrelenir, id bazinda silinir.
 export async function beyannameKararlariSifirla(yil, ay) {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await sayfaliGetir(() => supabase
       .from('beyanname_kararlar')
-      .select('id, donem')
-      .limit(10000)
+      .select('id, donem'))
     if (error) return -1
     const ids = (data || []).filter(k => donemKapsiyor(k.donem, yil, ay)).map(k => k.id)
     if (!ids.length) return 0

@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import App from './App'
 import './index.css'
 import { AuthProvider } from './context/AuthContext'
+import { Trash2 } from 'lucide-react'
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

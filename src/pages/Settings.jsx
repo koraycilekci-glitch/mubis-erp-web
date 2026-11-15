@@ -199,6 +199,13 @@ export default function Settings() {
   const [gibErr, setGibErr] = useState('')
   const [showGibPass, setShowGibPass] = useState(false)
 
+  // Google Drive baglantisi (admin) — belgeler Drive'da saklanir, Supabase'de
+  // yalnizca dosya kimligi/adi tutulur.
+  const [driveDurum, setDriveDurum] = useState(null) // { bagli, kaynak, hata }
+  const [driveYukleniyor, setDriveYukleniyor] = useState(false)
+  const [driveMsg, setDriveMsg] = useState('')
+  const [driveErr, setDriveErr] = useState('')
+
   // Kayit Klasorleri (admin) — beyanname + fatura gelen/giden klasorleri.
   // Her muhasebeci (ofis) kendi yollarini ayarlayabilir.
   const [klasorInfo, setKlasorInfo] = useState({ beyanname: '', gelen: '', giden: '' })
@@ -213,6 +220,15 @@ export default function Settings() {
     loadLucaInfo()
     loadGibInfo()
     loadKlasorleri()
+    if (['admin', 'super_admin', 'personel'].includes(user?.role)) loadDriveDurum()
+    // OAuth donusu: /admin/ayarlar?drive=ok
+    try {
+      const p = new URLSearchParams(window.location.search)
+      if (p.get('drive') === 'ok') {
+        setDriveMsg('Google Drive bağlantısı kuruldu. Belgeler artık Drive\'a kaydediliyor.')
+        setActiveTab('depolama')
+      }
+    } catch { /* yoksay */ }
   }, [])
 
   const loadGibInfo = async () => {
@@ -237,6 +253,74 @@ export default function Settings() {
       setGibErr('GİB bilgileri kaydedilemedi: ' + (err.message || 'Bilinmeyen hata'))
     } finally {
       setGibLoading(false)
+    }
+  }
+
+  // Google Drive durumu — baglanti var mi, hangi kaynaktan (env / app_settings)
+  const loadDriveDurum = async () => {
+    setDriveYukleniyor(true)
+    setDriveErr('')
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data?.session?.access_token
+      if (!token) { setDriveDurum({ bagli: false, kaynak: 'yok', hata: 'Oturum bulunamadi' }); return }
+      const yanit = await fetch('/api/drive-auth?action=status', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const json = await yanit.json().catch(() => ({}))
+      setDriveDurum(json?.ok ? json : { bagli: false, kaynak: 'yok', hata: json?.error || 'Durum alinamadi' })
+    } catch (e) {
+      setDriveErr('Drive durumu alinamadi: ' + (e?.message || e))
+    } finally {
+      setDriveYukleniyor(false)
+    }
+  }
+
+  const driveTestEt = async () => {
+    setDriveYukleniyor(true)
+    setDriveMsg('')
+    setDriveErr('')
+    try {
+      const { testDriveConnection } = await import('../services/googleDriveService')
+      const sonuc = await testDriveConnection()
+      if (sonuc.success) {
+        setDriveMsg('Google Drive bağlantısı çalışıyor (kök klasör: ' + (sonuc.kokKlasorAdi || 'MUBIS ERP') + ').')
+        await loadDriveDurum()
+      } else {
+        setDriveErr('Bağlantı testi başarısız: ' + (sonuc.error || 'bilinmeyen hata'))
+      }
+    } catch (e) {
+      setDriveErr('Bağlantı testi başarısız: ' + (e?.message || e))
+    } finally {
+      setDriveYukleniyor(false)
+    }
+  }
+
+  const driveBaglan = () => {
+    window.location.href = '/api/drive-auth?action=start'
+  }
+
+  const driveBaglantiyiKes = async () => {
+    if (!window.confirm('Google Drive bağlantısı kaldırılsın mı? Belgeler Drive\'da kalır; yalnızca erişim anahtarı silinir.')) return
+    setDriveYukleniyor(true)
+    setDriveMsg('')
+    setDriveErr('')
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data?.session?.access_token
+      const yanit = await fetch('/api/drive-auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: 'disconnect' })
+      })
+      const json = await yanit.json().catch(() => ({}))
+      if (!json?.ok) throw new Error(json?.error || 'Baglanti kaldirilamadi')
+      setDriveMsg('Google Drive bağlantısı kaldırıldı.')
+      await loadDriveDurum()
+    } catch (e) {
+      setDriveErr('Bağlantı kaldırılamadı: ' + (e?.message || e))
+    } finally {
+      setDriveYukleniyor(false)
     }
   }
 
@@ -1059,6 +1143,7 @@ export default function Settings() {
     ...(adminMi ? [{ id: 'payments', label: 'Odeme Kurulusu', icon: CreditCard }] : []),
     ...(adminMi ? [{ id: 'luca', label: 'Luca Baglanti', icon: Link2 }] : []),
     ...(adminMi ? [{ id: 'gib', label: 'GIB Baglanti', icon: Landmark }] : []),
+    ...(adminMi ? [{ id: 'depolama', label: 'Belge Depolama (Drive)', icon: FolderOpen }] : []),
     ...(adminMi ? [{ id: 'kayit-klasorleri', label: 'Kayit Klasorleri', icon: FolderTree }] : []),
     ...(adminMi ? [{ id: 'borc-cron', label: 'Otomatik Borç Sorgu', icon: Clock }] : []),
     ...(adminMi ? [{ id: 'dvs-cron', label: 'Otomatik POS / KDV Döküm', icon: CreditCard }] : []),
@@ -2019,8 +2104,9 @@ export default function Settings() {
           </div>
         )}
 
-        {activeTab === 'gib' && adminMi && (
+        {(activeTab === 'gib' || activeTab === 'depolama') && adminMi && (
           <div>
+            {activeTab === 'gib' && (<>
             <h2 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
               <Landmark className="w-5 h-5 text-yellow-400" />
               GİB Bağlantı Merkezi
@@ -2082,6 +2168,71 @@ export default function Settings() {
                 {gibLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 GİB Bilgilerini Kaydet
               </button>
+            </div>
+
+            </>)}
+
+            {/* Google Drive — belge depolama merkezi */}
+            <div className="bg-blue-900/20 border border-blue-700/30 rounded-xl p-5 mb-4 max-w-2xl">
+              <h3 className="text-white font-medium mb-2 flex items-center gap-2">
+                <FolderOpen className="w-4 h-4 text-cyan-300" />
+                Google Drive — Belge Depolama
+              </h3>
+              <p className="text-gray-400 text-xs mb-3">
+                Müşteri belgeleri (beyanname, tahakkuk, fatura, e-Defter, Z raporu, gider fişi) Google Drive'da saklanır.
+                Supabase'de yalnızca dosya kimliği, adı ve yolu tutulur. Klasör düzeni:
+                <span className="text-cyan-300"> MUBIS ERP / Müşteri / Yıl / Ay / GELEN|GIDEN</span>.
+              </p>
+
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                <span className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
+                  driveDurum?.bagli
+                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                    : 'bg-red-500/15 border-red-500/40 text-red-300'
+                }`}>
+                  {driveYukleniyor ? 'Kontrol ediliyor…' : driveDurum?.bagli ? 'Bağlı' : 'Bağlı değil'}
+                </span>
+                {driveDurum?.kaynak && driveDurum.kaynak !== 'yok' && (
+                  <span className="text-[11px] text-gray-500">kaynak: {driveDurum.kaynak}</span>
+                )}
+              </div>
+
+              {driveMsg && (
+                <div className="bg-green-500/20 border border-green-500/50 rounded-xl p-2.5 mb-3">
+                  <span className="text-green-300 text-xs">{driveMsg}</span>
+                </div>
+              )}
+              {driveErr && (
+                <div className="bg-red-500/20 border border-red-500/50 rounded-xl p-2.5 mb-3">
+                  <span className="text-red-300 text-xs">{driveErr}</span>
+                </div>
+              )}
+              {!driveErr && !driveDurum?.bagli && driveDurum?.hata && (
+                <div className="bg-amber-500/15 border border-amber-500/40 rounded-xl p-2.5 mb-3">
+                  <span className="text-amber-200 text-xs">{driveDurum.hata}</span>
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                <button onClick={driveBaglan} disabled={driveYukleniyor} className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-sm font-medium flex items-center gap-2">
+                  <Link2 className="w-4 h-4" />
+                  {driveDurum?.bagli ? 'Yeniden Yetkilendir' : 'Google Drive Bağla'}
+                </button>
+                <button onClick={driveTestEt} disabled={driveYukleniyor} className="px-4 py-2 rounded-lg bg-blue-900/60 border border-blue-700/50 hover:bg-blue-800/60 disabled:opacity-50 text-gray-200 text-sm flex items-center gap-2">
+                  {driveYukleniyor ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  Bağlantıyı Test Et
+                </button>
+                {driveDurum?.kaynak === 'app_settings' && (
+                  <button onClick={driveBaglantiyiKes} disabled={driveYukleniyor} className="px-4 py-2 rounded-lg bg-red-500/15 border border-red-500/40 text-red-300 text-sm hover:bg-red-500/25 disabled:opacity-50">
+                    Bağlantıyı Kes
+                  </button>
+                )}
+              </div>
+
+              <p className="text-gray-500 text-[11px] mt-3">
+                Bağlantı kesilse bile Drive'daki dosyalar silinmez; yalnızca MUBİS'in erişim anahtarı kaldırılır.
+                Supabase Storage'daki mevcut dosyalar, Drive'a aktarılıp doğrulanmadan silinmez.
+              </p>
             </div>
           </div>
         )}

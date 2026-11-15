@@ -26,8 +26,37 @@ export const getClientDocumentTypeLabel = (documentType) => documentType || 'Evr
 
 import { supabase } from '../lib/supabase'
 import { officePrefix, getMyOfficeId } from './officeService'
+import { uploadFileToDrive, driveHazirMi } from './googleDriveService'
 
 const BUCKET_NAME = 'client-documents'
+
+/**
+ * Belgeyi ONCE Google Drive'a yuklemeyi dener.
+ * Drive bagli degilse (ya da yukleme basarisizsa) null doner ve cagiran
+ * fonksiyon eskisi gibi Supabase Storage'a yukler.
+ *
+ * Gecis stratejisi: Supabase Storage dosyalari SILINMEZ; Drive basarisiz
+ * oldugunda sistem calismaya devam eder.
+ */
+async function driveYukleDene({ client, file, ad, belgeTuru = 'genel', yil = null, ay = null, yon = null }) {
+  try {
+    if (!(await driveHazirMi())) return null
+    const musteriAdi = client?.shortName || client?.name || client?.company || `Musteri_${client?.id || ''}`
+    const sonuc = await uploadFileToDrive(file, ad, {
+      clientId: client?.id ?? null,
+      belgeTuru,
+      mimeType: file?.type || icerikTipiTahmin(ad),
+      yil,
+      ay,
+      yon,
+      musteriAdi,
+    })
+    return sonuc?.success ? sonuc : null
+  } catch (e) {
+    console.warn('Drive yukleme atlandi (Storage kullanilacak):', e?.message || e)
+    return null
+  }
+}
 
 /**
  * Ofis klasor onegi.
@@ -97,6 +126,24 @@ export async function uploadClientDocument({
   const prefix = await getPrefix(client)
   const path = getDocumentPath({ client, year, beyanType, month, documentType, prefix })
 
+  // 1) Google Drive (bagliysa) — belge Drive'da, referans Supabase'de
+  const drive = await driveYukleDene({
+    client,
+    file,
+    ad: path.split('/').pop(),
+    belgeTuru: documentType === 'tahakkuk' ? 'tahakkuk' : 'beyanname',
+    yil: year,
+    ay: typeof month === 'number' ? month + 1 : null,
+  })
+  if (drive) {
+    return {
+      path: `drive:${drive.drive_file_id}`,
+      url: drive.web_view_link || '',
+      drive_file_id: drive.drive_file_id,
+      kaynak: 'drive',
+    }
+  }
+
   let lastError = null
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -162,6 +209,26 @@ const icerikTipiTahmin = (ad) => {
 export async function uploadClientFile({ client, relPath, file }) {
   const prefix = await getPrefix(client)
   const path = `${prefix}${getClientFolderName(client)}/${relPath}`
+
+  // 1) Google Drive (bagliysa)
+  const yilEslesme = /(20\d\d)/.exec(String(relPath || ''))
+  const yonEslesme = /(gelen|giden|alis|satis)/i.exec(String(relPath || ''))
+  const drive = await driveYukleDene({
+    client,
+    file,
+    ad: String(file?.name || relPath).split('/').pop(),
+    belgeTuru: 'fatura',
+    yil: yilEslesme ? Number(yilEslesme[1]) : null,
+    yon: yonEslesme ? yonEslesme[1].toLocaleLowerCase('tr') : null,
+  })
+  if (drive) {
+    return {
+      path: `drive:${drive.drive_file_id}`,
+      url: drive.web_view_link || '',
+      drive_file_id: drive.drive_file_id,
+      kaynak: 'drive',
+    }
+  }
 
   let lastError = null
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -349,6 +416,29 @@ export async function uploadClientBulkDocument({
   const fileName = `${safeCategory}_${safeName}_${Date.now()}${ext}`
   const path = `${folder}/evraklar/${year}/${safeBeyanType}/${fileName}`
 
+  // 1) Google Drive (bagliysa)
+  const drive = await driveYukleDene({
+    client,
+    file,
+    ad: fileName,
+    belgeTuru: category === 'tahakkuk' ? 'tahakkuk' : 'beyanname',
+    yil: year || null,
+    ay: typeof month === 'number' ? month + 1 : null,
+  })
+  if (drive) {
+    return {
+      path: `drive:${drive.drive_file_id}`,
+      url: drive.web_view_link || '',
+      drive_file_id: drive.drive_file_id,
+      kaynak: 'drive',
+      name: name || file.name,
+      category,
+      size: formatFileSize(file.size),
+      uploaded_at: new Date().toISOString(),
+      fileType: ext === '.xlsx' ? 'excel' : 'pdf',
+    }
+  }
+
   const { data, error } = await supabase
     .storage
     .from(BUCKET_NAME)
@@ -377,6 +467,27 @@ function formatFileSize(bytes) {
 }
 
 async function uploadGenericDocument(client, path, file) {
+  // 1) Google Drive (bagliysa)
+  const yilEslesme = /(20\d\d)/.exec(String(path || ''))
+  const drive = await driveYukleDene({
+    client,
+    file,
+    ad: String(file?.name || path.split('/').pop()),
+    belgeTuru: 'genel',
+    yil: yilEslesme ? Number(yilEslesme[1]) : null,
+  })
+  if (drive) {
+    return {
+      path: `drive:${drive.drive_file_id}`,
+      url: drive.web_view_link || '',
+      drive_file_id: drive.drive_file_id,
+      kaynak: 'drive',
+      name: file.name,
+      size: formatFileSize(file.size),
+      uploaded_at: new Date().toISOString(),
+    }
+  }
+
   const { data, error } = await supabase
     .storage
     .from(BUCKET_NAME)

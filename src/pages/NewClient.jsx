@@ -26,7 +26,7 @@ export default function NewClient() {
     phoneNumbers: [{ name: '', phone: '', email: '', isWhatsapp: true }],
     emails: [{ email: '' }],
     taxOffice: '',
-    city: '',
+    city: 'İSTANBUL',
     address: '',
     openDate: '',
     closeDate: '',

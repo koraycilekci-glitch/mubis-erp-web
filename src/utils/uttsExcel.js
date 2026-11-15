@@ -37,11 +37,7 @@ export async function uttsOtomatikSatirlariniOku(arrayBuffer) {
     const kdv = source.slice(8, 13).reduce((sum, value) => sum + sayi(value), 0)
     const toplam = sayi(source[18])
     if (Math.abs(matrah + kdv - toplam) > 0.05) throw new Error('UTTS satır tutarları doğrulanamadı')
-    const oranlar = [1, 8, 10, 18, 20]
-    const kdvParcalari = oranlar.map((oran, index) => ({ oran, matrah: sayi(source[13 + index]), kdv: sayi(source[8 + index]) }))
-      .filter(parca => parca.matrah !== 0 || parca.kdv !== 0)
-    const parcalarGecerli = kdvParcalari.length > 0 && kdvParcalari.every(parca => parca.matrah > 0 && parca.kdv >= 0 && Math.abs(parca.matrah * parca.oran / 100 - parca.kdv) <= 0.05)
-    return { ...row, matrah: +matrah.toFixed(2), kdv: +kdv.toFixed(2), toplam, kdvParcalari: parcalarGecerli ? kdvParcalari : [] }
+    return { ...row, matrah: +matrah.toFixed(2), kdv: +kdv.toFixed(2), toplam }
   })
 }
 

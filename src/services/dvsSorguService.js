@@ -2,8 +2,6 @@
 import { supabase } from '../lib/supabase'
 import { yardimciIsSunucu, musteriGirisBilgileriGetir } from '../utils/gibOdemeHelper'
 import { devredenKdvOku, storageBeyanUrl } from './kdvDurumService'
-import { fetchDocument, isOwnStorageUrl } from '../utils/storageUrl'
-import { uttsOtomatikSatirlariniOku } from '../utils/uttsExcel'
 import { tevkifatKdvDokumu, tevkifatOdendiOku } from './tevkifatService'
 
 function sayi(v) {
@@ -555,12 +553,11 @@ export function faturaKdvOranlariniGrupla(faturalar, detaylar) {
     const kdv = tutar(fatura.kdv)
     if (matrah === null || kdv === null) eksikTutar++
     const parcalar = detaylar[fatura.id] || []
-    const kaynakDogrulandi = parcalar.length > 0 && parcalar.every(parca => parca.kaynakDogrulandi === true)
     const gecerli = parcalar.length > 0 && parcalar.every(parca => {
       const oran = tutar(parca.oran)
       return oran !== null && oran <= 100 && tutar(parca.matrah) !== null && tutar(parca.kdv) !== null
     }) && matrah !== null && kdv !== null
-      && (kaynakDogrulandi || parcalar.reduce((toplam, parca) => toplam + kurus(Number(parca.matrah)), 0) === kurus(matrah))
+      && parcalar.reduce((toplam, parca) => toplam + kurus(Number(parca.matrah)), 0) === kurus(matrah)
       && parcalar.reduce((toplam, parca) => toplam + kurus(Number(parca.kdv)), 0) === kurus(kdv)
     const satirlar = gecerli ? parcalar : (() => {
       // Oran detayi yok / toplamlarla uyusmuyor: matrah+KDV (ve varsa tutar)

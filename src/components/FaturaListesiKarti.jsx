@@ -529,6 +529,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
       const clientArg = { ...(client || {}), id: clientId, vkn: client?.vkn || client?.tc || '' }
       let toplam = 0
       const boslar = []
+      const oncedenYukluler = []
       const hatalar = []
       const notlar = []
       for (const tur of turlar) {
@@ -645,7 +646,17 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
               toplam += yuk.sayi || 0
               const hataliDosyalar = (yuk.dosyalar || []).filter(d => d.hata)
               if (hataliDosyalar.length) hatalar.push(turAd + yonEtiket + ': ' + hataliDosyalar.length + ' dosya yüklenemedi (' + hataliDosyalar[0].hata + ')')
-              if (!(yuk.sayi > 0) && hatalar.length === hataBaslangic) boslar.push(turAd + yonEtiket + (yuk.not ? ' (' + yuk.not + ')' : ''))
+              if (!(yuk.sayi > 0) && hatalar.length === hataBaslangic) {
+                // 2.8.346: "Belge bulunamadi" YANILTICI olabiliyordu — belgeler
+                // indirildi fakat daha once MUBiS'e yuklendigi icin upsert
+                // sayisi 0 cikiyor. Bu durumda "onceden yuklu" bilgisi verilir.
+                const onceden = Number(yuk.atlandi || 0)
+                if (onceden > 0 || indirilenler.length > 0) {
+                  oncedenYukluler.push(turAd + yonEtiket + (onceden > 0 ? ` (${onceden} dosya önceden yüklü)` : ' (indirilen dosyalar zaten kayıtlı)'))
+                } else {
+                  boslar.push(turAd + yonEtiket + (yuk.not ? ' (' + yuk.not + ')' : ''))
+                }
+              }
               setMesaj(turAd + yonEtiket + ': klasörlere kopyalanıyor...')
               const kp = await edefterTopluKopyala({ client: clientArg, yardimciKaynak: indirmeKaynak, yil: sorguYiliEff, ay: sorguAyiEff, yon, dosyalar: indirilenler })
               if (kp?.atlandi) { if (!notlar.includes(kp.not)) notlar.push(kp.not) }
@@ -663,6 +674,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
       const ozet = []
       if (toplam > 0) ozet.push(toplam + ' fatura indirildi ve kaydedildi (musteri portalinda da gorunur).')
       if (notlar.length) ozet.push(notlar.join(' '))
+      if (oncedenYukluler.length) ozet.push('Yeni belge yok (önceden yüklü): ' + oncedenYukluler.join(', '))
       if (boslar.length) ozet.push('Belge bulunamadi: ' + boslar.join(', '))
       if (durdur || durdurRef.current) { durdur = true; ozet.push('Sorgulama kullanıcı tarafından durduruldu — kalan tür/yonler atlandı.') }
       if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))

@@ -17018,6 +17018,45 @@ const ISLER = {
     }
   },
   // ------------------------------------------------------------
+  // edefter-url-kopyala (2.8.346): Sorgu sunucuda (VPS) calistiginda indirilen
+  // dosyalar sunucunun indirme klasorunde kalir; kullanicinin EDEFTER klasoru
+  // (G:\...) ise KENDI bilgisayarindadir. Bu is, MUBiS Storage adreslerinden
+  // dosyalari indirip yerel yardimciyla <kok>\<musteri>\<yil>\<ay>\<GELEN|GIDEN>
+  // klasorune yazar.
+  // Parametreler: shortName, fullName, yil, ay, yon, edefterKok,
+  //               files: [{ ad, url }]
+  // ------------------------------------------------------------
+  "edefter-url-kopyala": async (p) => {
+    try {
+      const liste = (Array.isArray(p.files) ? p.files : [])
+        .filter((f) => f && f.url && f.ad)
+        .map((f) => ({ ad: path.basename(String(f.ad)), url: String(f.url) }));
+      if (!liste.length) return { ok: false, error: "dosyalar bos" };
+      const hedef = edefterHedefKlasor(p);
+      if (!hedef) return { ok: false, error: "hedef klasor hesaplanamadi (edefterKok kapali mi?)" };
+      fs.mkdirSync(hedef, { recursive: true });
+      let kopya = 0;
+      let bayt = 0;
+      const atlanan = [];
+      for (const f of liste) {
+        try {
+          const yanit = await fetch(f.url);
+          if (!yanit.ok) throw new Error("HTTP " + yanit.status);
+          const buf = Buffer.from(await yanit.arrayBuffer());
+          fs.writeFileSync(path.join(hedef, f.ad), buf);
+          bayt += buf.length;
+          kopya++;
+        } catch (e) {
+          atlanan.push(f.ad + " (" + (e && e.message || "hata") + ")");
+        }
+      }
+      console.log("[edefter-url-kopyala]", kopya + "/" + liste.length, "->", hedef, atlanan.length ? "atlanan: " + atlanan.join(", ") : "");
+      return { ok: kopya > 0, kopya, toplam: liste.length, atlanan, hedef, bayt };
+    } catch (e) {
+      return { ok: false, error: e && e.message || "hata" };
+    }
+  },
+  // ------------------------------------------------------------
   // luca-giris: masaustu "Luca'ya Gir" kisayolu. Luca giris sayfasini acar,
   // uye no/kullanici/parola doldurur, guvenlik kodunu cozer ve Luca ana
   // sayfaya kadar goturur; tarayici ACIK KALIR (kullanici Elle devam eder).
@@ -21310,7 +21349,8 @@ function edefterHedefKlasor(p) {
 }
 function edtKopyaHedef(hedef, ad) {
   const ad2 = path.basename(String(ad));
-  if (/\.(pdf|xml|html?)$/i.test(ad2)) return path.join(hedef, "pdf", ad2);
+  // 2.8.346: kullanici klasor duzeni musteri/<yil>/<ay>/<GELEN|GIDEN> —
+  // araya "pdf" alt klasoru ACILMAZ; belgeler dogrudan yon klasorune yazilir.
   return path.join(hedef, ad2);
 }
 function edtKopyaYap(hedef, ad) {

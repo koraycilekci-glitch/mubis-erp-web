@@ -9,6 +9,7 @@ import {
   getOfficeUsers, assignUserToOffice
 } from '../services/officeService'
 import { MENU, PERSONEL_VARSAYILAN } from '../components/AdminSidebar'
+import OfisLisansSatiri from '../components/OfisLisansSatiri'
 import { supabase } from '../lib/supabase'
 
 export default function OfisYonetimi() {
@@ -112,6 +113,7 @@ export default function OfisYonetimi() {
                     {o.id === 1 ? 'VKN@mubis.app' : `${o.code}-VKN@mubis.app`}
                   </span>
                 </p>
+                {superAdmin && <OfisLisansSatiri ofisId={o.id} ofisAdi={o.name} />}
               </div>
 
               <div className="flex gap-2">

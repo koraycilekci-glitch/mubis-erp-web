@@ -5,6 +5,7 @@
 // Supabase app_settings tablosundaki 'google_drive_refresh_token' kaydi.
 
 import { createClient } from '@supabase/supabase-js'
+import { lisansDurumu } from './_lisansCommon.js'
 
 export const DRIVE_API = 'https://www.googleapis.com/drive/v3'
 export const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3'
@@ -46,6 +47,19 @@ export async function dogrulaKullanici(request, env) {
       .select('id, role, office_id, name')
       .eq('id', u?.id || '')
       .maybeSingle()
+
+    // ---- Lisans kontrolü (dış ofisler) ----
+    // Muaf ofisler + super_admin her zaman geçer; diğer ofislerde aktif lisans
+    // veya açık deneme süresi yoksa 402 döner (API tüm ağır uçlarda korunur).
+    if (profil && profil.role !== 'super_admin') {
+      try {
+        const durum = await lisansDurumu(admin, env, profil.office_id)
+        if (durum.gerekli) {
+          return { ok: false, kod: 402, hata: 'LISANS_GEREKLI: Ofisinizin lisans süresi dolmuş. Ayarlar > Lisans bölümünden talep kodu üreterek lisans kodu alın.', lisans: durum }
+        }
+      } catch { /* lisans tabloları yoksa kilitlemeyelim */ }
+    }
+
     return { ok: true, kullanici: u, profil: profil || null, admin }
   } catch (e) {
     return { ok: false, kod: 500, hata: e?.message || 'Oturum kontrol hatasi' }

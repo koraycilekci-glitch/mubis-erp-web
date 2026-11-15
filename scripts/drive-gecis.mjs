@@ -56,6 +56,14 @@ const BUCKET_FILTRE = (() => {
   const i = args.indexOf('--bucket')
   return i >= 0 ? args[i + 1] : ''
 })()
+// --parca k/n : dosyalari i % n === k ile bolecek sekilde shard (paralel calistirma)
+const PARCA = (() => {
+  const m = /--parca (\d+)\/(\d+)/.exec(args.join(' '))
+  return m ? { k: Number(m[1]), n: Number(m[2]) } : null
+})()
+// --klasor-hazirla : paralel isci baslamadan once tum klasor agacini tek
+// surecte olusturur (paralel yarista Drive'da ikiz klasor olusmasini onler)
+const KLASOR_HAZIRLA = args.includes('--klasor-hazirla')
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY
@@ -240,23 +248,24 @@ async function bucketListesi(bucket) {
 // ---------- Tek dosya tasima ----------
 async function dosyaTasi(dosya, kokId) {
   const token = await accessToken()
+
+  // Zaten tasinmis mi? (indirmeden once kontrol et — atlanma cok daha hizli)
+  const eskiYol = `${dosya.bucket}/${dosya.yol}`
+  const { data: mevcutOn } = await sb
+    .from(TABLO)
+    .select('drive_file_id, durum')
+    .eq('eski_storage_path', eskiYol)
+    .eq('kaynak', 'supabase-storage')
+    .maybeSingle()
+  if (mevcutOn?.drive_file_id && mevcutOn.durum === 'aktif') {
+    return { ok: true, atlandi: true, drive_file_id: mevcutOn.drive_file_id, sha1: '' }
+  }
+
   const { data: blob, error } = await sb.storage.from(dosya.bucket).download(dosya.yol)
   if (error) return { ok: false, hata: 'indirilemedi: ' + error.message }
 
   const buffer = Buffer.from(await blob.arrayBuffer())
   const sha1 = createHash('sha1').update(buffer).digest('hex')
-
-  // Zaten tasinmis mi? (ayni eski_storage_path)
-  const eskiYol = `${dosya.bucket}/${dosya.yol}`
-  const { data: mevcut } = await sb
-    .from(TABLO)
-    .select('drive_file_id, sha1, durum')
-    .eq('eski_storage_path', eskiYol)
-    .eq('kaynak', 'supabase-storage')
-    .maybeSingle()
-  if (mevcut?.drive_file_id && mevcut.sha1 === sha1) {
-    return { ok: true, atlandi: true, drive_file_id: mevcut.drive_file_id, sha1 }
-  }
 
   // Hedef klasor: MUBIS ERP / <bucket> / <yol klasorleri>
   const parcalar = [dosya.bucket, ...dosya.yol.split('/').slice(0, -1)]
@@ -417,6 +426,7 @@ async function main() {
 
   console.log(renk.mavi('=== SUPABASE STORAGE -> GOOGLE DRIVE GECISI ==='))
   console.log('  mod:', DRY ? renk.sari('DRY-RUN (yazma yok)') : renk.yesil('GERCEK'))
+  if (PARCA) console.log('  parça:', renk.yesil(`${PARCA.k}/${PARCA.n}`))
 
   const { data: buckets, error: bHata } = await sb.storage.listBuckets()
   if (bHata) throw new Error('Bucket listesi alinamadi: ' + bHata.message)
@@ -438,6 +448,31 @@ async function main() {
   console.log(`\n  Toplam: ${renk.mavi(dosyalar.length)} dosya / ${renk.mavi(boyutYaz(toplamBoyut))}`)
 
   if (LIMIT > 0) dosyalar = dosyalar.slice(0, LIMIT)
+  if (PARCA) dosyalar = dosyalar.filter((_, i) => i % PARCA.n === PARCA.k)
+  console.log('  Bu iş parçası:', renk.mavi(dosyalar.length), 'dosya')
+
+  // Klasör ön kurulumu: paralel işçiler başlamadan önce tüm klasörler tek
+  // süreçte oluşsun ki işçiler sadece "bul" çağrısı yapsın, "oluştur" yarışı olmasın.
+  if (KLASOR_HAZIRLA && !DRY) {
+    const kokId0 = await kokKlasor()
+    const zincirler = new Set()
+    for (const d of dosyalar) {
+      const parcalar = [d.bucket, ...d.yol.split('/').slice(0, -1)]
+      zincirler.add(parcalar.join('/'))
+    }
+    // zincirleri kısa→uzun sırala: üst klasörler önce oluşur
+    const sirali = [...zincirler].sort((a, b) => a.split('/').length - b.split('/').length)
+    let olusturulan = 0, hZ = 0
+    for (const z of sirali) {
+      try {
+        let parent = kokId0
+        for (const p of z.split('/')) parent = await klasorId(p, parent)
+        olusturulan++
+      } catch (e) { hZ++; if (hZ <= 3) console.log(renk.kirmizi('  ! klasör: ' + z + ' — ' + e.message)) }
+    }
+    console.log(renk.yesil(`  Klasör ön kurulumu: ${sirali.length} zincir işlendi, ${hZ} hata.`))
+    return
+  }
 
   if (DRY) {
     console.log('\n' + renk.sari('DRY-RUN — ilk 30 dosya:'))

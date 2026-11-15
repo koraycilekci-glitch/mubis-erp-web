@@ -7,6 +7,7 @@ import Navbar from './components/Navbar'
 import YardimciSurumUyari from './components/YardimciSurumUyari'
 import AdminSidebar from './components/AdminSidebar'
 import NotificationCenter from './components/NotificationCenter'
+import LisansKapisi from './components/LisansKapisi'
 import SayfaKilavuzu from './components/SayfaKilavuzu'
 import Footer from './components/Footer'
 import MobileNav from './components/MobileNav'
@@ -164,6 +165,7 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-950 via-blue-900 to-blue-950 flex flex-col">
+      <LisansKapisi />
       {!menuGizli && !adminLayout && <Navbar />}
       <div className="flex flex-1 min-h-0">
         {adminLayout && <AdminSidebar />}

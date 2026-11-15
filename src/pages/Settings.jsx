@@ -5,9 +5,10 @@ import { supabase } from '../lib/supabase'
 import { getSettings, saveSettings, getDefaultDocumentPermissions, parseDocumentPermissions, getDefaultDocumentFolders, parseDocumentFolders } from '../services/settingsService'
 import { getBankInfo, saveBankInfo, getBankAccounts, saveBankAccounts } from '../services/paymentService'
 import { gibYardimciIs, yardimciFetch } from '../utils/gibOdemeHelper'
-import { Settings as SettingsIcon, Lock, Clock, Users, Eye, EyeOff, CheckCircle, AlertCircle, Save, RefreshCw, MessageCircle, Mail, FolderOpen, FolderTree, Plus, Minus, Trash2, Pencil, Volume2, Play, CreditCard, Building2, Link2, Bot, Landmark, Shield } from 'lucide-react'
+import { Settings as SettingsIcon, Lock, Clock, Users, Eye, EyeOff, CheckCircle, AlertCircle, Save, RefreshCw, MessageCircle, Mail, FolderOpen, FolderTree, Plus, Minus, Trash2, Pencil, Volume2, Play, CreditCard, Building2, Link2, Bot, Landmark, Shield, KeyRound } from 'lucide-react'
 import FolderStructureEditor from '../components/FolderStructureEditor'
 import PlanDilimSatirlari from '../components/PlanDilimSatirlari'
+import LisansPaneli from '../components/LisansPaneli'
 import { SES_TERCIHLERI, VARSAYILAN_SES_AYARI, seslerHazirOlunca, sesSec, konus, sesAyariCoz, sesDestekleniyor, sesCinsiyeti, cinsiyetSesiVar } from '../utils/speechUtils'
 import { dilimleriGunlereBol, dilimNormalize, dilimGecerli } from '../utils/planDilim'
 
@@ -1144,6 +1145,7 @@ export default function Settings() {
     ...(adminMi ? [{ id: 'luca', label: 'Luca Baglanti', icon: Link2 }] : []),
     ...(adminMi ? [{ id: 'gib', label: 'GIB Baglanti', icon: Landmark }] : []),
     ...(adminMi ? [{ id: 'depolama', label: 'Belge Depolama (Drive)', icon: FolderOpen }] : []),
+    ...(adminMi ? [{ id: 'lisans', label: 'Lisans', icon: KeyRound }] : []),
     ...(adminMi ? [{ id: 'kayit-klasorleri', label: 'Kayit Klasorleri', icon: FolderTree }] : []),
     ...(adminMi ? [{ id: 'borc-cron', label: 'Otomatik Borç Sorgu', icon: Clock }] : []),
     ...(adminMi ? [{ id: 'dvs-cron', label: 'Otomatik POS / KDV Döküm', icon: CreditCard }] : []),
@@ -1180,6 +1182,11 @@ export default function Settings() {
       <div className="bg-blue-950/30 rounded-2xl p-6 border border-blue-800/30">
 
         {/* 2.8.5: OTOMATIK BORC SORGULAMA — VPS cron plani */}
+        {activeTab === 'lisans' && adminMi && (
+          <div className="bg-blue-900/20 rounded-xl border border-blue-800/30 p-6">
+            <LisansPaneli />
+          </div>
+        )}
         {activeTab === 'borc-cron' && (
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3 mb-1">

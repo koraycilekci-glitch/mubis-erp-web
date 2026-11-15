@@ -55,10 +55,14 @@ export async function onRequestGet({ request, env }) {
         }, 500)
       }
       const state = Math.random().toString(36).slice(2) + Date.now().toString(36)
-      await admin.from('app_settings').upsert(
-        { key: STATE_KEY, value: state, updated_at: new Date().toISOString() },
-        { onConflict: 'key' }
+      // app_settings'in unique kısıtı (office_id, key) — onConflict ona göre olmalı
+      const { error: stateHata } = await admin.from('app_settings').upsert(
+        { key: STATE_KEY, value: state, updated_at: new Date().toISOString(), office_id: 1 },
+        { onConflict: 'office_id,key' }
       )
+      if (stateHata) {
+        return json({ ok: false, error: 'Yetkilendirme hazirlanamadi: ' + stateHata.message }, 500)
+      }
       const g = new URL('https://accounts.google.com/o/oauth2/v2/auth')
       g.searchParams.set('client_id', clientId)
       g.searchParams.set('redirect_uri', redirectUri)
@@ -103,10 +107,13 @@ export async function onRequestGet({ request, env }) {
         }, 400)
       }
 
-      await admin.from('app_settings').upsert(
-        { key: TOKEN_KEY, value: j.refresh_token, updated_at: new Date().toISOString() },
-        { onConflict: 'key' }
+      const { error: tokenHata } = await admin.from('app_settings').upsert(
+        { key: TOKEN_KEY, value: j.refresh_token, updated_at: new Date().toISOString(), office_id: 1 },
+        { onConflict: 'office_id,key' }
       )
+      if (tokenHata) {
+        return json({ ok: false, error: 'Token kaydedilemedi: ' + tokenHata.message }, 500)
+      }
       await admin.from('app_settings').delete().eq('key', STATE_KEY)
 
       const hedef = new URL(redirectUri || url.origin)

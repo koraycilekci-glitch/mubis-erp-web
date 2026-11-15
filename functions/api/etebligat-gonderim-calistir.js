@@ -182,7 +182,7 @@ export async function onRequestGet({ env, request }) {
   if (!kalan) {
     plan.son_calisma = new Date().toISOString()
     try {
-      await supabase.from('app_settings').upsert({ key: PLAN_KEY, value: JSON.stringify(plan) }, { onConflict: 'key' })
+      await supabase.from('app_settings').upsert({ key: PLAN_KEY, value: JSON.stringify(plan), office_id: 1 }, { onConflict: 'office_id,key' })
     } catch { /* yoksay */ }
   }
 

@@ -342,7 +342,7 @@ export async function onRequestPost({ env, request }) {
     .upsert({ key: PLAN_KEY, value: planStr, office_id: officeId }, { onConflict: 'office_id,key' })
   if (error) {
     // ofis filtresi yoksa düz upsert
-    const { error: e2 } = await supabase.from('app_settings').upsert({ key: PLAN_KEY, value: planStr }, { onConflict: 'key' })
+    const { error: e2 } = await supabase.from('app_settings').upsert({ key: PLAN_KEY, value: planStr, office_id: 1 }, { onConflict: 'office_id,key' })
     if (e2) return json({ ok: false, error: e2.message }, 500)
   }
   return json({ ok: true, plan: planOku(planStr) })

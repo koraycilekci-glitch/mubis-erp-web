@@ -27,8 +27,8 @@ async function kokKlasorGetir(admin, token) {
   const id = await klasorBulVeyaOlustur(token, KOK_KLASOR_ADI, 'root')
   try {
     await admin.from('app_settings').upsert(
-      { key: KOK_KEY, value: id, updated_at: new Date().toISOString() },
-      { onConflict: 'key' }
+      { key: KOK_KEY, value: id, updated_at: new Date().toISOString(), office_id: 1 },
+      { onConflict: 'office_id,key' }
     )
   } catch { /* yoksay */ }
   return id

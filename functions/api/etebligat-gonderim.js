@@ -64,7 +64,7 @@ export async function onRequestPost({ env, request }) {
   if (!saat) return json({ ok: false, error: 'saat-gecersiz' }, 400)
 
   const plan = { aktif: govde.aktif !== false, gunler, saat, kanal, musteriler, guncelleme: new Date().toISOString() }
-  const { error } = await supabase.from('app_settings').upsert({ key: PLAN_KEY, value: JSON.stringify(plan) }, { onConflict: 'key' })
+  const { error } = await supabase.from('app_settings').upsert({ key: PLAN_KEY, value: JSON.stringify(plan), office_id: 1 }, { onConflict: 'office_id,key' })
   if (error) {
     const { error: e2 } = await supabase.from('app_settings').insert({ key: PLAN_KEY, value: JSON.stringify(plan) })
     if (e2) return json({ ok: false, error: e2.message }, 500)

@@ -17,6 +17,7 @@ export async function planJsonOku(supabase, key) {
 export async function planJsonYaz(supabase, key, deger) {
   const value = JSON.stringify(deger || {})
   const denemeler = [
+    () => supabase.from('app_settings').upsert({ key, value, office_id: 1 }, { onConflict: 'office_id,key' }),
     () => supabase.from('app_settings').upsert({ key, value, office_id: null }, { onConflict: 'office_id,key' }),
     () => supabase.from('app_settings').upsert({ key, value }, { onConflict: 'key' }),
     () => supabase.from('app_settings').insert({ key, value })

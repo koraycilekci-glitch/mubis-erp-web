@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useClients } from '../hooks/useClients'
+import TahakkukEvrakPaneli from '../components/TahakkukEvrakPaneli'
 import { supabase } from '../lib/supabase'
 import * as clientService from '../services/clientService'
 import * as XLSX from 'xlsx'

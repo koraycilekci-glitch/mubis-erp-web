@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { UseRepair, Shield, Clipboard, Loader2, Excel, BarChart3 } from 'lucide-react'
+import { Shield, Clipboard, Loader2, BarChart3 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { tl } from '../utils/format'
+
+const tl = (x) => (x == null ? '—' : Number(x).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
 
 function MizanKontrol() {
   const navigate = useNavigate()

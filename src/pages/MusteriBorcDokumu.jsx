@@ -6,7 +6,7 @@ import { openWhatsAppWeb, sendEmail } from '../services/whatsappService'
 import {
   AlertTriangle, ArrowUpDown, BadgeCheck, Building2, ChevronDown, ChevronUp,
   Clock, Filter, Landmark, Loader2, MessageCircle, Minus, Plus,
-  RefreshCw, Search, Send, Square, Users, Wallet, X
+  RefreshCw, Search, Send, Square, Trash2, Users, Wallet, X
 } from 'lucide-react'
 import AylikTakvim from '../components/AylikTakvim'
 import PlanDilimSatirlari from '../components/PlanDilimSatirlari'

@@ -8,7 +8,7 @@ import {
   UserCheck, BarChart3, CalendarDays, Megaphone, MessageSquareText,
   Send, Calculator, Settings, Landmark, FolderOpen, Brain, FileArchive,
   FileCheck, ChevronDown, ChevronRight, Menu as MenuIcon, X, Building2,
-  KeyRound, Download, Inbox, Camera, LogOut, ClipboardCheck, TableProperties, ScanLine, FileSpreadsheet, CreditCard
+  KeyRound, Download, Inbox, Camera, LogOut, ClipboardCheck, TableProperties, ScanLine, FileSpreadsheet, CreditCard, Shield
 } from 'lucide-react'
 import { kiraArtisBildirimleriniOlustur } from '../services/kiraService'
 import { YARDIMCI_EXE_URL } from '../config/indirmeLinkleri'

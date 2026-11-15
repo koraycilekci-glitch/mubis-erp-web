@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { UseRepair, Shield, Clipboard, Loader2, CalendarDays, BarChart3, FileText, Calendar, Check, XCircle, Info } from 'lucide-react'
+import { Info } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { tl } from '../utils/format'
+
+const tl = (x) => (x == null ? '—' : Number(x).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
 
 function BeyanZorunlulukMatrisi() {
   const navigate = useNavigate()
@@ -85,7 +86,7 @@ function BeyanZorunlulukMatrisi() {
       </div>
 
       {/* Obligation Matrix */}
-      {yukleme === 'ready' && (
+      {yukleme === 'ready' && (<>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-6 mb-8">
           {/* Mandatory Column */}
           <div className="lg:col-span-1 bg-blue-900/20 rounded-xl border border-blue-700/30 p-6">
@@ -103,9 +104,7 @@ function BeyanZorunlulukMatrisi() {
                       zorunlu ? 'bg-red-500/20 text-red-300' : 'bg-green-500/20 text-green-300'
                     }`}
                   >
-                    <span className="w-2 h-2 rounded-full ${
-                      zorunlu ? 'bg-red-500' : 'bg-green-500'
-                    }" />
+                    <span className={`w-2 h-2 rounded-full ${zorunlu ? 'bg-red-500' : 'bg-green-500'}`} />
                     <span>{beyanZorunlulari[tur]?.label || tur}</span>
                   </div>
                 )
@@ -156,7 +155,7 @@ function BeyanZorunlulukMatrisi() {
             {seciliFirma ? `${seciliFirma.ad} - ${yil} yıl - ${AYLAR[ay - 1]} ay` : 'Firma seçili değil'}
           </p>
 
-          {seciliFirma && (
+          {seciliFirma ? (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-blue-900/30">
@@ -194,9 +193,9 @@ function BeyanZorunlulukMatrisi() {
                 </tbody>
               </table>
             </div>
-          )} else {
+          ) : (
             <div className="bg-gray-900/30 rounded-xl p-8 text-center">
-              <p className="text-gray-400">Lütfen sol tablodan birirma seçin</p>
+              <p className="text-gray-400">Lütfen sol tablodan bir firma seçin</p>
               <button
                 className="mt-4 bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded text-sm transition-colors"
                 onClick={() => setSeciliFirma(firmalar[0])}
@@ -204,9 +203,9 @@ function BeyanZorunlulukMatrisi() {
                 İlk Firmanın Beyan Durumu
               </button>
             </div>
-          }
+          )}
         </div>
-      )}
+      </>)}
     </div>
   )
 }

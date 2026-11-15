@@ -7,7 +7,7 @@ import {
   FileArchive, FileCheck, Calendar,
   Calculator, Settings, CalendarDays, DollarSign,
   Send, Upload, Megaphone,
-  ChevronDown, FolderOpen, MessageSquare
+  ChevronDown, FolderOpen, MessageSquare, Home
 } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
 import PublicHeader from './PublicHeader'

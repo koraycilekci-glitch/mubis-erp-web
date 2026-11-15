@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useClients } from '../hooks/useClients'
 import { 
-  Upload, FileSpreadsheet, CheckCircle, 
+  Upload, FileSpreadsheet, CheckCircle, User,
   Database, Save, Trash2, Search
 } from 'lucide-react'
 import { aiService } from '../services/aiService'

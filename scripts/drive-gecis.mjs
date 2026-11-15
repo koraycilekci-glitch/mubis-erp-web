@@ -278,7 +278,7 @@ async function dosyaTasi(dosya, kokId) {
   ])
 
   const y = await fetch(
-    `${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id,name,size,mimeType,webViewLink,sha1`,
+    `${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id,name,size,mimeType,webViewLink,sha1Checksum,md5Checksum`,
     {
       method: 'POST',
       headers: { ...h(token), 'Content-Type': `multipart/related; boundary=${sinir}` },
@@ -290,8 +290,10 @@ async function dosyaTasi(dosya, kokId) {
     return { ok: false, hata: 'Drive yukleme: ' + (j?.error?.message || `HTTP ${y.status}`) }
   }
 
-  // Dogrulama: Drive'in bildirdigi sha1 ile yerel sha1
-  const driveSha1 = String(j.sha1 || '')
+  // Dogrulama: Drive'in bildirdigi sha1Checksum (v3 alan adi 'sha1' degil) ile
+  // yerel sha1. Boşsa md5Checksum'a, o da yoksa 'bilinmiyor' sayılır (size kontrolü
+  // silme asamasinda devreye girer).
+  const driveSha1 = String(j.sha1Checksum || j.md5Checksum || '')
   const dogrulandi = !driveSha1 || driveSha1 === sha1
 
   const { error: yazHata } = await sb.from(TABLO).upsert(
@@ -369,14 +371,22 @@ async function dogrulanmisSil() {
     try {
       const token = await accessToken()
       const y = await fetch(
-        `${DRIVE_API}/files/${encodeURIComponent(k.drive_file_id || '')}?fields=id,sha1,size`,
+        `${DRIVE_API}/files/${encodeURIComponent(k.drive_file_id || '')}?fields=id,sha1Checksum,md5Checksum,size`,
         { headers: h(token) }
       )
       if (!y.ok) { hata++; console.log(renk.kirmizi('  ✗ Drive\'da yok: ' + k.eski_storage_path)); continue }
       const j = await y.json().catch(() => ({}))
-      if (k.sha1 && j.sha1 && j.sha1 !== k.sha1) {
+      const driveHash = String(j.sha1Checksum || j.md5Checksum || '')
+      const boyutUyuyor = !k.boyut || Number(j.size) === Number(k.boyut)
+      // hash yoksa boyut + varlık kontrolü ile yetinir; hash varsa birebir karşılaştırılır
+      if (driveHash && k.sha1 && driveHash !== k.sha1) {
         hata++
         console.log(renk.kirmizi('  ✗ SHA1 uyusmuyor, silinmedi: ' + k.eski_storage_path))
+        continue
+      }
+      if (!boyutUyuyor) {
+        hata++
+        console.log(renk.kirmizi('  ✗ Boyut uyusmuyor, silinmedi: ' + k.eski_storage_path))
         continue
       }
     } catch (e) {

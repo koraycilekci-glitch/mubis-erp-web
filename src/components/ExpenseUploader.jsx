@@ -3,6 +3,7 @@ import { Camera, Upload, Trash2, Save, X, Eye, CheckCircle, AlertTriangle, FileT
 import { supabase } from '../lib/supabase'
 import { processExpenseImage, convertToAccountingEntry } from '../services/expenseOCRService'
 import { pdfIlkSayfaResmi } from '../services/zReportOCRService'
+import { getViewUrl } from '../utils/storageUrl'
 
 export default function ExpenseUploader({ clientId, clientName }) {
   const [expenses, setExpenses] = useState([])
@@ -271,11 +272,17 @@ export default function ExpenseUploader({ clientId, clientName }) {
             yil: selectedYear,
             ay: selectedMonth,
           })
+          if (!drive?.success && drive?.uploaded) {
+            const error = new Error(drive.error || 'Drive belge kaydi tamamlanamadi')
+            error.driveUploaded = true
+            throw error
+          }
           if (drive?.success) {
             imageUrl = drive.web_view_link || ''
             driveFileId = drive.drive_file_id || ''
           }
         } catch (e) {
+          if (e.driveUploaded) throw e
           console.warn('Drive gider yuklemesi atlandi:', e?.message || e)
         }
 
@@ -295,7 +302,7 @@ export default function ExpenseUploader({ clientId, clientName }) {
         // OCR islemi — PDF'ler tesseract ile okunamaz, resme cevrilmis
         // onizlemeyi (dataURL) kullan; resimlerde yuklenen dosya okunur.
         setMsg(`${i + 1}/${selectedFiles.length} OCR isleniyor...`)
-        const ocrResult = await processExpenseImage(pdfMi(file) ? previewUrls[i] : imageUrl)
+        const ocrResult = await processExpenseImage(pdfMi(file) || driveFileId ? previewUrls[i] : imageUrl)
 
         // Gider kaydi olustur
         const { data: expense, error: expenseError } = await supabase
@@ -321,15 +328,6 @@ export default function ExpenseUploader({ clientId, clientName }) {
 
         if (expenseError) throw expenseError
 
-        // Drive referansini gider kaydina bagla (varsa)
-        if (driveFileId) {
-          try {
-            await supabase
-              .from('drive_belgeler')
-              .update({ expense_document_id: expense.id })
-              .eq('drive_file_id', driveFileId)
-          } catch { /* yoksay */ }
-        }
         
         // Muhasebe kaydi olustur
         const entries = convertToAccountingEntry('individual', ocrResult.parsed)
@@ -569,7 +567,16 @@ export default function ExpenseUploader({ clientId, clientName }) {
                     </td>
                     <td className="py-2 px-3 text-center">
                       <div className="flex items-center justify-center gap-2">
-                        <button onClick={() => { setSelectedExpense(expense); setShowExpenseModal(true) }} className="text-blue-400 hover:text-blue-300">
+                        <button onClick={async () => {
+                          try {
+                            const previewUrl = await getViewUrl(expense.image_url)
+                            if (!previewUrl) throw new Error('Belgeye erisilemiyor')
+                            setSelectedExpense({ ...expense, previewUrl })
+                            setShowExpenseModal(true)
+                          } catch (error) {
+                            setMsg('Belge acma hatasi: ' + error.message)
+                          }
+                        }} className="text-blue-400 hover:text-blue-300">
                           <Eye className="w-4 h-4" />
                         </button>
                         <button onClick={() => handleDelete(expense)} className="text-red-400 hover:text-red-300">
@@ -598,7 +605,7 @@ export default function ExpenseUploader({ clientId, clientName }) {
               </div>
               
               <div className="mb-4">
-                <img src={selectedExpense.image_url} alt="Gider Fisi" className="w-full h-64 object-contain rounded-lg bg-black/20" />
+                <img src={selectedExpense.previewUrl} alt="Gider Fisi" className="w-full h-64 object-contain rounded-lg bg-black/20" />
               </div>
               
               <div className="grid grid-cols-2 gap-4 mb-4">

@@ -51,8 +51,15 @@ async function driveYukleDene({ client, file, ad, belgeTuru = 'genel', yil = nul
       yon,
       musteriAdi,
     })
+    if (!sonuc?.success && sonuc?.uploaded) {
+      const error = new Error(sonuc.error || 'Drive dosyasinin kaydi tamamlanamadi')
+      error.driveUploaded = true
+      error.driveFileId = sonuc.drive_file_id
+      throw error
+    }
     return sonuc?.success ? sonuc : null
   } catch (e) {
+    if (e.driveUploaded) throw e
     console.warn('Drive yukleme atlandi (Storage kullanilacak):', e?.message || e)
     return null
   }
@@ -138,7 +145,7 @@ export async function uploadClientDocument({
   if (drive) {
     return {
       path: `drive:${drive.drive_file_id}`,
-      url: drive.web_view_link || '',
+      url: `/api/drive-dosya?id=${drive.drive_file_id}`,
       drive_file_id: drive.drive_file_id,
       kaynak: 'drive',
     }
@@ -224,7 +231,7 @@ export async function uploadClientFile({ client, relPath, file }) {
   if (drive) {
     return {
       path: `drive:${drive.drive_file_id}`,
-      url: drive.web_view_link || '',
+      url: `/api/drive-dosya?id=${drive.drive_file_id}`,
       drive_file_id: drive.drive_file_id,
       kaynak: 'drive',
     }
@@ -428,7 +435,7 @@ export async function uploadClientBulkDocument({
   if (drive) {
     return {
       path: `drive:${drive.drive_file_id}`,
-      url: drive.web_view_link || '',
+      url: `/api/drive-dosya?id=${drive.drive_file_id}`,
       drive_file_id: drive.drive_file_id,
       kaynak: 'drive',
       name: name || file.name,
@@ -479,7 +486,7 @@ async function uploadGenericDocument(client, path, file) {
   if (drive) {
     return {
       path: `drive:${drive.drive_file_id}`,
-      url: drive.web_view_link || '',
+      url: `/api/drive-dosya?id=${drive.drive_file_id}`,
       drive_file_id: drive.drive_file_id,
       kaynak: 'drive',
       name: file.name,

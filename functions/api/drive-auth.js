@@ -36,7 +36,7 @@ export async function onRequestGet({ request, env }) {
     if (action === 'status') {
       const kontrol = await dogrulaKullanici(request, env)
       if (!kontrol.ok) return json({ ok: false, error: kontrol.hata }, kontrol.kod)
-      const { data } = await admin.from('app_settings').select('value').eq('key', TOKEN_KEY).maybeSingle()
+      const { data } = await admin.from('app_settings').select('value').eq('office_id', 1).eq('key', TOKEN_KEY).maybeSingle()
       const kadro = await accessTokenAl(admin, env)
       return json({
         ok: true,
@@ -48,13 +48,16 @@ export async function onRequestGet({ request, env }) {
 
     // ---------------- OAUTH BASLAT ----------------
     if (action === 'start') {
+      const kontrol = await dogrulaKullanici(request, env)
+      if (!kontrol.ok) return json({ ok: false, error: kontrol.hata }, kontrol.kod)
+      if (kontrol.profil?.role !== 'super_admin') return json({ ok: false, error: 'Bu islem icin sistem yoneticisi yetkisi gerekir' }, 403)
       if (!clientId || !clientSecret || !redirectUri) {
         return json({
           ok: false,
           error: 'GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET ve GOOGLE_REDIRECT_URI tanimli olmali.',
         }, 500)
       }
-      const state = Math.random().toString(36).slice(2) + Date.now().toString(36)
+      const state = crypto.randomUUID()
       // app_settings'in unique kısıtı (office_id, key) — onConflict ona göre olmalı
       const { error: stateHata } = await admin.from('app_settings').upsert(
         { key: STATE_KEY, value: state, updated_at: new Date().toISOString(), office_id: 1 },
@@ -71,21 +74,21 @@ export async function onRequestGet({ request, env }) {
       g.searchParams.set('access_type', 'offline')
       g.searchParams.set('prompt', 'consent')
       g.searchParams.set('state', state)
-      return new Response(null, {
-        status: 302,
-        headers: { ...CORS, Location: g.toString() },
-      })
+      return json({ ok: true, url: g.toString() }, 200, { 'Cache-Control': 'no-store' })
     }
 
     // ---------------- OAUTH CALLBACK ----------------
     const code = url.searchParams.get('code')
     if (code) {
       const state = url.searchParams.get('state') || ''
-      const { data: kayitli } = await admin.from('app_settings').select('value').eq('key', STATE_KEY).maybeSingle()
-      if (!kayitli?.value || kayitli.value !== String(state)) {
+      const { data: kayitli } = await admin.from('app_settings').select('value,updated_at').eq('office_id', 1).eq('key', STATE_KEY).maybeSingle()
+      const age = Date.now() - Date.parse(kayitli?.updated_at || '')
+      if (!kayitli?.value || kayitli.value !== String(state) || !Number.isFinite(age) || age < 0 || age > 10 * 60 * 1000) {
         return json({ ok: false, error: 'Gecersiz veya suresi gecmis yetkilendirme istegi (state uyusmuyor).' }, 400)
       }
 
+      const consumed = await admin.from('app_settings').delete().eq('office_id', 1).eq('key', STATE_KEY).eq('value', state).select('key')
+      if (consumed.error || consumed.data?.length !== 1) return json({ ok: false, error: 'Yetkilendirme istegi daha once kullanilmis' }, 400)
       const govde = new URLSearchParams({
         code,
         client_id: clientId || '',
@@ -114,7 +117,6 @@ export async function onRequestGet({ request, env }) {
       if (tokenHata) {
         return json({ ok: false, error: 'Token kaydedilemedi: ' + tokenHata.message }, 500)
       }
-      await admin.from('app_settings').delete().eq('key', STATE_KEY)
 
       const hedef = new URL(redirectUri || url.origin)
       hedef.pathname = '/admin/ayarlar'
@@ -150,7 +152,9 @@ export async function onRequestPost({ request, env }) {
     if (body?.action !== 'disconnect') {
       return json({ ok: false, error: "action 'disconnect' bekleniyor" }, 400)
     }
-    await admin.from('app_settings').delete().eq('key', TOKEN_KEY)
+    if (env.GOOGLE_REFRESH_TOKEN) return json({ ok: false, error: 'Baglanti ortam ayariyla yonetiliyor; sistem yoneticisi ortamdaki Drive yetkisini kaldirmali' }, 409)
+    const removed = await admin.from('app_settings').delete().eq('office_id', 1).eq('key', TOKEN_KEY)
+    if (removed.error) return json({ ok: false, error: 'Drive baglantisi kaldirilamadi' }, 503)
     return json({ ok: true, mesaj: 'Google Drive baglantisi kaldirildi.' })
   } catch (e) {
     return json({ ok: false, error: e?.message || 'Baglanti kaldirilamadi' }, 500)

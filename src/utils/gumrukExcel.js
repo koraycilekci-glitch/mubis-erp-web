@@ -96,7 +96,7 @@ export async function gumrukSatirlariniOku(arrayBuffer) {
 // ---------- AFA dökümü ortak satır işleyici ----------
 // CSV (Luca "AFA" dökümü, noktalı virgüllü, Windows-1254) ve Excel (.xls/.xlsx)
 // aynı işleyiciye girer. Girdi: satır dizileri (string grid).
-function afaGridiIsle(satirlar) {
+function afaGridiIsle(satirlar, baslikZorunlu = false) {
   const norm = (s) => String(s ?? '').toLocaleLowerCase('tr').replace(/\s+/g, ' ').trim()
 
   // Baslik satirini bul ve kolon indekslerini esle
@@ -104,7 +104,7 @@ function afaGridiIsle(satirlar) {
   for (const s of satirlar) {
     const h = (s || []).map(norm)
     const idx = (desen) => h.findIndex(x => desen.test(x))
-    const tarih = idx(/fi[şs]|fatura tar[iı]h/)
+    const tarih = idx(/^tar[iı]h|fi[şs]|fatura tar[iı]h/)
     const fno = idx(/fatura no|belge no/)
     const unvan = idx(/[üu]nvan|kar[şs][ıi] tar[au]f/)
     if (tarih >= 0 && fno >= 0 && unvan >= 0) {
@@ -120,6 +120,7 @@ function afaGridiIsle(satirlar) {
   }
   // Baslik bulunamadiysa sablon varsayimi (ilk 7 kolon):
   // TARİH | FATURA NO | ÜNVANI | KDV ORANI | KDV MATRAHI | KDV TUTARI | TOPLAM
+  if (baslikZorunlu && (!kol || kol.matrah < 0 || kol.kdv < 0 || kol.toplam < 0)) return []
   if (!kol) kol = { tarih: 0, fno: 1, unvan: 2, oran: 3, matrah: 4, kdv: 5, toplam: 6 }
 
   const sonuc = []
@@ -207,19 +208,17 @@ function afaCsvSatirlari(metin) {
 // Luca "AFA" dökümünü okur — .csv (Windows-1254/noktalı virgül) veya
 // .xls/.xlsx. Her satır ayrı fiş/fatura kaydına dönüşür. Hem Gümrük/İthalat
 // hem Gider fiş/fatura dökümleri aynı yapıdadır.
-export async function afaDokumSatirlariniOku(arrayBuffer, dosyaAdi = '') {
-  if (/\.csv$/i.test(dosyaAdi)) {
-    // Luca CSV'leri Windows-1254 (Türkçe ANSI) kodludur; UTF-8 baytları
-    // bozulmasın diye önce 1254 denenir
+export async function afaDokumSatirlariniOku(arrayBuffer, dosyaAdi = '', baslikZorunlu = false) {
+  if (/\.(csv|cvs)$/i.test(dosyaAdi)) {
     let metin = ''
-    try { metin = new TextDecoder('windows-1254').decode(arrayBuffer) } catch { metin = new TextDecoder('utf-8').decode(arrayBuffer) }
-    return afaGridiIsle(afaCsvSatirlari(metin))
+    try { metin = new TextDecoder('utf-8', { fatal: true }).decode(arrayBuffer) } catch { metin = new TextDecoder('windows-1254').decode(arrayBuffer) }
+    return afaGridiIsle(afaCsvSatirlari(metin), baslikZorunlu)
   }
   const XLSX = await import('xlsx')
   const wb = XLSX.read(arrayBuffer, { type: 'array' })
   const ws = wb.Sheets[wb.SheetNames[0]]
   if (!ws) return []
-  return afaGridiIsle(XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }))
+  return afaGridiIsle(XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }), baslikZorunlu)
 }
 
 // ---------- Z RAPORU dökümü (yazar kasa gün sonu) ----------
@@ -229,9 +228,9 @@ export async function afaDokumSatirlariniOku(arrayBuffer, dosyaAdi = '') {
 // { tarih, evrakNo, aciklama, satis, matrah, kdv, toplam }
 export async function zRaporuSatirlariniOku(arrayBuffer, dosyaAdi = '') {
   let satirlar
-  if (/\.csv$/i.test(dosyaAdi)) {
+  if (/\.(csv|cvs)$/i.test(dosyaAdi)) {
     let metin = ''
-    try { metin = new TextDecoder('windows-1254').decode(arrayBuffer) } catch { metin = new TextDecoder('utf-8').decode(arrayBuffer) }
+    try { metin = new TextDecoder('utf-8', { fatal: true }).decode(arrayBuffer) } catch { metin = new TextDecoder('windows-1254').decode(arrayBuffer) }
     satirlar = afaCsvSatirlari(metin)
   } else {
     const XLSX = await import('xlsx')
@@ -254,9 +253,9 @@ export async function zRaporuSatirlariniOku(arrayBuffer, dosyaAdi = '') {
       kol = {
         tarih, evrak,
         aciklama: idx(/a[cç][ıi]klama/),
-        satis: [0, 1, 10, 20].map(o => idx(new RegExp(`sat[ıi][şs] ${o}`))).filter(i => i >= 0),
-        matrah: [1, 10, 20].map(o => idx(new RegExp(`matrah ${o}`))).filter(i => i >= 0),
-        kdv: [1, 10, 20].map(o => idx(new RegExp(`kdv ${o}`))).filter(i => i >= 0)
+        satis: [0, 1, 10, 20].map(oran => idx(new RegExp(`^sat[ıi][şs] ${oran}$`))).filter(indeks => indeks >= 0),
+        matrah: [1, 10, 20].map(oran => idx(new RegExp(`^matrah ${oran}$`))).filter(indeks => indeks >= 0),
+        kdv: [1, 10, 20].map(oran => idx(new RegExp(`^kdv ${oran}$`))).filter(indeks => indeks >= 0)
       }
       break
     }

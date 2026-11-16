@@ -100,9 +100,14 @@ export async function addBeyanDocument({ client, year, month, type, docType, fil
   const currentMap = await fetchBeyanDurumlari(client.id)
   const updatedMap = { ...currentMap }
 
-  const { single, list } = DOCUMENT_KEYS[docType]
-  const listKey = keys[list]
-  const singleKey = keys[single]
+  const keyMap = {
+    beyanname: { single: 'beyanUrlKey', list: 'beyanlarKey' },
+    tahakkuk: { single: 'tahakkukUrlKey', list: 'tahakkuklarKey' },
+    bordro: { single: 'bordroUrlKey', list: 'bordrolarKey' },
+  }
+  const { single: singleProp, list: listProp } = keyMap[docType]
+  const singleKey = keys[singleProp]
+  const listKey = keys[listProp]
 
   // Mevcut listeyi koru; çift kayıt oluşmasın
   const currentList = docType === 'beyanname'
@@ -153,9 +158,14 @@ export async function removeBeyanDocument({ clientId, year, month, type, docType
   const currentMap = await fetchBeyanDurumlari(clientId)
   const updatedMap = { ...currentMap }
 
-  const { single, list } = DOCUMENT_KEYS[docType]
-  const listKey = keys[list]
-  const singleKey = keys[single]
+  const keyMap = {
+    beyanname: { single: 'beyanUrlKey', list: 'beyanlarKey' },
+    tahakkuk: { single: 'tahakkukUrlKey', list: 'tahakkuklarKey' },
+    bordro: { single: 'bordroUrlKey', list: 'bordrolarKey' },
+  }
+  const { single: singleProp, list: listProp } = keyMap[docType]
+  const singleKey = keys[singleProp]
+  const listKey = keys[listProp]
 
   const currentList = docType === 'beyanname'
     ? getBeyanList(currentMap, keys.baseKey)

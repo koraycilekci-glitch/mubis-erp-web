@@ -2,7 +2,7 @@
 // v3: respondWith her zaman geçerli bir Response döndürmeli. Aksi halde
 // tarayıcı "Failed to convert value to 'Response'" hatası verir ve sayfa
 // (özellikle /admin/ayarlar gibi derin bağlantılar) açılmaz.
-const CACHE_NAME = 'mubis-erp-v3'
+const CACHE_NAME = 'mubis-erp-v5'
 const PRECACHE = [
   '/manifest.json',
   '/icon-192.png',

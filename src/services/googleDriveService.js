@@ -1,18 +1,22 @@
-// src/services/googleDriveService.js
-// Google Drive istemci servisi (tarayıcı tarafı).
-//
-// Akis:
-//   1) /api/drive -> kisa omurlu access token (oturum dogrulanir)
-//   2) Yukleme/indirme dogrudan tarayicidan Google Drive REST v3'e gider
-//      (Vercel 4.5MB govde limiti boylece asilmaz)
-//   3) Dosya referanslari Supabase "drive_belgeler" tablosunda tutulur.
-//
-// Onemli: googleapis Node paketi KULLANILMAZ — tarayici build'inde yer almaz.
-
 import { supabase } from '../lib/supabase'
+import { fetchDocument } from '../utils/storageUrl'
+export async function driveDokumIstegi(payload) {
+  const { data, error } = await supabase.auth.getSession()
+  const token = data?.session?.access_token
+  if (error || !token) throw new Error('Dökümleri okumak için oturum açın.')
+  const response = await fetch('/api/drive-dokum', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(90000)
+  })
+  if (!response.ok) {
+    const result = await response.json().catch(() => null)
+    throw new Error(result?.error || `Drive döküm okuma hatası (${response.status})`)
+  }
+  return payload.action === 'download' ? response.blob() : response.json()
+}
 
-const DRIVE_API = 'https://www.googleapis.com/drive/v3'
-const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3'
 const BELGE_TABLO = 'drive_belgeler'
 
 // ---------------------------------------------------------------
@@ -30,71 +34,9 @@ async function driveApi(payload) {
   })
   const json = await yanit.json().catch(() => ({}))
   if (!yanit.ok || json?.ok === false) {
-    return { ok: false, error: json?.error || `HTTP ${yanit.status}` }
+    return { ok: false, error: json?.error || `HTTP ${yanit.status}`, code: json?.code, status: yanit.status }
   }
   return json
-}
-
-// Access token onbellegi (sunucudan ~55 dk gecerli gelir)
-let tokenOnbellek = { token: '', kokKlasorId: '', bitis: 0 }
-
-export async function driveTokenAl(zorla = false) {
-  const simdi = Date.now()
-  if (!zorla && tokenOnbellek.token && tokenOnbellek.bitis > simdi) return tokenOnbellek
-
-  const sonuc = await driveApi({ action: 'token' })
-  if (!sonuc.ok) return { token: '', kokKlasorId: '', bitis: 0, error: sonuc.error }
-
-  tokenOnbellek = {
-    token: sonuc.token,
-    kokKlasorId: sonuc.kokKlasorId || '',
-    bitis: simdi + Math.max(60, (sonuc.expires_in || 3300) - 120) * 1000,
-  }
-  return tokenOnbellek
-}
-
-function authHeaders(token) {
-  return { Authorization: `Bearer ${token}` }
-}
-
-// ---------------------------------------------------------------
-// Klasor yardimcilari
-// ---------------------------------------------------------------
-export async function driveKlasorHazirla(yol = []) {
-  const sonuc = await driveApi({ action: 'folder', yol })
-  return sonuc.ok ? { ok: true, klasorId: sonuc.klasorId, kokKlasorId: sonuc.kokKlasorId } : sonuc
-}
-
-async function klasorBulVeyaOlustur(token, ad, parentId) {
-  const guvenli = String(ad || '').replace(/'/g, "\\'")
-  const q = [
-    `name = '${guvenli}'`,
-    "mimeType = 'application/vnd.google-apps.folder'",
-    'trashed = false',
-    parentId ? `'${parentId}' in parents` : "'root' in parents",
-  ].join(' and ')
-
-  const ara = await fetch(
-    `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name)&pageSize=1`,
-    { headers: authHeaders(token) }
-  )
-  const araJson = await ara.json().catch(() => ({}))
-  if (ara.ok && araJson?.files?.[0]?.id) return araJson.files[0].id
-
-  const olustur = await fetch(`${DRIVE_API}/files?fields=id`, {
-    method: 'POST',
-    headers: { ...authHeaders(token), 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: String(ad || 'klasor'),
-      mimeType: 'application/vnd.google-apps.folder',
-      parents: parentId ? [parentId] : undefined,
-    }),
-  })
-  const json = await olustur.json().catch(() => ({}))
-  if (!olustur.ok || !json.id) {
-    throw new Error('Klasor olusturulamadi: ' + (json?.error?.message || `HTTP ${olustur.status}`))
-  }
-  return json.id
 }
 
 // Ay / yon etiketleri: EDEFTER klasor duzeniyle ayni mantik
@@ -127,78 +69,31 @@ export function driveYolOlustur({ musteriAdi, yil, ay, yon }) {
  * @param {object} secenekler     { clientId, belgeTuru, mimeType, yol, yil, ay, yon, musteriAdi }
  */
 export async function uploadFileToDrive(dosya, ad, secenekler = {}) {
+  let uploaded = false
+  let fileId = ''
   try {
-    const bilgi = await driveTokenAl()
-    if (!bilgi.token) return { success: false, error: bilgi.error || 'Drive token alinamadi' }
-
-    const mimeType = secenekler.mimeType || dosya?.type || 'application/octet-stream'
-    const yol = Array.isArray(secenekler.yol) && secenekler.yol.length
-      ? secenekler.yol
-      : driveYolOlustur(secenekler)
-
-    // Hedef klasoru hazirla (kok altinda)
-    let parentId = bilgi.kokKlasorId
-    for (const parca of yol) {
-      if (!parca) continue
-      parentId = await klasorBulVeyaOlustur(bilgi.token, parca, parentId)
+    const mimeType = String(secenekler.mimeType || dosya?.type || 'application/octet-stream').split(';')[0].trim().toLowerCase()
+    const yol = Array.isArray(secenekler.yol) && secenekler.yol.length ? secenekler.yol : driveYolOlustur(secenekler)
+    const session = await driveApi({ action: 'upload', name: ad || 'belge', size: dosya.size, mimeType, yol, clientId: secenekler.clientId ?? null, belgeTuru: secenekler.belgeTuru || 'genel' })
+    if (!session.ok) return { success: false, error: session.error }
+    uploaded = true
+    const yanit = await fetch(session.uploadUrl, { method: 'PUT', headers: { 'Content-Type': mimeType }, body: dosya })
+    const metadata = await yanit.json().catch(() => ({}))
+    if (!yanit.ok || !metadata.id) throw new Error('Drive yuklemesi dogrulanamadi; tekrar yuklemeden once baglantiyi kontrol edin')
+    fileId = metadata.id
+    let result
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        result = await driveApi({ action: 'register', fileId, ticket: session.ticket })
+      } catch {
+        result = { ok: false, error: 'Drive dosyasinin belge kaydi dogrulanamadi' }
+      }
+      if (result.ok || (result.status && result.status < 500)) break
     }
-
-    const metadata = { name: String(ad || 'belge'), parents: parentId ? [parentId] : undefined }
-    const sinir = 'mubis_' + Math.random().toString(36).slice(2)
-    const govde = new Blob(
-      [
-        `--${sinir}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`,
-        JSON.stringify(metadata),
-        `\r\n--${sinir}\r\nContent-Type: ${mimeType}\r\n\r\n`,
-        dosya,
-        `\r\n--${sinir}--`,
-      ],
-      { type: `multipart/related; boundary=${sinir}` }
-    )
-
-    const yanit = await fetch(
-      `${DRIVE_UPLOAD_API}/files?uploadType=multipart&fields=id,name,mimeType,size,webViewLink,webContentLink,sha1,createdTime`,
-      { method: 'POST', headers: authHeaders(bilgi.token), body: govde }
-    )
-    const json = await yanit.json().catch(() => ({}))
-    if (!yanit.ok || !json.id) {
-      return { success: false, error: 'Drive yukleme basarisiz: ' + (json?.error?.message || `HTTP ${yanit.status}`) }
-    }
-
-    // Supabase referansi (dosya adi + Drive kimligi)
-    try {
-      await supabase.from(BELGE_TABLO).upsert(
-        {
-          drive_file_id: json.id,
-          dosya_adi: json.name || ad,
-          mime_type: json.mimeType || mimeType,
-          boyut: Number(json.size || dosya?.size || 0),
-          client_id: secenekler.clientId ?? null,
-          belge_turu: secenekler.belgeTuru || 'genel',
-          yol: yol.join('/'),
-          drive_link: json.webViewLink || '',
-          sha1: json.sha1 || '',
-          durum: 'aktif',
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'drive_file_id' }
-      )
-    } catch (e) {
-      console.warn('Drive referansi Supabase yazilamadi:', e?.message || e)
-    }
-
-    return {
-      success: true,
-      drive_file_id: json.id,
-      dosya_adi: json.name || ad,
-      web_view_link: json.webViewLink || '',
-      indirme_link: json.webContentLink || '',
-      sha1: json.sha1 || '',
-      boyut: Number(json.size || 0),
-    }
-  } catch (e) {
-    console.error('uploadFileToDrive hatasi:', e?.message || e)
-    return { success: false, error: e?.message || 'Drive yukleme hatasi' }
+    if (!result?.ok) return { success: false, uploaded, drive_file_id: fileId, code: result?.code || 'DRIVE_REFERENCE_FAILED', error: result?.error || 'Drive belge kaydi yazilamadi' }
+    return { success: true, drive_file_id: fileId, dosya_adi: result.fileName, boyut: result.size, web_view_link: result.url, indirme_link: result.url }
+  } catch (error) {
+    return { success: false, uploaded, drive_file_id: fileId, error: error?.message || 'Drive yukleme hatasi' }
   }
 }
 
@@ -207,13 +102,7 @@ export async function uploadFileToDrive(dosya, ad, secenekler = {}) {
 // ---------------------------------------------------------------
 export async function downloadFileFromDrive(fileId) {
   try {
-    const bilgi = await driveTokenAl()
-    if (!bilgi.token) return { success: false, error: bilgi.error || 'Drive token alinamadi' }
-
-    const yanit = await fetch(
-      `${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media`,
-      { headers: authHeaders(bilgi.token) }
-    )
+    const yanit = await fetchDocument(`/api/drive-dosya?id=${encodeURIComponent(fileId)}`)
     if (!yanit.ok) {
       return { success: false, error: 'Drive indirme basarisiz: HTTP ' + yanit.status }
     }
@@ -262,13 +151,7 @@ export async function driveDosyayiKaydet(fileId, varsayilanAd = 'belge') {
 // 3) Arsivleme (soft delete) — sunucu uzerinden
 // ---------------------------------------------------------------
 export async function removeFileFromDrive(fileId) {
-  const sonuc = await driveApi({ action: 'archive', fileId })
-  if (sonuc.ok) {
-    try {
-      await supabase.from(BELGE_TABLO).update({ durum: 'arsiv' }).eq('drive_file_id', fileId)
-    } catch { /* yoksay */ }
-  }
-  return sonuc
+  return driveApi({ action: 'archive', fileId })
 }
 
 // ---------------------------------------------------------------
@@ -311,18 +194,14 @@ export async function testDriveConnection() {
 
 // Drive kullanilabilir mi? Once onbellege bakar, yoksa tek API cagrisi yapar.
 export async function driveHazirMi() {
-  if (tokenOnbellek.token && tokenOnbellek.bitis > Date.now()) return true
-  const bilgi = await driveTokenAl()
-  return !!bilgi.token
+  const result = await driveApi({ action: 'status' })
+  return result.ok === true
 }
 
 // ---------------------------------------------------------------
 // 7) Gider fisi yukleme — musteri/yil/ay/GIDER_FISLERI duzeni
 // ---------------------------------------------------------------
 export async function uploadExpenseToDrive(file, { clientId, yil, ay, musteriAdi } = {}) {
-  const bilgi = await driveTokenAl()
-  if (!bilgi.token) return { success: false, error: bilgi.error || 'Drive token alinamadi' }
-
   // Musteri adi verilmediyse id ile klasorle
   const klasorAdi = musteriAdi || (clientId != null ? `Musteri_${clientId}` : 'Genel')
   const yol = [klasorAdi]

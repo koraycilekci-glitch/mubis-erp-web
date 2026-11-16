@@ -365,16 +365,23 @@ async function dogrulanmisSil() {
     console.error(renk.kirmizi('Silme icin --onay bayragi gerekli: --sil --onay'))
     process.exit(1)
   }
-  const { data: kayitlar, error } = await sb
-    .from(TABLO)
-    .select('id, eski_storage_path, sha1, boyut, durum, kaynak')
-    .eq('kaynak', 'supabase-storage')
-    .eq('durum', 'aktif')
-    .not('eski_storage_path', 'is', null)
-  if (error) throw new Error(error.message)
-
-  console.log(renk.sari(`Silinecek aday: ${kayitlar?.length || 0} dosya`))
+  // PostgREST tek istekte ~1000 satir dondurdugu icin batch batch okuyup isler.
+  // Silinen satirlarin eski_storage_path'i null olur; bir sonraki batch'i ceker.
   let silinen = 0, hata = 0
+  while (true) {
+    const { data: kayitlar, error } = await sb
+      .from(TABLO)
+      .select('id, eski_storage_path, drive_file_id, sha1, boyut, durum, kaynak')
+      .eq('kaynak', 'supabase-storage')
+      .eq('durum', 'aktif')
+      .not('eski_storage_path', 'is', null)
+      .range(0, 999)
+    if (error) throw new Error(error.message)
+    if (!kayitlar || kayitlar.length === 0) break
+
+    console.log(renk.sari(`Batch: ${kayitlar.length} dosya islenecek (toplam silinen: ${silinen})`))
+    const batchSilinenBaslangic = silinen
+    const batchHataBaslangic = hata
   for (const k of kayitlar || []) {
     // Guvenlik: Drive'da dosya gercekten var mi ve sha1 tutuyor mu?
     try {
@@ -415,6 +422,12 @@ async function dogrulanmisSil() {
     silinen++
     await sb.from(TABLO).update({ durum: 'aktif', eski_storage_path: null }).eq('id', k.id)
     if (silinen % 25 === 0) console.log(renk.gri(`  … ${silinen} silindi`))
+  }
+    // Batch'te tek dosya bile ilerleme yoksa sonsuz donguye girme
+    if (silinen === batchSilinenBaslangic && hata === batchHataBaslangic) {
+      console.log(renk.kirmizi('  ! Batch ilerleme yapmadi — dongu durduruldu.'))
+      break
+    }
   }
   console.log(renk.yesil(`\n✓ ${silinen} dosya Storage'dan silindi, ${hata} hata.`))
 }

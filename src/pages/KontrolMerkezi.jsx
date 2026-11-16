@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { RefreshCw, Download, TableProperties, Loader2, PlayCircle, ReceiptText, ShieldCheck } from 'lucide-react'
 import { kontrolMerkeziOzeti, faturaListesiExcel, kdv2Listesi, esmmAlisListesi, tabloExcel } from '../services/kontrolMerkeziService'
-import { efaturaSorgula, dosyalariMubisYukle, edefterTopluKopyala, lucaDurumMetni, faturaIlerlemeMetni } from '../services/efaturaService'
+import { efaturaSorgula, dosyalariMubisYukle, edefterTopluKopyala, faturaKopyalamaDosyalari, lucaDurumMetni, faturaIlerlemeMetni } from '../services/efaturaService'
 
 const AYLAR = ['OCAK', 'ŞUBAT', 'MART', 'NİSAN', 'MAYIS', 'HAZİRAN', 'TEMMUZ', 'AĞUSTOS', 'EYLÜL', 'EKİM', 'KASIM', 'ARALIK']
 
@@ -262,10 +262,13 @@ export default function KontrolMerkezi() {
                   if (metin) setAsamaMesaj(onEk + metin)
                 }
               })
+              if (yuk.ok === false) throw new Error(yuk.not || 'Faturalar MUBİS’e yüklenemedi.')
               toplam += yuk.sayi || 0
+              const hataliDosyalar = (yuk.dosyalar || []).filter(d => d.hata)
+              if (hataliDosyalar.length) hatalar.push(`${r.ad}/${turAd}${yonEtiket}: ${hataliDosyalar.length} dosya yüklenemedi (${hataliDosyalar[0].hata})`)
               if (!(yuk.sayi > 0) && yuk.not) hatalar.push(`${r.ad}/${turAd}${yonEtiket}: ${yuk.not}`)
               setAsamaMesaj(onEk + 'klasörlere kopyalanıyor...')
-              const kp = await edefterTopluKopyala({ client: clientArg, yardimciKaynak: res.yardimciKaynak, yil, ay, yon, dosyalar: indirilenler })
+              const kp = await edefterTopluKopyala({ client: clientArg, yardimciKaynak: res.yardimciKaynak, yil, ay, yon, dosyalar: faturaKopyalamaDosyalari(indirilenler, yuk.dosyalar) })
               if (kp?.atlandi) { if (!notlar.includes(kp.not)) notlar.push(kp.not) }
               else if (!kp?.ok) hatalar.push(`${r.ad}/${turAd}${yonEtiket} klasor kopyalama: ${kp?.error || 'basarisiz'}`)
             }

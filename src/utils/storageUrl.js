@@ -19,12 +19,39 @@ const VARSAYILAN_SURE = 60 * 60
 // Disari gonderilen (WhatsApp / e-posta) baglantilar icin: 30 gun
 export const PAYLASIM_SURESI = 60 * 60 * 24 * 30
 
+export function getDriveFileId(urlOrPath) {
+  const source = String(urlOrPath || '').trim()
+  if (source.startsWith('drive:')) return /^[\w-]+$/.test(source.slice(6)) ? source.slice(6) : null
+  try {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
+    const url = new URL(source, origin)
+    if (url.origin !== origin || url.pathname !== '/api/drive-dosya') return null
+    const id = url.searchParams.get('id') || ''
+    return /^[\w-]+$/.test(id) ? id : null
+  } catch {
+    return null
+  }
+}
+
+async function getDriveViewUrl(fileId, seconds) {
+  const { data } = await supabase.auth.getSession()
+  const token = data?.session?.access_token
+  if (!token) return null
+  const response = await fetch('/api/drive-dosya', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ fileId, seconds }),
+  })
+  const result = await response.json().catch(() => ({}))
+  return response.ok && result.ok ? result.url : null
+}
+
 /**
  * Public URL veya karisik girdiden storage yolunu cikarir.
  * Cikaramazsa null doner.
  */
 export function toStoragePath(urlOrPath) {
-  if (!urlOrPath) return null
+  if (!urlOrPath || getDriveFileId(urlOrPath)) return null
   const s = String(urlOrPath).trim()
   if (!s) return null
 
@@ -47,7 +74,7 @@ export function toStoragePath(urlOrPath) {
 
 /** Verilen deger bizim bucket'imiza mi ait? */
 export function isOwnStorageUrl(urlOrPath) {
-  if (!urlOrPath) return false
+  if (!urlOrPath || getDriveFileId(urlOrPath)) return false
   const s = String(urlOrPath).trim()
   if (!s || s.startsWith('//')) return false
   if (!/^[a-z][a-z\d+.-]*:/i.test(s)) return true
@@ -66,6 +93,8 @@ export function isOwnStorageUrl(urlOrPath) {
  */
 export async function getViewUrl(urlOrPath, sure = VARSAYILAN_SURE) {
   if (!urlOrPath) return null
+  const fileId = getDriveFileId(urlOrPath)
+  if (fileId) return getDriveViewUrl(fileId, sure)
 
   // Bizim bucket'imiza ait degilse dokunma
   if (!isOwnStorageUrl(urlOrPath)) return String(urlOrPath)
@@ -84,7 +113,10 @@ export async function getViewUrl(urlOrPath, sure = VARSAYILAN_SURE) {
 export async function fetchDocument(urlOrPath) {
   const source = String(urlOrPath || '')
   if (!source) throw new Error('Belge adresi bulunamadı')
-  let response = await fetch(source)
+  const fileId = getDriveFileId(source)
+  const target = fileId ? await getDriveViewUrl(fileId, VARSAYILAN_SURE) : source
+  if (!target) throw new Error('Belge bağlantısı oluşturulamadı; oturumunuzu ve erişim yetkinizi kontrol edin')
+  let response = await fetch(target)
   if (!response.ok && [401, 403, 404].includes(response.status) && isOwnStorageUrl(source)) {
     const signedUrl = await getViewUrl(source)
     if (signedUrl) response = await fetch(signedUrl)
@@ -104,8 +136,9 @@ export async function getViewUrls(urlList, sure = VARSAYILAN_SURE) {
     if (p) { paths.push(p); eslesme.set(u, p) }
   })
 
+  const driveUrls = new Map(await Promise.all([...new Set(urlList.filter(u => getDriveFileId(u)))].map(async u => [u, await getViewUrl(u, sure)])))
   if (paths.length === 0) {
-    return urlList.map(u => u || null)
+    return urlList.map(u => driveUrls.has(u) ? driveUrls.get(u) : u || null)
   }
 
   const { data } = await supabase.storage.from(BUCKET).createSignedUrls(paths, sure)
@@ -116,6 +149,7 @@ export async function getViewUrls(urlList, sure = VARSAYILAN_SURE) {
 
   return urlList.map(u => {
     if (!u) return null
+    if (driveUrls.has(u)) return driveUrls.get(u)
     if (!isOwnStorageUrl(u)) return String(u)
     const p = eslesme.get(u)
     return (p && yolaGoreImza.get(p)) || null
@@ -148,16 +182,23 @@ export async function openDocument(urlOrPath, sure = VARSAYILAN_SURE) {
 /** Belgeyi indirir (dosya adi verilebilir) */
 export async function downloadDocument(urlOrPath, dosyaAdi) {
   const path = toStoragePath(urlOrPath)
-  if (!path) return false
+  if (!urlOrPath) return false
 
   try {
-    const { data, error } = await supabase.storage.from(BUCKET).download(path)
-    if (error || !data) throw error || new Error('Dosya bulunamadi')
+    let data
+    if (getDriveFileId(urlOrPath)) {
+      data = await (await fetchDocument(urlOrPath)).blob()
+    } else {
+      if (!path) return false
+      const result = await supabase.storage.from(BUCKET).download(path)
+      if (result.error || !result.data) throw result.error || new Error('Dosya bulunamadi')
+      data = result.data
+    }
 
     const blobUrl = URL.createObjectURL(data)
     const a = document.createElement('a')
     a.href = blobUrl
-    a.download = dosyaAdi || path.split('/').pop() || 'belge.pdf'
+    a.download = dosyaAdi || path?.split('/').pop() || 'belge.pdf'
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)

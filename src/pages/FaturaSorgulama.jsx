@@ -8,7 +8,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { Receipt, Layers, X, Search, Download, Users, FolderOpen, FileSpreadsheet, SlidersHorizontal, ChevronDown, Upload, Square, RefreshCw, Clock, CalendarCheck } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useClients } from '../hooks/useClients'
-import { efaturaSorgula, dosyalariMubisYukle, edefterTopluKopyala, sorguYonleri, lucaDurumMetni, faturaIlerlemeMetni } from '../services/efaturaService'
+import { efaturaSorgula, dosyalariMubisYukle, edefterDokumleriniYukle, edefterTopluKopyala, faturaKopyalamaDosyalari, sorguYonleri, lucaDurumMetni, faturaIlerlemeMetni } from '../services/efaturaService'
 import { yardimciIsYerel, gibLucaSorguDurdur } from '../utils/gibOdemeHelper'
 import FaturaListesiKarti from '../components/FaturaListesiKarti'
 
@@ -113,6 +113,11 @@ export default function FaturaSorgulama() {
   // Bolum 2: Dosyadan Yükle / Excel'e Aktar tetikleri
   const [disEylem, setDisEylem] = useState(null)
   const [dokumAcik, setDokumAcik] = useState(false)
+  const musteriSec = (id) => {
+    setDisEylem(null)
+    setDokumAcik(false)
+    setSeciliId(id)
+  }
   const disFiltre = {}
   if (efTarihBas) disFiltre.tarihBas = efTarihBas
   if (efTarihBit) disFiltre.tarihBit = efTarihBit
@@ -189,8 +194,7 @@ export default function FaturaSorgulama() {
 
   const handleTopluSorgula = async () => {
     if (!topluSecili.length || topluSorguluyor) return
-    // Z Raporu / Gider Fişi kayıtları Luca'dan sorgulanmaz — Fişler kısmından girilir
-    if (FIS_TIPLERI.includes(topluTip)) { setTopluMesaj('Z Raporu ve Gider Fişi kayıtları Luca\u2019dan sorgulanmaz; Fişler kısmından eklenir.'); return }
+    if (FIS_TIPLERI.includes(topluTip)) { await handleLucaIndir(); return }
     // 2.7.483: "Eksik sorgu ve indirmeleri tamamla" — GİB'den tekrar sorgu
     // yapılmaz; Luca'daki hazır faturalar indirilip yüklenir (Luca'dan İndir akışı)
     if (sorguSecimi === 'eksik') { await handleLucaIndir(); return }
@@ -219,6 +223,10 @@ export default function FaturaSorgulama() {
         if (!musteri) continue
         const ad = musteriAdi(musteri)
         const clientArg = { ...musteri, id: musteri.id, vkn: musteri.vkn || musteri.tc || '' }
+        const dokumler = await edefterDokumleriniYukle({ client: clientArg, yil: topluYil, ay: topluAy, onDurum: setTopluMesaj, iptalKontrol })
+        toplam += dokumler.sayi
+        notlar.push(...dokumler.notlar.map(metin => `${ad}: ${metin}`))
+        hatalar.push(...dokumler.hatalar.map(metin => `${ad}: ${metin}`))
         for (const tur of turlar) {
           // UTTS'te satis yok; serbest meslek olmayan firmada e-SMM (Satış) yok
           const turYonleri = sorguYonleriniSec(tur, clientArg)
@@ -335,7 +343,7 @@ export default function FaturaSorgulama() {
                 aktarimKaydiEkle(setAktarimKayitlari, ad, turAd, yonEtiket, '', yuk)
                 if (!(yuk.sayi > 0)) boslar.push(`${ad}/${turAd}${yonEtiket}${yuk.not ? ' (' + yuk.not + ')' : ''}`)
                 setTopluMesaj(`${ad} - ${turAd}${yonEtiket}: klasörlere kopyalanıyor...`)
-                const kp = await edefterTopluKopyala({ client: clientArg, yardimciKaynak: indirmeKaynak, yil: topluYil, ay: topluAy, yon, dosyalar: indirilenler })
+                const kp = await edefterTopluKopyala({ client: clientArg, yardimciKaynak: indirmeKaynak, yil: topluYil, ay: topluAy, yon, dosyalar: faturaKopyalamaDosyalari(indirilenler, yuk.dosyalar) })
                 if (kp?.ok) aktarimKaydiLucaIsaretle(setAktarimKayitlari, ad, `${turAd}${yonEtiket}`, indirilenler.map(d => d.ad))
                 else if (kp?.atlandi) { if (!notlar.includes(kp.not)) notlar.push(kp.not) }
                 else hatalar.push(`${ad}/${turAd}${yonEtiket} klasor kopyalama: ${kp?.error || 'basarisiz'}`)
@@ -350,9 +358,11 @@ export default function FaturaSorgulama() {
         }
       }
       // 2.7.84: toplu sorgu bitti — acik Luca oturumunu kapat (best-effort)
-      try { await yardimciIsYerel('luca-oturumu-kapat', {}) } catch { /* yoksay */ }
+      if (turlar.length) {
+        try { await yardimciIsYerel('luca-oturumu-kapat', {}) } catch { /* yoksay */ }
+      }
       const ozet = []
-      if (toplam > 0) ozet.push(`Toplam ${toplam} belge indirildi, MUBiS'e yüklendi ve klasörlere kopyalandı.`)
+      if (toplam > 0) ozet.push(`Toplam ${toplam} belge indirildi ve MUBİS'e yüklendi.`)
       if (boslar.length) ozet.push('Yeni dosya/kayıt bulunamadı: ' + boslar.join(', ') + ' (dosya alınmamış veya faturalar zaten kayıtlı olabilir).')
       if (durdurRef.current) ozet.push('Sorgulama kullanıcı tarafından durduruldu — kalan müşteri/türler atlandı.')
       else if (durdur) ozet.push('Kritik hata nedeniyle kalan müşteriler atlandı.')
@@ -459,10 +469,9 @@ if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
       ? topluSecili
       : (seciliId ? [String(seciliId)] : [])
     if (!hedefler.length || topluSorguluyor) return
-    if (FIS_TIPLERI.includes(topluTip)) { setTopluMesaj('Z Raporu ve Gider Fişi kayıtları Luca\u2019dan sorgulanmaz; Fişler kısmından eklenir.'); return }
     setTopluSorguluyor(true)
     durdurRef.current = false
-    const turlar = (!topluTip || topluTip === 'hepsi') ? ['efatura', 'earsiv', 'esmm', 'utts'] : [topluTip]
+    const turlar = FIS_TIPLERI.includes(topluTip) ? [] : (!topluTip || topluTip === 'hepsi') ? ['efatura', 'earsiv', 'esmm', 'utts'] : [topluTip]
     const turAdlari = { efatura: 'e-Fatura', earsiv: 'e-Arşiv', esmm: 'e-SMM', utts: 'UTTS' }
     let toplam = 0
     const boslar = []
@@ -476,6 +485,10 @@ if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
         if (!musteri) continue
         const ad = musteriAdi(musteri)
         const clientArg = { ...musteri, id: musteri.id, vkn: musteri.vkn || musteri.tc || '' }
+        const dokumler = await edefterDokumleriniYukle({ client: clientArg, yil: topluYil, ay: topluAy, onDurum: setTopluMesaj, iptalKontrol })
+        toplam += dokumler.sayi
+        notlar.push(...dokumler.notlar.map(metin => `${ad}: ${metin}`))
+        hatalar.push(...dokumler.hatalar.map(metin => `${ad}: ${metin}`))
         for (const tur of turlar) {
           // UTTS'te satis yok; serbest meslek olmayan firmada e-SMM (Satış) yok
           const turYonleri = sorguYonleriniSec(tur, clientArg)
@@ -537,7 +550,7 @@ if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
                 aktarimKaydiEkle(setAktarimKayitlari, ad, turAd, yonEtiket, '', yuk)
                 if (!(yuk.sayi > 0)) boslar.push(`${ad}/${turAd}${yonEtiket}${yuk.not ? ' (' + yuk.not + ')' : ''}`)
                 setTopluMesaj(`${ad} - ${turAd}${yonEtiket}: klasörlere kopyalanıyor...`)
-                const kp = await edefterTopluKopyala({ client: clientArg, yardimciKaynak: indirmeKaynak, yil: topluYil, ay: topluAy, yon, dosyalar: indirilenler })
+                const kp = await edefterTopluKopyala({ client: clientArg, yardimciKaynak: indirmeKaynak, yil: topluYil, ay: topluAy, yon, dosyalar: faturaKopyalamaDosyalari(indirilenler, yuk.dosyalar) })
                 if (kp?.ok) aktarimKaydiLucaIsaretle(setAktarimKayitlari, ad, `${turAd}${yonEtiket}`, indirilenler.map(d => d.ad))
                 else if (kp?.atlandi) { if (!notlar.includes(kp.not)) notlar.push(kp.not) }
                 else hatalar.push(`${ad}/${turAd}${yonEtiket} klasor kopyalama: ${kp?.error || 'basarisiz'}`)
@@ -555,9 +568,11 @@ if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
           if (durdur || durdurRef.current) { durdur = true; break }
         }
       }
-      try { await yardimciIsYerel('luca-oturumu-kapat', {}) } catch { /* yoksay */ }
+      if (turlar.length) {
+        try { await yardimciIsYerel('luca-oturumu-kapat', {}) } catch { /* yoksay */ }
+      }
       const ozet = []
-      if (toplam > 0) ozet.push(`Toplam ${toplam} belge indirildi, MUBiS'e yüklendi ve klasörlere kopyalandı.`)
+      if (toplam > 0) ozet.push(`Toplam ${toplam} belge indirildi ve MUBİS'e yüklendi.`)
       if (boslar.length) ozet.push('Yeni dosya/kayıt bulunamadı: ' + boslar.join(', ') + ' (dosya alınmamış veya faturalar zaten kayıtlı olabilir).')
       if (durdurRef.current) ozet.push('İndirme kullanıcı tarafından durduruldu — kalan müşteri/türler atlandı.')
       else if (durdur) ozet.push('Kritik hata nedeniyle kalan müşteriler atlandı.')
@@ -744,7 +759,7 @@ if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
             <label className="block text-[11px] uppercase tracking-wide text-gray-500 mb-1.5">Müşteri Seçimi</label>
             <select
               value={seciliId}
-              onChange={(e) => setSeciliId(e.target.value)}
+              onChange={(e) => musteriSec(e.target.value)}
               disabled={sorguKapsam === 'toplu' || topluSorguluyor || tekSorguluyor}
               className="w-full bg-blue-900/60 border border-blue-700/50 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-yellow-500/50 disabled:cursor-not-allowed"
             >

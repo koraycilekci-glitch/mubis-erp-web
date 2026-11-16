@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { openDocument, downloadDocument, isOwnStorageUrl } from '../utils/storageUrl'
+import { openDocument, downloadDocument, isOwnStorageUrl, getDriveFileId } from '../utils/storageUrl'
 
 /**
  * client-documents bucket'i private oldugu icin veritabaninda saklanan
@@ -22,8 +22,7 @@ export default function StorageLinkHandler() {
       if (!a) return
 
       const href = a.getAttribute('href')
-      if (!href || !href.startsWith('http')) return
-      if (!isOwnStorageUrl(href)) return
+      if (!href || (!getDriveFileId(href) && (!href.startsWith('http') || !isOwnStorageUrl(href)))) return
       // Zaten imzalanmis baglantiya dokunma
       if (href.includes('/object/sign/')) return
 

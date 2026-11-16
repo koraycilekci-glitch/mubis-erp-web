@@ -19,7 +19,7 @@ export const CORS = {
 }
 
 export const json = (obj, status = 200, extra = {}) =>
-  new Response(JSON.stringify(obj), { status, headers: { ...CORS, 'Content-Type': 'application/json', ...extra } })
+  new Response(JSON.stringify(obj), { status, headers: { ...CORS, 'Cache-Control': 'private, no-store', 'Content-Type': 'application/json', ...extra } })
 
 export function supabaseAdmin(env) {
   const key = env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_SERVICE_KEY
@@ -73,6 +73,7 @@ export async function refreshTokenGetir(admin, env) {
     const { data } = await admin
       .from('app_settings')
       .select('value')
+      .eq('office_id', 1)
       .eq('key', 'google_drive_refresh_token')
       .maybeSingle()
     return data?.value || ''
@@ -82,6 +83,8 @@ export async function refreshTokenGetir(admin, env) {
 }
 
 // Access token uretir: { ok, token } | { ok:false, hata }
+let accessTokenCache = null
+
 export async function accessTokenAl(admin, env) {
   const clientId = env?.GOOGLE_CLIENT_ID
   const clientSecret = env?.GOOGLE_CLIENT_SECRET
@@ -93,6 +96,10 @@ export async function accessTokenAl(admin, env) {
     return { ok: false, hata: 'Google Drive yetkilendirilmedi. /api/drive-auth?action=start ile baglanti kurun.' }
   }
 
+  const cacheKey = JSON.stringify([clientId, clientSecret, refreshToken])
+  if (accessTokenCache?.key === cacheKey && accessTokenCache.expiresAt > Date.now()) {
+    return { ok: true, token: accessTokenCache.token, expiresIn: Math.floor((accessTokenCache.expiresAt - Date.now()) / 1000) }
+  }
   const govde = new URLSearchParams({
     client_id: clientId,
     client_secret: clientSecret,
@@ -109,14 +116,16 @@ export async function accessTokenAl(admin, env) {
     const mesaj = j?.error_description || j?.error || `HTTP ${yanit.status}`
     return { ok: false, hata: 'Google token yenilenemedi: ' + mesaj }
   }
-  return { ok: true, token: j.access_token }
+  const expiresIn = Math.max(0, Number(j.expires_in) || 3300)
+  accessTokenCache = { key: cacheKey, token: j.access_token, expiresAt: Date.now() + Math.max(0, expiresIn - 120) * 1000 }
+  return { ok: true, token: j.access_token, expiresIn }
 }
 
 export const driveHeaders = (token) => ({ Authorization: 'Bearer ' + token })
 
 // Klasoru bulur, yoksa olusturur. parentId bos ise 'root'.
 export async function klasorBulVeyaOlustur(token, ad, parentId) {
-  const guvenliAd = String(ad || '').replace(/'/g, "\\'")
+  const guvenliAd = String(ad || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'")
   const q = [
     `name = '${guvenliAd}'`,
     "mimeType = 'application/vnd.google-apps.folder'",

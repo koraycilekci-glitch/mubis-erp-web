@@ -5,7 +5,7 @@ import { useState, useEffect, useMemo, useRef, Fragment, useCallback } from 'rea
 import { Eye, Download, Upload, RefreshCw, Receipt, Search, Trash2, Loader2, CreditCard, X, Square, Archive } from 'lucide-react'
 import { dosyaIndir } from '../utils/dosyaIndir'
 import { fetchDocument, openDocument } from '../utils/storageUrl'
-import { faturalariGetir, kdvDetaylariGetir, efaturaSorgula, faturaGruplari, faturaTuruAdi, faturaTurEslesir, faturaTurEtiketi, belgeTuruAdi, sorguYonleri, manuelFaturaYukle, faturalariSil, dosyalariMubisYukle, edefterTopluKopyala, efaturaTutarlariOnar, efaturaKdvOranlariOnar, afaDokumuYukle, fisKdvDetayUret, aracKdvMatrahaEkle, lucaDurumMetni, faturaIlerlemeMetni } from '../services/efaturaService'
+import { faturalariGetir, kdvDetaylariGetir, efaturaSorgula, faturaGruplari, faturaTuruAdi, faturaTurEslesir, faturaTurEtiketi, belgeTuruAdi, sorguYonleri, manuelFaturaYukle, faturalariSil, dosyalariMubisYukle, edefterTopluKopyala, faturaKopyalamaDosyalari, efaturaTutarlariOnar, efaturaKdvOranlariOnar, afaDokumuYukle, edefterDokumleriniYukle, fisKdvDetayUret, aracKdvMatrahaEkle, lucaDurumMetni, faturaIlerlemeMetni } from '../services/efaturaService'
 import { gibYardimciIs, gibLucaSorguDurdur } from '../utils/gibOdemeHelper'
 import { krediKartiHasilatGetir, dvsSorgula } from '../services/dvsSorguService'
 import { formatDateTR } from '../utils/dateUtils'
@@ -101,6 +101,16 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
   // 'hepsi' = e-Fatura + e-Arşiv + e-SMM + UTTS SIRAYLA sorgulanir
   const [sorguTip, setSorguTip] = useState('hepsi')
   const [sorguluyor, setSorguluyor] = useState(false)
+  const sorguBaslangicRef = useRef(null)
+  const [sorguSuresi, setSorguSuresi] = useState(null)
+  useEffect(() => {
+    if (!sorguluyor) return
+    const zamanlayici = setInterval(() => {
+      if (sorguBaslangicRef.current !== null) setSorguSuresi(Math.floor((performance.now() - sorguBaslangicRef.current) / 1000))
+    }, 1000)
+    return () => clearInterval(zamanlayici)
+  }, [sorguluyor])
+  const sorguSureMetni = sorguSuresi === null ? '' : [Math.floor(sorguSuresi / 3600), Math.floor(sorguSuresi / 60) % 60, sorguSuresi % 60].map(deger => String(deger).padStart(2, '0')).join(':')
   // 2.7.574: Sorgulamayi Durdur — web tarafindaki adimlar arasi bayrak +
   // yardimciya /is-durdur (GIB bekleme donguleri bayragi kontrol eder).
   // 2.8.23: tumu=true — kullanicinin istegi: Durdur'a basinca KUYRUKTA
@@ -148,8 +158,10 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
     setDokumYukleniyor(true)
     try {
       const res = await afaDokumuYukle({ client, dosya, tip })
-      if (res.ok) setDokumMesaj(res.not || `${res.sayi} kayıt eklendi.`)
-      else setDokumHata(res.not || 'Döküm yüklenemedi.')
+      if (res.ok) {
+        setDokumMesaj(res.not || `${res.sayi} kayıt eklendi.`)
+        await yukle()
+      } else setDokumHata(res.not || 'Döküm yüklenemedi.')
     } catch (e) {
       setDokumHata(e?.message || 'Döküm yüklenemedi.')
     } finally {
@@ -302,7 +314,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
 
   // 2.7.541: Bolum 2 "Islemler" kartindan tetiklenen eylemler
   // (dosya yukleme penceresi / Excel'e aktar)
-  const disEylemSiraRef = useRef(0)
+  const disEylemSiraRef = useRef(disEylem?.sira || 0)
   useEffect(() => {
     if (!disEylem || !disEylem.sira || disEylem.sira === disEylemSiraRef.current) return
     disEylemSiraRef.current = disEylem.sira
@@ -459,18 +471,13 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
   // 2.7.522: A düzeni — sorgu üst şeritten tetiklenir; yıl/ay/tip override
   // ile geçilir ki state gecikmesi olmasın.
   const handleSorgula = async (override = {}) => {
-    if (!clientId || sorguluyor) return
+    if (!clientId || sorguluyor || sorguBaslangicRef.current !== null) return
     // 2.7.574: Sorgulamayi Durdur bayragi — her adim arasinda ve yardimci
     // GIB bekleme dongulerinde (is-durdur) kontrol edilir.
     durdurRef.current = false
     const sorguTipEff = override.tip || sorguTip
-    // Z Raporu / Gider Fişi kayıtları Luca'dan sorgulanmaz — Fişler kısmından girilir
-    if (sorguTipEff === 'zrapor' || sorguTipEff === 'giderfisi') {
-      setSorguTip(sorguTipEff)
-      setMesaj('Z Raporu ve Gider Fişi kayıtları Luca’dan sorgulanmaz; Fişler kısmından eklenir.')
-      yukle()
-      return
-    }
+    sorguBaslangicRef.current = performance.now()
+    setSorguSuresi(0)
     setSorguluyor(true)
     onSorguDurumDegis?.(true, handleSorguDurdur)
     const sorguYiliEff = override.yil != null ? String(override.yil) : sorguYili
@@ -480,7 +487,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
     // 2.7.432: GIB kaynagi kaldirildi — tum sorgular Luca kanalindan gider.
     const turlar = sorguTipEff === 'hepsi'
       ? ['efatura', 'earsiv', 'esmm', 'utts']
-      : [sorguTipEff]
+      : ['zrapor', 'giderfisi'].includes(sorguTipEff) ? [] : [sorguTipEff]
     const turAdlari = { efatura: 'e-Fatura', earsiv: 'e-Arşiv', esmm: 'e-SMM', utts: 'UTTS' }
     // 7/30 günlük parçalama — yalnizca GIB->Luca sorgu adiminda uygulanir
     const donemParcalari = (yil, ay, gun = 7) => {
@@ -532,6 +539,13 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
       const oncedenYukluler = []
       const hatalar = []
       const notlar = []
+      const dokumler = await edefterDokumleriniYukle({
+        client: clientArg, yil: sorguYiliEff, ay: sorguAyiEff,
+        onDurum: metin => { if (!durdurRef.current) setMesaj(metin) }, iptalKontrol
+      })
+      toplam += dokumler.sayi
+      notlar.push(...dokumler.notlar)
+      hatalar.push(...dokumler.hatalar)
       for (const tur of turlar) {
         if (durdur || durdurRef.current) { durdur = true; break }
         // UTTS'te satis yok (yalniz SATIS secildiyse UTTS tamamen atlanir);
@@ -658,7 +672,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
                 }
               }
               setMesaj(turAd + yonEtiket + ': klasörlere kopyalanıyor...')
-              const kp = await edefterTopluKopyala({ client: clientArg, yardimciKaynak: indirmeKaynak, yil: sorguYiliEff, ay: sorguAyiEff, yon, dosyalar: indirilenler })
+              const kp = await edefterTopluKopyala({ client: clientArg, yardimciKaynak: indirmeKaynak, yil: sorguYiliEff, ay: sorguAyiEff, yon, dosyalar: faturaKopyalamaDosyalari(indirilenler, yuk.dosyalar) })
               if (kp?.atlandi) { if (!notlar.includes(kp.not)) notlar.push(kp.not) }
               else if (!kp?.ok) hatalar.push(turAd + yonEtiket + ' klasor kopyalama: ' + (kp?.error || 'basarisiz'))
             } catch (err) {
@@ -670,7 +684,9 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
         }
       }
       // Sorgu bitti — acik Luca oturumunu kapat (best-effort)
-      try { await gibYardimciIs('luca-oturumu-kapat', {}) } catch { /* yoksay */ }
+      if (turlar.length) {
+        try { await gibYardimciIs('luca-oturumu-kapat', {}) } catch { /* yoksay */ }
+      }
       const ozet = []
       if (toplam > 0) ozet.push(toplam + ' fatura indirildi ve kaydedildi (musteri portalinda da gorunur).')
       if (notlar.length) ozet.push(notlar.join(' '))
@@ -690,6 +706,8 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
         setMesaj('Sorgulama tamamlanamadi: ' + msg)
       }
     } finally {
+      if (sorguBaslangicRef.current !== null) setSorguSuresi(Math.floor((performance.now() - sorguBaslangicRef.current) / 1000))
+      sorguBaslangicRef.current = null
       setSorguluyor(false)
       onSorguDurumDegis?.(false)
     }
@@ -1010,6 +1028,11 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
             {sorguluyor && (
               <span className="px-2.5 py-1.5 rounded-lg bg-yellow-500/15 border border-yellow-500/30 text-yellow-300 text-xs flex items-center gap-1.5">
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Sorgulanıyor...
+              </span>
+            )}
+            {sorguSuresi !== null && (
+              <span role="timer" aria-label="Sorgulama süresi" className="text-sm text-yellow-200 tabular-nums whitespace-nowrap">
+                {sorguluyor ? 'Geçen süre' : 'Toplam süre'}: {sorguSureMetni}
               </span>
             )}
           </div>

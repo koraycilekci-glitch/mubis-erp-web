@@ -146,6 +146,7 @@ export default function Settings() {
     smtp_from: '',
     smtp_secure: 'false',
     odeme_hatirlatma_gun: '5',
+    beyan_hatirlatma_gun: '3',
     payment_provider: 'paytr',
     payment_providers_enabled: JSON.stringify(['paytr']),
     client_document_permissions: JSON.stringify(getDefaultDocumentPermissions())
@@ -297,8 +298,22 @@ export default function Settings() {
     }
   }
 
-  const driveBaglan = () => {
-    window.location.href = '/api/drive-auth?action=start'
+  const driveBaglan = async () => {
+    setDriveYukleniyor(true)
+    setDriveErr('')
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data?.session?.access_token
+      if (!token) throw new Error('Oturum bulunamadi')
+      const response = await fetch('/api/drive-auth?action=start', { headers: { Authorization: `Bearer ${token}` } })
+      const result = await response.json()
+      if (!response.ok || !result.ok || !result.url) throw new Error(result.error || 'Drive baglantisi baslatilamadi')
+      window.location.href = result.url
+    } catch (error) {
+      setDriveErr(error.message || 'Drive baglantisi baslatilamadi')
+    } finally {
+      setDriveYukleniyor(false)
+    }
   }
 
   const driveBaglantiyiKes = async () => {
@@ -1829,6 +1844,19 @@ export default function Settings() {
                       placeholder="5"
                     />
                     <p className="text-gray-500 text-xs mt-1">Son ödeme tarihinden bu kadar gün önce müşteriye WhatsApp/e-posta hatırlatması gider. Her dönem için bir kez gönderilir.</p>
+                  </div>
+                  <div>
+                    <label className="text-gray-400 text-sm block mb-1">Beyan Hatırlatması (kaç gün önce)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="30"
+                      value={commSettings.beyan_hatirlatma_gun}
+                      onChange={e => setCommSettings({ ...commSettings, beyan_hatirlatma_gun: e.target.value })}
+                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-xl py-2.5 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500"
+                      placeholder="3"
+                    />
+                    <p className="text-gray-500 text-xs mt-1">Beyanname son gününden bu kadar gün önce henüz verilmemiş beyanlar için müşteriye WhatsApp/e-posta hatırlatması gider. Her beyan için bir kez gönderilir.</p>
                   </div>
                 </div>
               </div>

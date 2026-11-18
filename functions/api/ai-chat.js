@@ -19,6 +19,9 @@ Kurallar:
 - Rakam verirken hangi yila/aya ait oldugunu belirt ve dayanagini (kanun/madde/teblig) kisaca yaz.
 - Hesaplama isteniyorsa adim adim goster ve sonucu net yaz.
 - Emin olmadigin bir rakami uydurma; "guncel teblige gore teyit edilmeli" de.
+- KANUN/MEVZUAT KURALLARI: Bir kuralin detaylarini (ornegin "3 aylik beyan hangi hallerde verilir") tam olarak bilmiyorsan,
+  bildigin kismi soyle ve "bu konuda guncel teblig ve vergi dairesi uygulamasi esas alinmalidir; kesin bilgi icin
+  bagli vergi dairesi ile iletisime gecin" de. Asla genel/varsayimsal bilgiyi kesinmis gibi sunma.
 - Kullaniciya ait MUBIS verileri verilmisse (borc, tahakkuk, son odeme tarihleri), kisisel sorulari
   ("KDV odemem ne kadar", "bu ay ne kadar odeyecegim", "borcum var mi", "odemelerimi say")
   DOGRUDAN bu verilerle yanitla. Rakamlari TL olarak ve son odeme tarihiyle birlikte ver.
@@ -219,10 +222,17 @@ Ornek: Temmuz 2026 KDV beyannamesi 28 Agustos 2026 aksamina kadar verilir.
 Resmi tatil gunlerine denk gelirse sure takip eden ilk is gunune uzar.`
   },
   {
-    anahtar: ['muhtasar', 'stopaj beyan'],
-    cevap: `Muhtasar ve Prim Hizmet Beyannamesi, ait oldugu ayi takip eden ayin 26'sina kadar verilir,
-odemesi de ayni gun yapilir. Uc aylik beyan hakki olan mukellefler icin donem sonunu takip eden
-ayin 26'si son gundur.`
+    anahtar: ['muhtasar', 'stopaj beyan', 'muhtasar ve prim hizmet', 'muhtasar 3 aylik', '3 aylik muhtasar', 'muhtasar ne zaman 3 aylik', 'prim hizmet beyannamesi 3'],
+    cevap: `Muhtasar ve Prim Hizmet Beyannamesi genel olarak AYLIK verilir. 3 aylik (uc aylik) beyan verme hakki su hallerde taninabilir:
+
+1) Calisan sayisi 10 veya daha az olan isverenler (isyeri bazinda). Bu sinir SGK ve vergi daresi tarafindan degerlendirilir.
+2) Vergi dairesi tarafindan uygun gorulen mukellefler (basvuru ile).
+3) Yeni ise baslayan ve belirli bir sure icin calisan sayisi dusuk olan isletmeler.
+
+3 aylik beyan donemleri: Ocak-Mart, Nisan-Haziran, Temmuz-Eylul, Ekim-Aralik.
+Son gun: donem sonunu takip eden ayin 26'si (resmi tatile denk gelirse takip eden is gunu).
+
+NOT: 3 aylik beyan hakki otomatik degildir; mukellef basvurur ve vergi dairesi onaylar. Guncel sartlar icin bagli vergi dairesi ile iletisime gecilmelidir.`
   },
   {
     anahtar: ['sgk bildirge', 'aylik prim', 'apphb', 'sgk son gun'],
@@ -394,6 +404,36 @@ export async function onRequestPost({ request, env }) {
 
     const kisiselBilgi = body.context ? `\n\nKullanicinin MUBIS verileri:\n${body.context}` : ''
 
+    // Mevzuat & AI Asistan baglami (Faz 4)
+    let mevzuatBilgi = ''
+    const mevzuatAnahtarlar = ['mevzuat', 'teblig', 'teblig', 'vergi takvim', 'son gun', 'son gün', 'beyanname son', 'sgk sure', 'sgk süre', 'basvuru', 'başvuru', 'tesvik', 'teşvik', 'resmi gazete', 'gib duyuru', 'yeni duzenleme', 'yeni düzenleme']
+    const soruLower = String(sonSoru).toLowerCase()
+    if (mevzuatAnahtarlar.some(a => soruLower.includes(a))) {
+      try {
+        const admin = supabaseAdmin(env)
+        if (admin) {
+          const { data: kayitlar } = await admin.from('mevzuat_kayitlari').select('baslik,kurum,yayin_tarihi,ozet,tarih_adaylari,kaynak_url,inceleme_durumu').eq('office_id', 1).order('olusturma_ts', { ascending: false }).limit(10)
+          if (kayitlar?.length) {
+            const onaylananlar = kayitlar.filter(k => k.inceleme_durumu === 'onaylandi')
+            const bekleyenler = kayitlar.filter(k => k.inceleme_durumu === 'bekliyor')
+            mevzuatBilgi = '\n\nMEVZUAT & AI ASISTAN BAGLAMI:\n'
+            if (onaylananlar.length) {
+              mevzuatBilgi += 'Onaylanan mevzuat kayitlari:\n' + onaylananlar.map(k => `- ${k.baslik} (${k.kurum}, ${k.yayin_tarihi || 'tarih yok'}): ${(k.ozet || '').substring(0, 300)}\n  Kaynak: ${k.kaynak_url}`).join('\n')
+            }
+            if (bekleyenler.length) {
+              mevzuatBilgi += '\nInceleme bekleyen mevzuat kayitlari:\n' + bekleyenler.map(k => `- ${k.baslik} (${k.kurum}): ${(k.ozet || '').substring(0, 200)}`).join('\n')
+            }
+            // Onayli kurallar
+            const { data: kurallar } = await admin.from('mevzuat_kurallar').select('baslik,tarih,konu,ilgili_kurum,durum').eq('office_id', 1).eq('durum', 'aktif').order('tarih', { ascending: true }).limit(20)
+            if (kurallar?.length) {
+              mevzuatBilgi += '\nOnayli mevzuat kurallari (tarihler):\n' + kurallar.map(k => `- ${k.baslik}: ${k.tarih || 'tarih yok'} (${k.ilgili_kurum || ''}) — ${k.konu || ''}`).join('\n')
+            }
+            mevzuatBilgi += '\n\nNOT: Mevzuat bilgileri resmi kaynaklardan taranmis ve musavirce onaylanmis kayitlara dayanir. Emin olmadigin bir tarihi veya uygunlugu kesinmis gibi sunma; kontrol gerekli olarak belirt.'
+          }
+        }
+      } catch (e) { /* mevzuat baglami alinamadi, devam et */ }
+    }
+
     // Guncel referans + soruyla eslesen bilgi tabani kaydi (RAG)
     const simdi = new Date()
     const referans = referansUret(simdi)
@@ -418,7 +458,7 @@ export async function onRequestPost({ request, env }) {
         temperature: 0.2,
         max_tokens: 1200,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT + dogrulanmis + kisiselBilgi },
+          { role: 'system', content: SYSTEM_PROMPT + dogrulanmis + kisiselBilgi + mevzuatBilgi },
           ...messages.slice(-10).map(m => ({
             role: m.role === 'assistant' ? 'assistant' : 'user',
             content: String(m.content || '').slice(0, 4000)

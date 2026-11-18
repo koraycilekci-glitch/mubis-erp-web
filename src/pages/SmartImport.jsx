@@ -732,7 +732,7 @@ const renderInvoiceHTML = (xmlContent) => {
               className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400"
             >
               <option value="">Musteri Seciniz</option>
-              {clients.map(client => (
+              {clients.slice().sort((a, b) => (a.name || a.company || '').localeCompare(b.name || b.company || '', 'tr')).map(client => (
                 <option key={client.id} value={client.id}>{client.name || client.company}</option>
               ))}
             </select>

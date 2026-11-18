@@ -440,22 +440,29 @@ export async function gonderimKaydet(clientId, belgeNo, kanal) {
   return ts
 }
 
-// Kayitli PDF DVS "liste yazdir" ciktisi mi? (JasperReports sunucu raporu —
-// belgenin kendisi degil). Eski surumlerde boyle dosyalar kaydedilmisti;
-// Görüntüle/Gönder akislari bunu kontrol edip yeniden indirme yapar.
-// 2.7.242: tum dosya taranir, buyuk/kucuk harf duyarsiz (ilk 4 KB yetmezdi).
-// Donus: true = liste ciktisi (bozuk), false = iyi veya kontrol edilemedi.
-export async function listeCiktisiMi(url) {
-  if (!url) return false
+export async function tebligatPdfGetir(url) {
+  if (!url) return { ok: false, reason: 'belge-yok' }
+  const controller = new AbortController()
+  const zamanlayici = setTimeout(() => controller.abort(), 15000)
   try {
-    const r = await fetch(url)
-    if (!r.ok) return false
+    const r = await fetch(url, { signal: controller.signal, cache: 'no-store' })
+    if (!r.ok) return { ok: false, reason: 'belge-erisim-hatasi', status: r.status }
     const buf = new Uint8Array(await r.arrayBuffer())
+    if (buf.length < 500 || String.fromCharCode(...buf.subarray(0, 5)) !== '%PDF-') {
+      return { ok: false, reason: 'gecersiz-pdf' }
+    }
     let metin = ''
     for (let i = 0; i < buf.length; i += 0x8000) metin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000))
     const kucuk = metin.toLowerCase()
-    return kucuk.includes('jasperreports') || kucuk.includes('jaspersoft')
-  } catch { return false }
+    if (kucuk.includes('jasperreports') || kucuk.includes('jaspersoft')) {
+      return { ok: false, reason: 'liste-ciktisi' }
+    }
+    return { ok: true, blob: new Blob([buf], { type: 'application/pdf' }) }
+  } catch {
+    return { ok: false, reason: 'belge-erisim-hatasi' }
+  } finally {
+    clearTimeout(zamanlayici)
+  }
 }
 
 // PDF'i sunucu uzerinden Storage'a yukler ve etebligatlar satirina file_url

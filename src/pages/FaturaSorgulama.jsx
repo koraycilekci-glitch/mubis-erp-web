@@ -9,7 +9,7 @@ import { Receipt, Layers, X, Search, Download, Users, FolderOpen, FileSpreadshee
 import { supabase } from '../lib/supabase'
 import { useClients } from '../hooks/useClients'
 import { efaturaSorgula, dosyalariMubisYukle, edefterDokumleriniYukle, edefterTopluKopyala, faturaKopyalamaDosyalari, sorguYonleri, lucaDurumMetni, faturaIlerlemeMetni } from '../services/efaturaService'
-import { yardimciIsYerel, gibLucaSorguDurdur } from '../utils/gibOdemeHelper'
+import { yardimciIsSunucu, gibLucaSorguDurdur } from '../utils/gibOdemeHelper'
 import FaturaListesiKarti from '../components/FaturaListesiKarti'
 
 // 2.7.442: Fatura bazli aktarim durum tablosu — her adimda gelen
@@ -88,7 +88,12 @@ export default function FaturaSorgulama() {
   const handleTopluDurdur = async () => {
     durdurRef.current = true
     setTopluMesaj('Tüm sorgulamalar durduruluyor — çalışan ve kuyrukta bekleyen işler iptal ediliyor...')
-    try { await gibLucaSorguDurdur('sunucu', true) } catch { /* yoksay */ }
+    try {
+      const iletildi = await gibLucaSorguDurdur('sunucu', true)
+      if (!topluSorguluyor) setTopluMesaj(iletildi ? 'Durdurma isteği yardımcıya iletildi.' : topluMesaj + ' Durdurma isteği iletilemedi; yardımcı bağlantısını kontrol edin.')
+    } catch {
+      if (!topluSorguluyor) setTopluMesaj(topluMesaj + ' Durdurma isteği iletilemedi; yardımcı bağlantısını kontrol edin.')
+    }
   }
   const [topluMesaj, setTopluMesaj] = useState('')
   const [aktarimKayitlari, setAktarimKayitlari] = useState([])
@@ -216,6 +221,7 @@ export default function FaturaSorgulama() {
     const hatalar = []
     const notlar = []
     let durdur = false
+    let durdurNedeni = ''
     try {
       for (const id of topluSecili) {
         if (durdur) break
@@ -237,6 +243,7 @@ export default function FaturaSorgulama() {
             let zipYoluIle = false
             let indirmeKaynak = 'sunucu'
             let dosyaFotografi = null
+            let sorguHatasi = false
             // 1a: tum periyotlar Luca'da SADECE SORGULANIR (GİB'den Getir,
             // indirme YOK; yardimci 'sona erdi' sinyalini bekler — 2.7.462)
             for (const parca of parcalar) {
@@ -268,13 +275,19 @@ export default function FaturaSorgulama() {
                 if (msg.includes('KULLANICI_DURDURDU')) { durdur = true; break }
                 if (msg.includes('mevcut-sorgu-devam-ediyor')) { hatalar.push(`${ad}: Luca'da önceki sorgu hâlâ çalışıyor; kalan işlemler durduruldu.`); durdur = true; break }
                 hatalar.push(`${ad}/${turAd}${yonEtiket}${parcaEtiket}: ${msg}`)
-                // Kritik sebep: kalan müşterilerde de aynı olacağından durdur
-                if (msg.includes('kurulu') || msg.includes('giris bilgisi yok') || msg.includes('Giris bilgisi yok')) {
+                sorguHatasi = true
+                if (/islem takibi suresinde tamamlanmadi/i.test(msg)) {
+                  durdurNedeni = 'Luca işlemi devam ediyor olabilir; kalan sorgular güvenlik için durduruldu.'
                   durdur = true
                 }
+                if (/islem takibi suresinde tamamlanmadi/i.test(msg) || msg.includes('kurulu') || msg.includes('giris bilgisi yok') || msg.includes('Giris bilgisi yok')) {
+                  durdur = true
+                }
+                break
               }
             }
             if (durdur || durdurRef.current) { durdur = true; break }
+            if (sorguHatasi) continue
             // 1b: tum sorgular bitti — ayin TUM faturalari tek geciste indirilir
             adim++
             const onEkD = `(${adim}/${toplamAdim}) ${ad} - ${turAd}${yonEtiket}: `
@@ -308,7 +321,10 @@ export default function FaturaSorgulama() {
               if (msg.includes('KULLANICI_DURDURDU')) { durdur = true; break }
                 if (msg.includes('mevcut-sorgu-devam-ediyor')) { hatalar.push(`${ad}: Luca'da önceki sorgu hâlâ çalışıyor; kalan işlemler durduruldu.`); durdur = true; break }
               hatalar.push(`${ad}/${turAd}${yonEtiket} indirme: ${msg}`)
-              if (msg.includes('kurulu') || msg.includes('giris bilgisi yok') || msg.includes('Giris bilgisi yok')) {
+              if (/islem takibi suresinde tamamlanmadi/i.test(msg)) {
+                durdurNedeni = 'Luca işlemi devam ediyor olabilir; kalan sorgular güvenlik için durduruldu.'
+              }
+              if (/islem takibi suresinde tamamlanmadi/i.test(msg) || msg.includes('kurulu') || msg.includes('giris bilgisi yok') || msg.includes('Giris bilgisi yok')) {
                 durdur = true
               }
             }
@@ -358,14 +374,14 @@ export default function FaturaSorgulama() {
         }
       }
       // 2.7.84: toplu sorgu bitti — acik Luca oturumunu kapat (best-effort)
-      if (turlar.length) {
-        try { await yardimciIsYerel('luca-oturumu-kapat', {}) } catch { /* yoksay */ }
+      if (turlar.length && !durdurNedeni && !durdur && !durdurRef.current) {
+        try { await yardimciIsSunucu('luca-oturumu-kapat', {}, 10 * 60 * 1000, undefined, { yerelYedek: false }) } catch { /* yoksay */ }
       }
       const ozet = []
       if (toplam > 0) ozet.push(`Toplam ${toplam} belge indirildi ve MUBİS'e yüklendi.`)
       if (boslar.length) ozet.push('Yeni dosya/kayıt bulunamadı: ' + boslar.join(', ') + ' (dosya alınmamış veya faturalar zaten kayıtlı olabilir).')
       if (durdurRef.current) ozet.push('Sorgulama kullanıcı tarafından durduruldu — kalan müşteri/türler atlandı.')
-      else if (durdur) ozet.push('Kritik hata nedeniyle kalan müşteriler atlandı.')
+      else if (durdur) ozet.push(durdurNedeni || 'Kritik hata nedeniyle kalan müşteriler atlandı.')
       if (notlar.length) ozet.push(notlar.join(' '))
 if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
       const sonucBasligi = toplam > 0
@@ -441,7 +457,7 @@ if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
                 if (msg.includes('KULLANICI_DURDURDU')) { durdur = true; break }
                 if (msg.includes('mevcut-sorgu-devam-ediyor')) { hatalar.push(`${ad}: Luca'da önceki sorgu hâlâ çalışıyor; kalan işlemler durduruldu.`); durdur = true; break }
                 hatalar.push(`${ad}/${turAd}${yonEtiket}${parcaEtiket}: ${msg}`)
-                if (msg.includes('kurulu') || msg.includes('giris bilgisi yok') || msg.includes('Giris bilgisi yok')) durdur = true
+                if (/islem takibi suresinde tamamlanmadi/i.test(msg) || msg.includes('kurulu') || msg.includes('giris bilgisi yok') || msg.includes('Giris bilgisi yok')) durdur = true
               }
             }
           }
@@ -562,14 +578,14 @@ if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
               if (msg.includes('KULLANICI_DURDURDU')) { durdur = true; break }
                 if (msg.includes('mevcut-sorgu-devam-ediyor')) { hatalar.push(`${ad}: Luca'da önceki sorgu hâlâ çalışıyor; kalan işlemler durduruldu.`); durdur = true; break }
               hatalar.push(`${ad}/${turAd}${yonEtiket}: ${msg}`)
-              if (msg.includes('kurulu') || msg.includes('giris bilgisi yok') || msg.includes('Giris bilgisi yok')) durdur = true
+              if (/islem takibi suresinde tamamlanmadi/i.test(msg) || msg.includes('kurulu') || msg.includes('giris bilgisi yok') || msg.includes('Giris bilgisi yok')) durdur = true
             }
           }
           if (durdur || durdurRef.current) { durdur = true; break }
         }
       }
-      if (turlar.length) {
-        try { await yardimciIsYerel('luca-oturumu-kapat', {}) } catch { /* yoksay */ }
+      if (turlar.length && !durdur && !durdurRef.current) {
+        try { await yardimciIsSunucu('luca-oturumu-kapat', {}, 10 * 60 * 1000, undefined, { yerelYedek: false }) } catch { /* yoksay */ }
       }
       const ozet = []
       if (toplam > 0) ozet.push(`Toplam ${toplam} belge indirildi ve MUBİS'e yüklendi.`)
@@ -1317,7 +1333,7 @@ if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
               <span className="block text-[10px] opacity-70">Sadece sorgu</span>
             </button>
             {/* 2.7.574: sorgulama sürerken Durdur */}
-            {topluSorguluyor && (
+            {(topluSorguluyor || topluMesaj.includes('islem takibi suresinde tamamlanmadi')) && (
               <button
                 onClick={handleTopluDurdur}
                 className="px-4 py-2 rounded-xl bg-red-600/80 border border-red-500/50 text-white text-sm font-semibold hover:bg-red-600 flex items-center gap-2"

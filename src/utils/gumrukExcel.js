@@ -105,7 +105,7 @@ function afaGridiIsle(satirlar, baslikZorunlu = false) {
     const h = (s || []).map(norm)
     const idx = (desen) => h.findIndex(x => desen.test(x))
     const tarih = idx(/^tar[iı]h|fi[şs]|fatura tar[iı]h/)
-    const fno = idx(/fatura no|belge no/)
+    const fno = idx(/fatura no|belge no|fi[şs] no/)
     const unvan = idx(/[üu]nvan|kar[şs][ıi] tar[au]f/)
     if (tarih >= 0 && fno >= 0 && unvan >= 0) {
       kol = {
@@ -113,7 +113,10 @@ function afaGridiIsle(satirlar, baslikZorunlu = false) {
         oran: idx(/kdv oran/),
         matrah: idx(/matrah/),
         kdv: idx(/kdv tutar/),
-        toplam: idx(/toplam/)
+        toplam: idx(/^toplam$|genel toplam|toplam tutar/),
+        nakit: idx(/^nak[iı]t(?: tutar[ıi]?)?$/),
+        kredi: idx(/^kred[iı] k|kred[iı]l[iı] tutar/),
+        odeme: idx(/[oö]deme (?:t[üu]r|y[oö]ntem)/)
       }
       break
     }
@@ -142,7 +145,13 @@ function afaGridiIsle(satirlar, baslikZorunlu = false) {
     if (m != null) m = +m.toFixed(2)
     if (k != null) k = +k.toFixed(2)
     if (t != null) t = +t.toFixed(2)
-    sonuc.push({ tarih, faturaNo, unvan, kdvOran: afaSayisal(s[kol.oran]), matrah: m, kdv: k, toplam: t })
+    const kdvOran = afaSayisal(String(s[kol.oran] ?? '').replace('%', '').trim())
+    const odeme = norm(s[kol.odeme])
+    let nakit = afaSayisal(s[kol.nakit]), kredi = afaSayisal(s[kol.kredi])
+    if (nakit == null && /^nak[iı]t$/.test(odeme)) { nakit = t; kredi = 0 }
+    if (kredi == null && /^kred[iı][ _-]*kart[ıi]$/.test(odeme)) { kredi = t; nakit = 0 }
+    sonuc.push({ tarih, faturaNo, unvan, kdvOran, matrah: m, kdv: k, toplam: t,
+      nakit, kredi, kdvDetaylari: kdvOran != null ? [{ oran: kdvOran, matrah: m, kdv: k }] : [] })
   }
   return sonuc
 }
@@ -240,7 +249,6 @@ export async function zRaporuSatirlariniOku(arrayBuffer, dosyaAdi = '') {
     satirlar = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
   }
   const norm = (s) => String(s ?? '').toLocaleLowerCase('tr').replace(/\s+/g, ' ').trim()
-  const sum = (arr) => arr.reduce((a, v) => a + (afaSayisal(v) || 0), 0)
 
   // Baslik kolonlarini esle
   let kol = null
@@ -253,9 +261,14 @@ export async function zRaporuSatirlariniOku(arrayBuffer, dosyaAdi = '') {
       kol = {
         tarih, evrak,
         aciklama: idx(/a[cç][ıi]klama/),
-        satis: [0, 1, 10, 20].map(oran => idx(new RegExp(`^sat[ıi][şs] ${oran}$`))).filter(indeks => indeks >= 0),
-        matrah: [1, 10, 20].map(oran => idx(new RegExp(`^matrah ${oran}$`))).filter(indeks => indeks >= 0),
-        kdv: [1, 10, 20].map(oran => idx(new RegExp(`^kdv ${oran}$`))).filter(indeks => indeks >= 0)
+        oranlar: [0, 1, 5, 8, 10, 18, 20].map(oran => ({
+          oran,
+          satis: idx(new RegExp(`^sat[ıi][şs]\\s*%?\\s*${oran}$`)),
+          matrah: idx(new RegExp(`^matrah\\s*%?\\s*${oran}$`)),
+          kdv: idx(new RegExp(`^kdv\\s*%?\\s*${oran}$`))
+        })),
+        nakit: idx(/^nak[iı]t(?: tutar[ıi]?)?$/),
+        kredi: idx(/^kred[iı] k/)
       }
       break
     }
@@ -268,16 +281,32 @@ export async function zRaporuSatirlariniOku(arrayBuffer, dosyaAdi = '') {
     const tarih = afaTarihDuzelt(s[kol.tarih])
     const evrakNo = String(s[kol.evrak] ?? '').trim()
     if (!tarih || !evrakNo) continue // baslik/bos satir
-    const matrah = +sum(kol.matrah.map(i => s[i])).toFixed(2)
-    const kdv = +sum(kol.kdv.map(i => s[i])).toFixed(2)
-    const satis = +sum(kol.satis.map(i => s[i])).toFixed(2)
-    const toplam = satis > 0 ? satis : +(matrah + kdv).toFixed(2)
+    const yuvarla = deger => Math.round(deger * 100) / 100
+    const kdvDetaylari = kol.oranlar.flatMap(alan => {
+      const toplam = afaSayisal(s[alan.satis])
+      let matrah = afaSayisal(s[alan.matrah]), kdv = afaSayisal(s[alan.kdv])
+      if (!toplam && !matrah && !kdv) return []
+      if (alan.oran === 0) { matrah = matrah ?? toplam; kdv = 0 }
+      if (matrah == null || (matrah === 0 && toplam > 0)) matrah = toplam != null ? yuvarla(toplam / (1 + alan.oran / 100)) : yuvarla(kdv * 100 / alan.oran)
+      if (kdv == null) kdv = toplam != null ? yuvarla(toplam - matrah) : yuvarla(matrah * alan.oran / 100)
+      return [{ oran: alan.oran, matrah, kdv }]
+    })
+    const matrah = yuvarla(kdvDetaylari.reduce((sum, detay) => sum + detay.matrah, 0))
+    const kdv = yuvarla(kdvDetaylari.reduce((sum, detay) => sum + detay.kdv, 0))
+    const satis = yuvarla(kol.oranlar.reduce((sum, alan) => sum + (afaSayisal(s[alan.satis]) || 0), 0))
+    const toplam = satis !== 0 ? satis : yuvarla(matrah + kdv)
     if (matrah === 0 && kdv === 0 && toplam === 0) continue
+    let nakit = afaSayisal(s[kol.nakit]), kredi = afaSayisal(s[kol.kredi])
+    if (kol.nakit >= 0 && kol.kredi >= 0 && toplam >= 0) {
+      if (nakit == null && kredi != null && kredi >= 0 && kredi <= toplam) nakit = yuvarla(toplam - kredi)
+      else if (kredi == null && nakit != null && nakit >= 0 && nakit <= toplam) kredi = yuvarla(toplam - nakit)
+    }
     sonuc.push({
       tarih,
       evrakNo,
       aciklama: kol.aciklama >= 0 ? String(s[kol.aciklama] ?? '').trim() : 'Z RAPORU',
-      satis, matrah, kdv, toplam
+      satis, matrah, kdv, toplam, kdvDetaylari,
+      nakit, kredi
     })
   }
   return sonuc

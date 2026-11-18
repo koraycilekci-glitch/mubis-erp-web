@@ -1,12 +1,35 @@
+import { useMemo, useRef, useState } from 'react'
 import { Download, X, Printer } from 'lucide-react'
 import { formatDateTR } from '../utils/dateUtils'
+import { fisKaydiMi } from '../utils/fisDetay'
+import { fisRaporHtml, fisRaporPdf } from '../utils/fisRapor'
 
 // UTTS (ve diger verisiz) kayitlar icin termal-fis gorunumlu modal.
 // Kayit alanlarindan fis uretir: tarih, fatura no, VKN/TCKN, matrah, KDV, toplam.
 const tl = (v) => v != null ? Number(v).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) : '-'
 
 export default function FisModal({ f, onClose }) {
+  const frameRef = useRef(null)
+  const [hata, setHata] = useState('')
+  const [indiriliyor, setIndiriliyor] = useState(false)
+  const fisHtml = useMemo(() => f && fisKaydiMi(f) ? fisRaporHtml(f) : '', [f])
   if (!f) return null
+  if (fisHtml) return (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-label={f.fatura_turu || f.tur} className="w-full max-w-md h-[92vh] bg-white rounded-lg shadow-2xl flex flex-col overflow-hidden" onClick={event => event.stopPropagation()}>
+        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-slate-100 border-b border-slate-300 text-slate-900">
+          <strong className="text-sm">{f.fatura_no || f.fisNo || 'Kayıt Dökümü'}</strong>
+          <div className="flex gap-2">
+            <button disabled={indiriliyor} onClick={async () => { setHata(''); setIndiriliyor(true); try { await fisRaporPdf(f) } catch { setHata('PDF oluşturulamadı. Yazdır düğmesiyle PDF olarak kaydedebilirsiniz.') } finally { setIndiriliyor(false) } }} title="PDF İndir" className="p-2 rounded hover:bg-slate-200 disabled:opacity-40"><Download className="w-4 h-4" /></button>
+            <button onClick={() => frameRef.current?.contentWindow?.print()} title="Yazdır" className="p-2 rounded hover:bg-slate-200"><Printer className="w-4 h-4" /></button>
+            <button onClick={onClose} title="Kapat" className="p-2 rounded hover:bg-slate-200"><X className="w-4 h-4" /></button>
+          </div>
+        </div>
+        {hata && <p role="alert" className="p-3 text-sm text-red-700">{hata}</p>}
+        <iframe ref={frameRef} title={f.fatura_turu || f.tur} srcDoc={fisHtml} sandbox="allow-same-origin allow-modals" className="flex-1 w-full border-0 bg-white" />
+      </div>
+    </div>
+  )
   return (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
       <div className="max-h-[92vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>

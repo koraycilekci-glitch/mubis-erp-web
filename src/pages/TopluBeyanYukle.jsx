@@ -247,7 +247,7 @@ export default function TopluBeyanYukle() {
                           className="bg-blue-900/40 border border-blue-700/50 rounded-lg px-2 py-1.5 text-white text-xs min-w-[160px]"
                         >
                           <option value="">Müşteri seçin</option>
-                          {clients.map(c => (
+                          {clients.slice().sort((a,b) => (a.name||a.company||"").localeCompare(b.name||b.company||"","tr")).map(c => (
                             <option key={c.id} value={c.id}>
                               {c.name || c.company} {c.vkn ? `(${c.vkn})` : ''}
                             </option>

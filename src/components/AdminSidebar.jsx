@@ -92,6 +92,29 @@ export const MENU = [
     ]
   },
   { to: '/admin/tax-calendar', icon: CalendarDays, label: 'Vergi Takvimi' },
+  { to: '/admin/kdv-muavin-kontrol', icon: FileText, label: 'KDV Muavin Kontrol' },
+  {
+    id: 'kontrol-raporlama', icon: BarChart3, label: 'Kontrol & Raporlama',
+    children: [
+      { to: '/admin/defter-beyan-uyumu', icon: FileText, label: 'Defter-Beyan Uyumu' },
+      { to: '/admin/vergi-deneme-bilancosu', icon: FileText, label: 'Vergi Deneme Bilançosu' },
+      { to: '/admin/beyanname-tahakkuk-eslestirme', icon: FileText, label: 'Beyanname-Tahakkuk Eşleştirme' },
+      { to: '/admin/gider-fisi-siniflandirma', icon: FileText, label: 'Gider Fişi Sınıflandırma' },
+      { to: '/admin/isletme-giderleri', icon: FileText, label: 'İşletme Giderleri' },
+      { to: '/admin/stopaj-kanitlari', icon: FileText, label: 'Stopaj/Tevkifat Kanıtları' },
+      { to: '/admin/finansman-gider-kisitlamasi', icon: FileText, label: 'Finansman Gider Kısıtlaması' },
+      { to: '/admin/toplu-belge-islemleri', icon: FileText, label: 'Toplu Belge İşlemleri' },
+      { to: '/admin/belge-arsiv-karsilastirma', icon: FileText, label: 'Belge Arşiv Karşılaştırma' },
+      { to: '/admin/esmm-gecmisi', icon: FileText, label: 'E-SMM Geçmişi' },
+      { to: '/admin/raporlama-export', icon: FileText, label: 'Raporlama / Export' }
+    ]
+  },
+  {
+    id: 'mevzuat-asistan', icon: Brain, label: 'Mevzuat & AI Asistan',
+    children: [
+      { to: '/admin/mevzuat-kaynaklari', icon: FileText, label: 'Resmî Mevzuat Kaynakları' }
+    ]
+  },
   { to: '/admin/hesaplamalar', icon: Calculator, label: 'Hesaplamalar' },
   {
     id: 'yonetim', icon: Settings, label: 'Yönetim',
@@ -151,11 +174,13 @@ export default function AdminSidebar() {
     let canli = true
     const yukle = async () => {
       try {
-        const { data: profs } = await supabase
+        const etkinOfisId = user?.officeId || profile?.office_id || office?.id
+        let q = supabase
           .from('profiles')
           .select('id, name, email, role, office_id, mukellef, created_at')
           .in('role', ['admin', 'super_admin', 'personel'])
-        const etkinOfisId = user?.officeId || profile?.office_id || office?.id
+        if (etkinOfisId) q = q.eq('office_id', etkinOfisId)
+        const { data: profs } = await q
         const ofisProfilleri = (profs || []).filter(p => p.office_id === etkinOfisId || p.id === office?.owner_id)
         const siraliAdminler = ofisProfilleri
           .filter(p => p.role === 'admin' || p.role === 'super_admin')
@@ -324,7 +349,7 @@ export default function AdminSidebar() {
             <img
               src={office?.logo_url || '/logo-text.png'}
               alt={office?.name || 'MUBiS ERP'}
-              className={`mx-auto object-contain drop-shadow-[0_6px_16px_rgba(0,0,0,0.4)] ${hoverAcik ? 'w-full max-w-[210px]' : 'w-full max-w-[210px] lg:max-w-[40px]'}`}
+              className={`mx-auto w-full object-contain drop-shadow-[0_6px_16px_rgba(0,0,0,0.4)] ${hoverAcik ? 'max-w-[210px]' : 'max-w-[40px]'}`}
             />
           </Link>
           <button
@@ -345,15 +370,15 @@ export default function AdminSidebar() {
                   <button
                     onClick={() => setAcikGrup(grupAcik ? null : item.id)}
                     title={item.label}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all border ${
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all border ${hoverAcik ? '' : 'lg:justify-center lg:px-2'} ${
                       grupAktif
                         ? 'bg-blue-600/25 border-blue-400/40 text-white'
                         : 'bg-indigo-500/15 border-indigo-400/25 text-indigo-100 hover:bg-indigo-500/25 hover:text-white'
-                    } ${hoverAcik ? '' : 'lg:justify-center lg:px-2'}`}
+                    }`}
                   >
                     <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
                     <span className={`flex-1 text-left whitespace-nowrap ${hoverAcik ? '' : 'lg:hidden'} ${item.id?.startsWith('beyannamelerim') ? 'text-yellow-400' : ''}`}>{item.label}</span>
-                    {grupAcik
+                    {grupAcik && hoverAcik
                       ? <ChevronDown className={`w-4 h-4 text-gray-400 ${hoverAcik ? '' : 'lg:hidden'}`} />
                       : <ChevronRight className={`w-4 h-4 text-gray-500 ${hoverAcik ? '' : 'lg:hidden'}`} />}
                   </button>
@@ -387,10 +412,7 @@ export default function AdminSidebar() {
                   href={item.href}
                   download={item.download}
                   title={item.label}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all bg-green-600/20 text-green-300 hover:bg-green-600/30 hover:text-green-200 ${
-                    hoverAcik ? '' : 'lg:justify-center lg:px-2'
-                  }`}
-                >
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all bg-green-600/20 text-green-300 hover:bg-green-600/30 hover:text-green-200 ${hoverAcik ? '' : 'lg:justify-center lg:px-2'}`}                >
                   <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
                   <span className={`flex-1 whitespace-nowrap ${hoverAcik ? '' : 'lg:hidden'}`}>{item.label}</span>
                 </a>
@@ -402,11 +424,11 @@ export default function AdminSidebar() {
                 key={item.to}
                 to={item.to}
                 title={item.label}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${hoverAcik ? '' : 'lg:justify-center lg:px-2'} ${
                   aktifMi(item.to)
                     ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40'
                     : 'text-blue-200/80 hover:bg-blue-800/40 hover:text-white'
-                } ${hoverAcik ? '' : 'lg:justify-center lg:px-2'}`}
+                }`}
               >
                 <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
                 <span className={`flex-1 whitespace-nowrap ${hoverAcik ? '' : 'lg:hidden'}`}>{item.label}</span>

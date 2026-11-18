@@ -1,0 +1,20 @@
+{
+  "name": "mubis-asistan",
+  "version": "1.0.0",
+  "description": "MUBiS Masaustu Asistani (Kopek/Kedi/Kalem)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.mubis.asistan",
+    "productName": "MUBiS Asistan",
+    "files": ["main.js", "preload.js", "renderer/**", "assets/**"],
+    "win": { "target": ["portable"] }
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  }
+}

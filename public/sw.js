@@ -2,7 +2,7 @@
 // v3: respondWith her zaman geçerli bir Response döndürmeli. Aksi halde
 // tarayıcı "Failed to convert value to 'Response'" hatası verir ve sayfa
 // (özellikle /admin/ayarlar gibi derin bağlantılar) açılmaz.
-const CACHE_NAME = 'mubis-erp-v5'
+const CACHE_NAME = 'mubis-erp-v6'
 const PRECACHE = [
   '/manifest.json',
   '/icon-192.png',
@@ -23,20 +23,33 @@ const cevrimdisi = (mesaj = 'Cevrimdisisiniz. Internet baglantisini kontrol edin
   )
 
 self.addEventListener('install', (event) => {
+  // Eski SW'lerin cache'ledigi bayat dosyalari temizle ve kendini kaldir.
+  // Yeni surum yuklendiginde eski cache'ler silinir, SW kendini unregister eder.
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE).catch(() => {}))
+    caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
   )
   self.skipWaiting()
 })
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    )
+    (async () => {
+      // Tum cache'leri temizle
+      const keys = await caches.keys()
+      await Promise.all(keys.map((k) => caches.delete(k)))
+      // Kendini unregister et — artik SW kullanilmiyor
+      await self.registration.unregister()
+      // Tum client'lari yeniden yukle
+      const clients = await self.clients.matchAll({ type: 'window' })
+      for (const client of clients) {
+        try { client.navigate(client.url) } catch { /* yoksay */ }
+      }
+    })()
   )
-  self.clients.claim()
 })
+
+// Eski activate listener kaldirildi — yukaridaki self-unregister mekanizmasi
+// tum cache'leri temizler ve SW'yi kaldirir.
 
 self.addEventListener('fetch', (event) => {
   const req = event.request

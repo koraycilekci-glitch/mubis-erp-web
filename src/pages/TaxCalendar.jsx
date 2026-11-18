@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useClients } from '../hooks/useClients'
 import { supabase } from '../lib/supabase'
+import { mevzuatTakvimTarihleriGetir } from '../services/mevzuatService'
 import { 
   Search, CheckCircle, Clock, AlertTriangle, ChevronLeft, ChevronRight
 } from 'lucide-react'
@@ -100,6 +101,11 @@ export default function TaxCalendar() {
   const [selectedBeyan, setSelectedBeyan] = useState('kdv')
   const [searchTerm, setSearchTerm] = useState('')
   const [statusUpdating, setStatusUpdating] = useState(false)
+  const [mevzuatTarihler, setMevzuatTarihler] = useState([])
+
+  useEffect(() => {
+    mevzuatTakvimTarihleriGetir().then(t => setMevzuatTarihler(t || [])).catch(() => {})
+  }, [])
 
   // Durumlar dogrudan veritabanindaki beyan_durumlari'ndan okunur
   // (AylikBeyanTakip ile ayni kaynak — localStorage kullanilmaz)
@@ -285,6 +291,59 @@ export default function TaxCalendar() {
               ))}
               {(stats.pending + stats.overdue) === 0 && <span className="text-gray-500">Hepsi tamamlandi! 🎉</span>}
             </div>
+          </div>
+        </div>
+      )}
+      {/* Mevzuat & AI Asistan — Kaynakli Tarihler (Faz 3) */}
+      {mevzuatTarihler.length > 0 && (
+        <div className="bg-blue-950/40 backdrop-blur-sm rounded-2xl p-6 border border-blue-800/30 mt-6">
+          <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
+            <span>📜</span> Mevzuat Kaynaklı Tarihler — {months[selectedMonth]} {selectedYear}
+          </h2>
+          <p className="text-sm text-blue-100/60 mb-4">Onaylanmış mevzuat kurallarından gelen tarihler. Mevcut takvim tarihleriyle çelişiyorsa her iki tarih de gösterilir.</p>
+          <div className="grid grid-cols-7 gap-1 mb-4">
+            {['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'].map(g => (
+              <div key={g} className="text-center text-xs text-blue-300/60 font-medium py-1">{g}</div>
+            ))}
+            {Array.from({ length: new Date(selectedYear, selectedMonth, 1).getDay() === 0 ? 6 : new Date(selectedYear, selectedMonth, 1).getDay() - 1 }, (_, i) => (
+              <div key={`bos-${i}`} className="h-8" />
+            ))}
+            {Array.from({ length: new Date(selectedYear, selectedMonth + 1, 0).getDate() }, (_, i) => i + 1).map(g => {
+              const tarihStr = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(g).padStart(2, '0')}`
+              const mevzuatGunleri = mevzuatTarihler.filter(t => t.tarih === tarihStr || t.tarih?.startsWith(tarihStr))
+              const mevcutDeadline = beyanDeadline(selectedBeyan, selectedMonth, selectedYear, null)
+              const mevcutGun = mevcutDeadline ? mevcutDeadline.getDate() : null
+              const celiski = mevzuatGunleri.length > 0 && mevcutGun === g
+              return (
+                <div key={g} className={`h-8 flex items-center justify-center rounded text-xs font-medium relative ${mevzuatGunleri.length > 0 ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-400/40' : mevcutGun === g ? 'bg-blue-500/20 text-blue-300' : 'text-gray-400'}`}>
+                  {g}
+                  {celiski && <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full" title="Çelişki" />}
+                </div>
+              )
+            })}
+          </div>
+          <div className="space-y-2">
+            {mevzuatTarihler
+              .filter(t => {
+                const d = new Date(t.tarih)
+                return d.getMonth() === selectedMonth && d.getFullYear() === selectedYear
+              })
+              .map(t => (
+                <div key={t.id} className="flex items-center justify-between gap-4 border-b border-blue-400/10 pb-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-white">{t.baslik}</p>
+                    <p className="text-xs text-blue-100/60">{t.konu || ''} · {t.ilgiliKurum || ''}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-bold text-amber-300">{new Date(t.tarih).toLocaleDateString('tr-TR')}</p>
+                    {t.sonBasvuruTarihi && <p className="text-xs text-red-300">Son başvuru: {new Date(t.sonBasvuruTarihi).toLocaleDateString('tr-TR')}</p>}
+                    {t.dayanakUrl && <a href={t.dayanakUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-300 hover:underline">Dayanak</a>}
+                  </div>
+                </div>
+              ))}
+            {mevzuatTarihler.filter(t => { const d = new Date(t.tarih); return d.getMonth() === selectedMonth && d.getFullYear() === selectedYear }).length === 0 && (
+              <p className="text-blue-100/60 text-sm">Bu dönem için mevzuat kaynaklı tarih yok.</p>
+            )}
           </div>
         </div>
       )}

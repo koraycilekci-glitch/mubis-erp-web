@@ -28,8 +28,8 @@ function saveLocalReadId(userId, notificationId) {
 
 async function adminOfficeContext() {
   try {
-    const { data: userData } = await supabase.auth.getUser()
-    const userId = userData?.user?.id
+    const { data: { session } } = await supabase.auth.getSession()
+    const userId = session?.user?.id
     if (!userId) return null
     const { data: profile } = await supabase.from('profiles').select('office_id, role').eq('id', userId).maybeSingle()
     return profile || null
@@ -52,7 +52,7 @@ async function userReadIds(notifications) {
   if (!alertIds.length) return new Set()
 
   let userId = null
-  try { userId = (await supabase.auth.getUser()).data?.user?.id || null } catch { /* session unavailable */ }
+  try { userId = (await supabase.auth.getSession()).data?.session?.user?.id || null } catch { /* session unavailable */ }
   const readIds = localReadIds(userId)
   if (!userId) return readIds
 
@@ -99,6 +99,10 @@ export async function getNotifications({ limit = 50, unreadOnly = false, audienc
 
   let notifications = data
   if (error) {
+    // Sadece sutun/semantik hatalarda tekrar dene; baglanti havuzu hatasi
+    // (PGRST003) gibi durumlarda ayni sorguyu tekrarlamak havuzu daha da
+    // tukenir — hatayi dogrudan firlat.
+    if (error.code === 'PGRST003' || error.code === '57014') throw error
     const fallback = await supabase
       .from('notifications')
       .select('*')

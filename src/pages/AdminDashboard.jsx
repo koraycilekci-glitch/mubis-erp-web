@@ -13,10 +13,11 @@ import {
   Calculator, MessageSquareText, Inbox
 } from 'lucide-react'
 import { getMonthName, getFormattedBeyanDeadline, getBeyanDeadline, getFormattedSgkOdemeGunu, getSgkOdemeGunu, formatDateTR } from '../utils/dateUtils'
-import { gibYardimciIs } from '../utils/gibOdemeHelper'
+import { yardimciIsYerel } from '../utils/gibOdemeHelper'
 import { getNotifications, markNotificationRead, subscribeToNotifications } from '../services/notificationService'
 import { supabase } from '../lib/supabase'
 import HavaSaatKarti from '../components/HavaSaatKarti'
+import KurAltinBandi from '../components/KurAltinBandi'
 import NamazVakitleri from '../components/NamazVakitleri'
 import RadioUstBant from '../components/RadioUstBant'
 import YouTubeMuzik from '../components/YouTubeMuzik'
@@ -407,46 +408,27 @@ function EtebligatUyari() {
 // ── Ana Dashboard Bileşeni ──
 export default function AdminDashboard() {
   const { user, logout } = useAuth()
-  const { clients } = useClients()
+  const { clients, loading: clientsLoading, error: clientsError, refresh: refreshClients } = useClients()
   const navigate = useNavigate()
   // 2.7.542: ana ekran asistani cinsiyeti (Ayarlar > Ana Ekran Asistani'ndan)
   const [adminCinsiyet, setAdminCinsiyet] = useState(() => localStorage.getItem('admin_cinsiyet_v1') || 'erkek')
-  useEffect(() => {
-    const yenile = () => setAdminCinsiyet(localStorage.getItem('admin_cinsiyet_v1') || 'erkek')
-    window.addEventListener('storage', yenile)
-    const iv = setInterval(yenile, 1500)
-    return () => { window.removeEventListener('storage', yenile); clearInterval(iv) }
-  }, [])
-  // 2.7.543: namaz vakitleri gostergesi — Ayarlar > Ana Ekran Asistani'ndan acilir (varsayilan kapali)
   const [namazGoster, setNamazGoster] = useState(() => localStorage.getItem('admin_namaz_v1') === '1')
-  useEffect(() => {
-    const yenile = () => setNamazGoster(localStorage.getItem('admin_namaz_v1') === '1')
-    window.addEventListener('storage', yenile)
-    const iv = setInterval(yenile, 1500)
-    return () => { window.removeEventListener('storage', yenile); clearInterval(iv) }
-  }, [])
-  // 2.7.546: web radyo rozeti — Ayarlar > Ana Ekran Asistani'ndan acilir (varsayilan kapali)
   const [radyoGoster, setRadyoGoster] = useState(() => localStorage.getItem('admin_radio_v1') === '1')
-  useEffect(() => {
-    const yenile = () => setRadyoGoster(localStorage.getItem('admin_radio_v1') === '1')
-    window.addEventListener('storage', yenile)
-    const iv = setInterval(yenile, 1500)
-    return () => { window.removeEventListener('storage', yenile); clearInterval(iv) }
-  }, [])
-  // 2.7.546: YouTube Müzik rozeti — Ayarlar > Ana Ekran Asistani'ndan acilir (varsayilan kapali)
+  const [kurlarGoster, setKurlarGoster] = useState(() => localStorage.getItem('admin_kurlar_v1') !== '0')
   const [ytMuzikGoster, setYtMuzikGoster] = useState(() => localStorage.getItem('admin_ytmusic_v1') === '1')
-  useEffect(() => {
-    const yenile = () => setYtMuzikGoster(localStorage.getItem('admin_ytmusic_v1') === '1')
-    window.addEventListener('storage', yenile)
-    const iv = setInterval(yenile, 1500)
-    return () => { window.removeEventListener('storage', yenile); clearInterval(iv) }
-  }, [])
-  // 2.7.546: Spotify rozeti — Ayarlar > Ana Ekran Asistani'ndan acilir (varsayilan kapali)
   const [spotifyGoster, setSpotifyGoster] = useState(() => localStorage.getItem('admin_spotify_v1') === '1')
+  // Tek bir interval ile tum ayar okumalarini birlestir (5 yerine 1 timer)
   useEffect(() => {
-    const yenile = () => setSpotifyGoster(localStorage.getItem('admin_spotify_v1') === '1')
+    const yenile = () => {
+      setAdminCinsiyet(localStorage.getItem('admin_cinsiyet_v1') || 'erkek')
+      setNamazGoster(localStorage.getItem('admin_namaz_v1') === '1')
+      setRadyoGoster(localStorage.getItem('admin_radio_v1') === '1')
+      setKurlarGoster(localStorage.getItem('admin_kurlar_v1') !== '0')
+      setYtMuzikGoster(localStorage.getItem('admin_ytmusic_v1') === '1')
+      setSpotifyGoster(localStorage.getItem('admin_spotify_v1') === '1')
+    }
     window.addEventListener('storage', yenile)
-    const iv = setInterval(yenile, 1500)
+    const iv = setInterval(yenile, 5000)
     return () => { window.removeEventListener('storage', yenile); clearInterval(iv) }
   }, [])
   // 2.7.543: saat + tarih + hava durumu ortak HavaSaatKarti komponentinde
@@ -632,19 +614,25 @@ export default function AdminDashboard() {
   }, [clients])
 
   const totalTasks = dashboardData.bekleyenBeyanlar + dashboardData.maliMuhurUyari
+  const veriBekleniyor = !clients.length && (clientsLoading || !!clientsError)
+  const ozetDeger = (deger) => veriBekleniyor ? '—' : deger
 
   // Yardimci program admin bayragi (yesil ADMIN AKTIF / kirmizi KAPALI):
-  // yardimci programin /admin-durum isinden okunur; yardimci kapaliysa null.
+  // Bu ayar YEREL registry'de tutulur (HKCU AppCompatFlags). Sunucu modu
+  // acik olsa bile VPS'e degil, daima yerel yardimciya sorulmalidir.
   const [yardimciAdmin, setYardimciAdmin] = useState(null)
   useEffect(() => {
     let canli = true
-    ;(async () => {
+    const oku = async () => {
       try {
-        const s = await gibYardimciIs('admin-durum', {}, 8000)
+        const s = await yardimciIsYerel('admin-durum', {}, 8000)
         if (canli) setYardimciAdmin(s?.ok ? !!s.ata : null)
       } catch { if (canli) setYardimciAdmin(null) }
-    })()
-    return () => { canli = false }
+    }
+    oku()
+    window.addEventListener('mubis-admin-ata-degisti', oku)
+    const iv = setInterval(oku, 30000)
+    return () => { canli = false; window.removeEventListener('mubis-admin-ata-degisti', oku); clearInterval(iv) }
   }, [])
 
   if (!user) {
@@ -702,13 +690,20 @@ export default function AdminDashboard() {
               </p>
             ) : (
               <p className="text-gray-300 text-sm md:text-base mt-1.5">
-                {clients.length > 0 ? 'Tüm işler güncel görünüyor. Harika bir gün olacak!' : 'Henüz müşteri eklenmemiş. Yeni müşteri ekleyerek başlayabilirsiniz.'}
+                {clientsLoading && !clients.length
+                  ? 'Müşteri verileri yükleniyor…'
+                  : clientsError && !clients.length
+                    ? 'Müşteri verileri şu anda doğrulanamıyor.'
+                    : clients.length > 0
+                      ? 'Tüm işler güncel görünüyor. Harika bir gün olacak!'
+                      : 'Henüz müşteri eklenmemiş. Yeni müşteri ekleyerek başlayabilirsiniz.'}
               </p>
             )}
           </div>
           {/* Orta: tarih + saat + hava, altinda yan yana radyo + namaz vakitleri (Ayarlar'dan acilir) */}
           <div className="flex flex-col items-center gap-3 shrink-0">
             <HavaSaatKarti />
+            {kurlarGoster && <KurAltinBandi />}
             <div className="flex flex-wrap items-center justify-center gap-3">
               {radyoGoster && <RadioUstBant />}
               {ytMuzikGoster && <YouTubeMuzik />}
@@ -733,6 +728,15 @@ export default function AdminDashboard() {
         </div>
       </div>
 
+      {clientsError && (
+        <div role="alert" className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+          <span>{clientsError}</span>
+          <button type="button" onClick={() => refreshClients()} disabled={clientsLoading} className="rounded-lg bg-red-500/20 px-3 py-1.5 font-semibold text-red-100 hover:bg-red-500/30 disabled:opacity-50">
+            {clientsLoading ? 'Yeniden deneniyor…' : 'Yeniden dene'}
+          </button>
+        </div>
+      )}
+
       {/* ═══════════════════════════════════════════ */}
       {/* E-TEBLIGAT UYARISI */}
       {/* ═══════════════════════════════════════════ */}
@@ -755,7 +759,7 @@ export default function AdminDashboard() {
             </div>
             <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-red-500 group-hover:translate-x-0.5 transition-all" />
           </div>
-          <div className="text-2xl font-bold text-white">{dashboardData.bekleyenBeyanlar}</div>
+          <div className="text-2xl font-bold text-white">{ozetDeger(dashboardData.bekleyenBeyanlar)}</div>
           <div className="text-red-500 text-xs font-medium mt-0.5">Bekleyen Beyan</div>
           <div className="text-gray-400 text-[10px]">Son 7 gün</div>
           {dashboardData.gecmisBeyanlar > 0 && (
@@ -776,7 +780,7 @@ export default function AdminDashboard() {
             </div>
             <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-green-500 group-hover:translate-x-0.5 transition-all" />
           </div>
-          <div className="text-2xl font-bold text-white">{dashboardData.tamamlananBeyanlar}</div>
+          <div className="text-2xl font-bold text-white">{ozetDeger(dashboardData.tamamlananBeyanlar)}</div>
           <div className="text-green-600 text-xs font-medium mt-0.5">Tamamlanan Beyan</div>
           <div className="text-gray-400 text-[10px]">Bu hafta</div>
         </Link>
@@ -794,7 +798,7 @@ export default function AdminDashboard() {
               </span>
             )}
           </div>
-          <div className="text-2xl font-bold text-white">{dashboardData.maliMuhurUyari}</div>
+          <div className="text-2xl font-bold text-white">{ozetDeger(dashboardData.maliMuhurUyari)}</div>
           <div className="text-amber-600 text-xs font-medium mt-0.5">Mali Mühür / e-İmza</div>
           <div className="text-gray-400 text-[10px]">Kontrol gerekli</div>
         </div>
@@ -810,9 +814,9 @@ export default function AdminDashboard() {
             </div>
             <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-blue-500 group-hover:translate-x-0.5 transition-all" />
           </div>
-          <div className="text-2xl font-bold text-white">{dashboardData.clientStats.total}</div>
+          <div className="text-2xl font-bold text-white">{ozetDeger(dashboardData.clientStats.total)}</div>
           <div className="text-blue-600 text-xs font-medium mt-0.5">Toplam Müşteri</div>
-          <div className="text-gray-400 text-[10px]">{dashboardData.clientStats.active} aktif</div>
+          <div className="text-gray-400 text-[10px]">{ozetDeger(dashboardData.clientStats.active)} aktif</div>
         </Link>
 
         {/* Toplam Is */}
@@ -823,7 +827,7 @@ export default function AdminDashboard() {
             </div>
             <Activity className="w-4 h-4 text-violet-300" />
           </div>
-          <div className="text-2xl font-bold text-white">{totalTasks}</div>
+          <div className="text-2xl font-bold text-white">{ozetDeger(totalTasks)}</div>
           <div className="text-violet-600 text-xs font-medium mt-0.5">Toplam Bekleyen İş</div>
           <div className="text-gray-400 text-[10px]">Süresi yaklaşan</div>
         </div>
@@ -1010,7 +1014,7 @@ export default function AdminDashboard() {
               {clients.length === 0 ? (
                 <div className="px-5 py-6 text-center">
                   <Users className="w-8 h-8 text-gray-600 mx-auto mb-2" />
-                  <p className="text-gray-500 text-sm">Henuz musteri eklenmemis</p>
+                  <p className="text-gray-500 text-sm">{clientsLoading ? 'Müşteriler yükleniyor…' : clientsError ? 'Müşteri verileri alınamadı' : 'Henuz musteri eklenmemis'}</p>
                 </div>
               ) : (
                 [...clients]

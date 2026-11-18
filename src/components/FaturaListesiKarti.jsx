@@ -6,12 +6,14 @@ import { Eye, Download, Upload, RefreshCw, Receipt, Search, Trash2, Loader2, Cre
 import { dosyaIndir } from '../utils/dosyaIndir'
 import { fetchDocument, openDocument } from '../utils/storageUrl'
 import { faturalariGetir, kdvDetaylariGetir, efaturaSorgula, faturaGruplari, faturaTuruAdi, faturaTurEslesir, faturaTurEtiketi, belgeTuruAdi, sorguYonleri, manuelFaturaYukle, faturalariSil, dosyalariMubisYukle, edefterTopluKopyala, faturaKopyalamaDosyalari, efaturaTutarlariOnar, efaturaKdvOranlariOnar, afaDokumuYukle, edefterDokumleriniYukle, fisKdvDetayUret, aracKdvMatrahaEkle, lucaDurumMetni, faturaIlerlemeMetni } from '../services/efaturaService'
-import { gibYardimciIs, gibLucaSorguDurdur } from '../utils/gibOdemeHelper'
+import { yardimciIsSunucu, gibLucaSorguDurdur } from '../utils/gibOdemeHelper'
 import { krediKartiHasilatGetir, dvsSorgula } from '../services/dvsSorguService'
 import { formatDateTR } from '../utils/dateUtils'
 import { supabase } from '../lib/supabase'
 import { ublAyikla, faturaHtmlOlustur, gomuluXsltGorunumu } from '../utils/faturaGorunum'
 import FisModal from './FisModal'
+import FisDokumTablosu from './FisDokumTablosu'
+import { fisKaydiMi } from '../utils/fisDetay'
 
 // 2.7.497: matrah/kdv tutarlilik onarimi oturum basina musteri basina 1 kez
 const onarimYapilanClientlar = new Set()
@@ -25,13 +27,20 @@ function hesaplaKdvOrani(f) {
   if (!isFinite(m) || !isFinite(k) || m <= 0 || k <= 0) return null
   const oranHam = (k / m) * 100
   const enYakin = STANDART_KDV_ORANLARI.reduce((a, s) => Math.abs(s - oranHam) < Math.abs(a - oranHam) ? s : a, STANDART_KDV_ORANLARI[0])
-  return Math.abs(enYakin - oranHam) <= 0.5 ? enYakin : null
+  return Math.abs(m * enYakin / 100 - k) <= 0.02 ? enYakin : null
 }
 // 2.7.575: Rozet degerleri — kdv_detay kayitlarinda gecersiz/eksik oran varsa
 // (null, NaN, 0'a yuvarlanan) onlari at; hic gecerli oran yoksa matrah+KDV'den
 // hesaplanan yedek orani kullan. Boylece cogu faturada yesil rozet gorunur.
 function gecerliOranlar(detaylar) {
-  return (detaylar || []).map(d => Number(d?.oran)).filter(o => isFinite(o) && o > 0 && o <= 100)
+  // 2.7.632: oran null/undefined ise 0 olarak kabul et (istisna/muaf satirlar
+  // bazi XML'lerde Percent elementi yazmaz; oran null olarak kaydedilir).
+  return (detaylar || []).map(detay => {
+    if (detay?.oran == null || detay.oran === '') {
+      return (Number(detay?.kdv) === 0) ? 0 : null
+    }
+    return Number(detay.oran)
+  }).filter(o => o != null && isFinite(o) && o >= 0 && o <= 100)
 }
 function oranEtiket(o) {
   const n = Number(o)
@@ -122,7 +131,12 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
   const handleSorguDurdur = async () => {
     durdurRef.current = true
     setMesaj('Tüm sorgulamalar durduruluyor — çalışan ve kuyrukta bekleyen işler iptal ediliyor...')
-    try { await gibLucaSorguDurdur('otomatik', true) } catch { /* yoksay */ }
+    try {
+      const iletildi = await gibLucaSorguDurdur('sunucu', true)
+      if (!sorguluyor) setMesaj(iletildi ? 'Durdurma isteği yardımcıya iletildi.' : mesaj + ' Durdurma isteği iletilemedi; yardımcı bağlantısını kontrol edin.')
+    } catch {
+      if (!sorguluyor) setMesaj(mesaj + ' Durdurma isteği iletilemedi; yardımcı bağlantısını kontrol edin.')
+    }
   }
   const [mesaj, setMesaj] = useState('')
   // 2.7.541: Bolum 4 — tablo arama + sayfalama (sayfa basina 25)
@@ -255,26 +269,35 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
         if (istek !== listeIstekRef.current) return
         const b = { ...h }
         for (const f of liste) {
-          if (!b[f.id]?.length) {
-            const d = fisKdvDetayUret(f)
-            if (d) b[f.id] = d
-          }
+          const detay = fisKdvDetayUret(f)
+          if (detay && !b[f.id]?.length) b[f.id] = detay
         }
         setKdvDetaylar(b)
       }
-      kdvDetaylariGetir(liste.map(f => f.id)).then(birlestir).catch(() => birlestir({}))
+      await kdvDetaylariGetir(liste.map(f => f.id)).then(birlestir).catch(() => birlestir({}))
+      if (istek !== listeIstekRef.current) return
       // Onarim (oturum basina musteri basina 1) — listeyi bekletmez
       if (!onarimYapilanClientlar.has(clientId)) {
         onarimYapilanClientlar.add(clientId)
         ;(async () => {
+          let yenile = false
           try {
             const sonuc = await efaturaTutarlariOnar(clientId)
-            if (sonuc?.duzeltilen > 0) {
-              const taze = await faturalariGetir(clientId, donemQ)
-              if (istek === listeIstekRef.current) setFaturalar(taze)
-            }
-          } catch { /* onarim hatasi listeyi bozmasin */ }
-          try { await efaturaKdvOranlariOnar(clientId) } catch { /* bozmasin */ }
+            yenile = sonuc?.duzeltilen > 0
+          } catch { onarimYapilanClientlar.delete(clientId) }
+          try {
+            const sonuc = await efaturaKdvOranlariOnar(clientId)
+            yenile = yenile || sonuc?.yazilan > 0
+          } catch { onarimYapilanClientlar.delete(clientId) }
+          if (!yenile || istek !== listeIstekRef.current) return
+          try {
+            const taze = await faturalariGetir(clientId, donemQ)
+            const detaylar = await kdvDetaylariGetir(taze.map(f => f.id))
+            if (istek !== listeIstekRef.current) return
+            liste = taze
+            setFaturalar(taze)
+            birlestir(detaylar)
+          } catch { onarimYapilanClientlar.delete(clientId) }
         })()
       }
     } catch {
@@ -531,6 +554,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
     const toplamAdim = turlar.length * yonlar.length * ((eksikMod ? 1 : parcalar.length) + 3)
     let adim = 0
     let durdur = false
+    let durdurNedeni = ''
     setMesaj('Faturalar sorgulaniyor (1/' + toplamAdim + '), birkac dakika surebilir.')
     try {
       const clientArg = { ...(client || {}), id: clientId, vkn: client?.vkn || client?.tc || '' }
@@ -560,6 +584,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
           let zipYoluIle = false
           let indirmeKaynak = null
           let dosyaFotografi = null
+          let sorguHatasi = false
           // 1a: tum periyotlar Luca'da SADECE SORGULANIR (GİB'den Getir,
           // indirme YOK; yardimci 'sona erdi' sinyalini bekler — 2.7.462).
           // 'Eksikleri tamamla' modunda bu adim atlanir (GIB sorgusu yapilmaz).
@@ -592,10 +617,18 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
                 durdur = true
                 break
               }
-              hatalar.push(turAd + yonEtiket + parcaEtiket + ': ' + (err.message || 'bilinmeyen hata'))
+              const msg = err.message || 'bilinmeyen hata'
+              hatalar.push(turAd + yonEtiket + parcaEtiket + ': ' + msg)
+              sorguHatasi = true
+              if (/islem takibi suresinde tamamlanmadi/i.test(msg)) {
+                durdurNedeni = 'Luca işlemi devam ediyor olabilir; kalan sorgular güvenlik için durduruldu.'
+                durdur = true
+              }
+              break
             }
           }
           if (durdur || durdurRef.current) { durdur = true; break }
+          if (sorguHatasi) continue
           // 1b: tum sorgular bitti — ayin TUM faturalari tek geciste indirilir
           adim++
           const onEkD = '(' + adim + '/' + toplamAdim + ') ' + turAd + yonEtiket + ': '
@@ -629,7 +662,14 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
             else if ((err.message || '').includes('mevcut-sorgu-devam-ediyor')) {
               hatalar.push(turAd + yonEtiket + ' indirme: Luca önceki sorgunun hâlâ sürdüğünü bildirdi; kalan işlemler durduruldu.')
               durdur = true
-            } else hatalar.push(turAd + yonEtiket + ' indirme: ' + (err.message || 'bilinmeyen hata'))
+            } else {
+              const msg = err.message || 'bilinmeyen hata'
+              hatalar.push(turAd + yonEtiket + ' indirme: ' + msg)
+              if (/islem takibi suresinde tamamlanmadi/i.test(msg)) {
+                durdurNedeni = 'Luca işlemi devam ediyor olabilir; kalan sorgular güvenlik için durduruldu.'
+                durdur = true
+              }
+            }
           }
           if (durdur || durdurRef.current) { durdur = true; break }
           // 2 + 3: MUBiS'e yukle, ardindan klasore kopyala (bu tur+yon bitmeden
@@ -684,17 +724,17 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
         }
       }
       // Sorgu bitti — acik Luca oturumunu kapat (best-effort)
-      if (turlar.length) {
-        try { await gibYardimciIs('luca-oturumu-kapat', {}) } catch { /* yoksay */ }
+      if (turlar.length && !durdurNedeni && !durdur && !durdurRef.current) {
+        try { await yardimciIsSunucu('luca-oturumu-kapat', {}, 10 * 60 * 1000, undefined, { yerelYedek: false }) } catch { /* yoksay */ }
       }
       const ozet = []
       if (toplam > 0) ozet.push(toplam + ' fatura indirildi ve kaydedildi (musteri portalinda da gorunur).')
       if (notlar.length) ozet.push(notlar.join(' '))
       if (oncedenYukluler.length) ozet.push('Yeni belge yok (önceden yüklü): ' + oncedenYukluler.join(', '))
-      if (boslar.length) ozet.push('Belge bulunamadi: ' + boslar.join(', '))
-      if (durdur || durdurRef.current) { durdur = true; ozet.push('Sorgulama kullanıcı tarafından durduruldu — kalan tür/yonler atlandı.') }
+      if (boslar.length) ozet.push('İndirilen belge yok: ' + boslar.join(', ') + ' (belge bulunmamış veya indirme tamamlanmamış olabilir).')
+      if (durdur || durdurRef.current) { durdur = true; ozet.push(durdurNedeni || 'Sorgulama kullanıcı tarafından durduruldu — kalan tür/yonler atlandı.') }
       if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
-      setMesaj((durdur ? '⏹ ' : hatalar.length ? '❌ ' : '✅ ') + (ozet.join(' ') || 'Sorgulama tamamlandi.'))
+      setMesaj((durdur ? '⏹ ' : hatalar.length ? (toplam > 0 ? 'Kısmen tamamlandı: ' : '❌ ') : '✅ ') + (ozet.join(' ') || 'Sorgulama tamamlandi.'))
       await yukle()
     } catch (err) {
       const msg = err.message || 'Bilinmeyen hata'
@@ -719,7 +759,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
   // ham XML yerine UBL'den okunabilir fatura HTML'i üretip açar.
   // UTTS kayıtları fiş modalında açılır.
   const faturaAc = async (f) => {
-    if (f.tur === 'utts' || f.tur === 'gumruk') { setFisGoster(f); return }
+    if (fisKaydiMi(f) || f.tur === 'utts' || f.tur === 'gumruk') { setFisGoster({ ...f, kdvDetaylari: f.kdvDetaylari?.length ? f.kdvDetaylari : kdvDetaylar[f.id] || [] }); return }
     // Supabase Storage HTML'i text/plain olarak sunar (guvenlik politikasi);
     // metni cekip blob URL ile acarsak tarayici gercek HTML render eder.
     if (f.html_url) {
@@ -1143,10 +1183,10 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
       )}
 
       {mesaj && !dosyaYukleniyor && (
-        <div className={`rounded-lg p-2.5 mb-3 text-xs flex items-center justify-between gap-2 ${sorguluyor ? 'bg-blue-500/10 border border-blue-500/30 text-blue-300' : mesaj.startsWith('✅') ? 'bg-green-500/10 border border-green-500/30 text-green-300' : mesaj.startsWith('❌') || mesaj.startsWith('⏹') ? 'bg-red-500/10 border border-red-500/30 text-red-300' : 'bg-blue-900/20 border border-blue-700/30 text-gray-300'}`}>
+        <div className={`rounded-lg p-2.5 mb-3 text-xs flex items-center justify-between gap-2 ${sorguluyor ? 'bg-blue-500/10 border border-blue-500/30 text-blue-300' : mesaj.startsWith('Kısmen tamamlandı:') ? 'bg-amber-500/10 border border-amber-500/30 text-amber-300' : mesaj.startsWith('✅') ? 'bg-green-500/10 border border-green-500/30 text-green-300' : mesaj.startsWith('❌') || mesaj.startsWith('⏹') ? 'bg-red-500/10 border border-red-500/30 text-red-300' : 'bg-blue-900/20 border border-blue-700/30 text-gray-300'}`}>
           <span>{mesaj}</span>
           {/* 2.7.574: sorgulama sürerken Durdur */}
-          {sorguluyor && (
+          {(sorguluyor || mesaj.includes('islem takibi suresinde tamamlanmadi')) && (
             <button onClick={handleSorguDurdur}
               className="shrink-0 px-2.5 py-1 rounded-lg bg-red-600/80 border border-red-500/50 text-white text-[11px] font-semibold hover:bg-red-600 flex items-center gap-1.5"
               title="Mevcut adım tamamlanınca sorgulamayı keser">
@@ -1204,7 +1244,8 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
                   {grup.ayAd ? `${grup.ayAd} ${grup.yil}` : 'Tarihsiz'}
                   <span className="ml-2 text-gray-500 font-normal">({grup.ogeler.length} fatura)</span>
                 </h4>
-              <table className="w-full">
+              <FisDokumTablosu faturalar={grup.ogeler.filter(fisKaydiMi)} detaylar={kdvDetaylar} onAc={setFisGoster} seciliIds={seciliIds} onSec={secimDegistir} onTumunuSec={sec => setSeciliIds(prev => { const next = new Set(prev); grup.ogeler.filter(fisKaydiMi).forEach(fatura => sec ? next.add(fatura.id) : next.delete(fatura.id)); return next })} onSil={tekSil} siliniyor={siliniyor} />
+              {grup.ogeler.some(fatura => !fisKaydiMi(fatura)) && <table className="w-full">
                 <thead>
                   <tr className="text-left text-gray-400 text-xs border-b border-blue-800/30">
                     <th className="pb-2 w-8">
@@ -1236,7 +1277,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
                   </tr>
                 </thead>
                 <tbody>
-                  {grup.ogeler.map(f => {
+                  {grup.ogeler.filter(fatura => !fisKaydiMi(fatura)).map(f => {
                     const gorunUrl = f.html_url || f.pdf_url || f.xml_url
                     return (
                     <Fragment key={f.id}>
@@ -1244,7 +1285,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
                     {(() => {
                       // 2.7.575: coklu KDV satirlari — gecersiz oranli detaylar atilir
                       const orans = gecerliOranlar(kdvDetaylar[f.id])
-                      return orans.length > 1 ? kdvDetaylar[f.id].filter(d => isFinite(Number(d?.oran)) && Number(d?.oran) > 0).map(d => (
+                      return orans.length > 1 ? kdvDetaylar[f.id].filter(d => (d?.oran != null && d.oran !== '' ? isFinite(Number(d.oran)) && Number(d.oran) >= 0 && Number(d.oran) <= 100 : (Number(d?.kdv) === 0 || d?.matrah != null))).map((d, detaySira) => (
                         <tr
                           key={`${f.id}-kdv-${d.oran}`}
                           onClick={() => { if (gorunUrl) faturaAc(f) }}
@@ -1269,12 +1310,12 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
                           <td className="py-2 whitespace-nowrap">{faturaTurEtiketi(f) || '-'}</td>
                           <td className="py-2">{f.fatura_no || '-'}</td>
                           <td className="py-2 max-w-[200px] truncate" title={karsiTarafMetni(f, client)}>{karsiTarafMetni(f, client)}</td>
-                          <td className="py-2 whitespace-nowrap text-right">{d.matrah != null ? d.matrah.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) : '-'}</td>
+                          <td className="py-2 whitespace-nowrap text-right">{d.matrah != null ? (f.para_birimi && f.para_birimi !== 'TRY' && f.doviz_kur ? (Number(d.matrah) * Number(f.doviz_kur)).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) : d.matrah.toLocaleString('tr-TR', { minimumFractionDigits: 2 })) : '-'}</td>
                           <td className="py-2 whitespace-nowrap">
                             {d.kdv != null ? (
                               <div className="flex items-center justify-between gap-2">
-                                <span className="inline-flex items-center justify-center min-w-[2rem] bg-green-500/20 text-green-400 rounded-full px-1.5 py-0.5 text-xs font-medium text-center">{oranEtiket(d.oran)}</span>
-                                <span>{d.kdv.toLocaleString('tr-TR', { minimumFractionDigits: 2 })}</span>
+                                <span className="inline-flex items-center justify-center min-w-[2rem] bg-green-500/20 text-green-400 rounded-full px-1.5 py-0.5 text-xs font-medium text-center">{oranEtiket(d.oran != null ? d.oran : (Number(d?.kdv) === 0 ? 0 : null))}</span>
+                                <span>{(f.para_birimi && f.para_birimi !== 'TRY' && f.doviz_kur ? (Number(d.kdv) * Number(f.doviz_kur)) : d.kdv).toLocaleString('tr-TR', { minimumFractionDigits: 2 })}</span>
                               </div>
                             ) : '-'}
                           </td>
@@ -1346,7 +1387,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
                       <td className="py-2 whitespace-nowrap">{faturaTurEtiketi(f) || '-'}</td>
                       <td className="py-2">{f.fatura_no || '-'}</td>
                       <td className="py-2 max-w-[200px] truncate" title={karsiTarafMetni(f, client)}>{karsiTarafMetni(f, client)}</td>
-                      <td className="py-2 whitespace-nowrap text-right">{f.matrah != null ? Number(f.matrah).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) : '-'}</td>
+                      <td className="py-2 whitespace-nowrap text-right">{f.matrah != null ? (f.para_birimi && f.para_birimi !== 'TRY' && f.doviz_kur ? (Number(f.matrah) * Number(f.doviz_kur)).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) : Number(f.matrah).toLocaleString('tr-TR', { minimumFractionDigits: 2 })) : '-'}</td>
                       <td className="py-2 whitespace-nowrap">
                         {f.kdv != null ? (
                           <div className="flex items-center justify-between gap-2">
@@ -1357,18 +1398,20 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
                                 if (orans.length > 1) return orans.map(o => (
                                   <span key={o} className="inline-block bg-green-500/20 text-green-400 rounded-full px-1.5 py-0.5 text-xs font-medium">{oranEtiket(o)}</span>
                                 ))
+                                if (!orans.length && ['Z RAPORU', 'GİDER FİŞİ', 'GİDER DÖKÜMÜ'].includes(f.fatura_turu)) return <span className="text-amber-400 text-xs" title={f.fisDetayUyari || 'Kaynak belgeden KDV kırılımı doğrulanamadı.'}>Bilinmiyor</span>
+                                if (!orans.length) { const yedek = hesaplaKdvOrani(f); if (yedek != null) return <span className="inline-flex items-center justify-center min-w-[2rem] bg-amber-500/20 text-amber-400 rounded-full px-1.5 py-0.5 text-xs font-medium text-center" title="KDV kırılımı XML'den doğrulanamadı; toplam tutardan oran tahmin edildi.">{oranEtiket(yedek)}</span>; if (f.xml_url) return <span className="text-amber-400 text-xs" title="KDV kırılımı XML kaynağından doğrulanamadı; toplam tutardan oran tahmin edilemedi.">Doğrulanmadı</span> }
                                 const tek = orans.length === 1 ? orans[0] : hesaplaKdvOrani(f)
                                 return tek != null ? (
                                   <span className="inline-flex items-center justify-center min-w-[2rem] bg-green-500/20 text-green-400 rounded-full px-1.5 py-0.5 text-xs font-medium text-center">{oranEtiket(tek)}</span>
                                 ) : null
                               })()}
                             </span>
-                            <span>{Number(f.kdv).toLocaleString('tr-TR', { minimumFractionDigits: 2 })}</span>
+                            <span>{(f.para_birimi && f.para_birimi !== 'TRY' && f.doviz_kur ? (Number(f.kdv) * Number(f.doviz_kur)) : Number(f.kdv)).toLocaleString('tr-TR', { minimumFractionDigits: 2 })}</span>
                           </div>
                         ) : '-'}
                       </td>
                       <td className="py-2 whitespace-nowrap text-white font-medium text-right">
-                        {f.tutar != null ? `${Number(f.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${f.para_birimi || 'TRY'}` : '-'}
+                        {f.tutar != null ? (f.para_birimi && f.para_birimi !== 'TRY' && f.doviz_kur ? `${(Number(f.tutar) * Number(f.doviz_kur)).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} TRY` : `${Number(f.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${f.para_birimi || 'TRY'}`) : '-'}
                       </td>
                       <td className="py-2">
                         <div className="flex space-x-1.5">
@@ -1416,7 +1459,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
                     )
                   })}
                 </tbody>
-              </table>
+              </table>}
               </div>
               ))}
             </div>

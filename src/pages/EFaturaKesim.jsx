@@ -1071,7 +1071,7 @@ export default function EFaturaKesim({ clientId, allowedTurs = ['earsiv'], basli
           <label className="text-blue-300 text-xs font-medium mb-1.5 block">Müşteri</label>
           <select value={secilenClient} onChange={(e) => { setSecilenClient(e.target.value); setMesaj(null) }} className={cls}>
             <option value="">Müşteri seçin...</option>
-            {clients.map(c => <option key={c.id} value={c.id}>{c.name || c.ad || c.isim || c.id}</option>)}
+            {clients.slice().sort((a, b) => (a.name || a.ad || a.isim || '').localeCompare(b.name || b.ad || b.isim || '', 'tr')).map(c => <option key={c.id} value={c.id}>{c.name || c.ad || c.isim || c.id}</option>)}
           </select>
         </div>
       )}

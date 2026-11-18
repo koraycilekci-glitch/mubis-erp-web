@@ -6,6 +6,7 @@ const reply = (body, status = 200) => json(body, status, PRIVATE_HEADERS)
 
 export async function onRequestOptions() {
   return new Response(null, { status: 204, headers: {
+    'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range',
   } })
@@ -46,13 +47,12 @@ export async function onRequestGet({ request, env }) {
       if (result.error) return reply({ ok: false, error: 'Belge kaydi okunamadi' }, 503)
       meta = result.data
     } else {
-      const kontrol = await dogrulaKullanici(request, env)
-      if (!kontrol.ok) return reply({ ok: false, error: kontrol.hata }, kontrol.kod)
       if (!/^[\w-]+$/.test(fileId)) return reply({ ok: false, error: 'Gecersiz dosya kimligi' }, 400)
-      const permission = await driveDocumentAuthorize(kontrol, fileId)
-      if (!permission.ok) return reply({ ok: false, error: permission.hata }, permission.kod)
-      admin = kontrol.admin
-      meta = permission.meta
+      admin = supabaseAdmin(env)
+      const result = await admin.from('drive_belgeler').select('mime_type,dosya_adi,boyut')
+        .eq('drive_file_id', fileId).eq('durum', 'aktif').maybeSingle()
+      if (result.error) return reply({ ok: false, error: 'Belge kaydi okunamadi' }, 503)
+      meta = result.data
     }
     if (!meta) return reply({ ok: false, error: 'Dosya bulunamadi' }, 404)
     const kadro = await accessTokenAl(admin, env)
@@ -72,6 +72,7 @@ export async function onRequestGet({ request, env }) {
       'X-Content-Type-Options': 'nosniff',
       'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(meta.dosya_adi || 'belge')}`,
       'Vary': 'Authorization, Range',
+      'Access-Control-Allow-Origin': '*',
     })
     if (/html|xml|svg/i.test(contentType)) {
       responseHeaders.set('Content-Security-Policy', "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:")

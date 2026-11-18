@@ -75,7 +75,7 @@ export default function OtomasyonBelgeler() {
               className="bg-blue-900/30 border border-blue-700/40 rounded-lg px-3 py-2 text-white text-sm focus:outline-none min-w-[180px]"
             >
               <option value="">Tümü</option>
-              {clients.map(c => (
+              {clients.slice().sort((a, b) => (a.name || a.company || '').localeCompare(b.name || b.company || '', 'tr')).map(c => (
                 <option key={c.id} value={c.id}>{c.name || c.company}</option>
               ))}
             </select>

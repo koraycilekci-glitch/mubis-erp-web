@@ -17,7 +17,7 @@ import {
 
 export default function MusteriListesi() {
   const { user, deleteClient } = useAuth()
-  const { clients, refresh } = useClients()
+  const { clients, loading, error, refresh } = useClients()
 
   // 2.7.522: Luca firmasi mevcut musterilerde zaten var mi?
   // (VKN/TCKN birebir veya normalize unvan eslesmesi — lucaFirmaKaydet ile ayni mantik)
@@ -457,6 +457,8 @@ export default function MusteriListesi() {
     gelir: clients.filter(c => c.taxType === 'Gelir Vergisi').length,
   }
 
+  const istatistikBilinmiyor = !clients.length && (loading || !!error)
+
   const clearFilters = () => {
     setSearchTerm('')
     setFilterType('all')
@@ -889,8 +891,12 @@ export default function MusteriListesi() {
               Musteri Yonetimi
             </h1>
             <p className="text-gray-400 mt-1 text-sm">
-              {stats.total} kayitli musteri
-              {isFilterActive() && (
+              {loading && !clients.length
+                ? 'Müşteriler yükleniyor…'
+                : error && !clients.length
+                  ? 'Müşteri sayısı doğrulanamıyor'
+                  : `${stats.total} kayitli musteri`}
+              {!loading && !error && isFilterActive() && (
                 <span className="ml-2 text-yellow-400 text-sm">(Filtreler aktif)</span>
               )}
             </p>
@@ -938,32 +944,30 @@ export default function MusteriListesi() {
         </div>
       </div>
 
+      {error && (
+        <div role="alert" className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+          <span>{error}</span>
+          <button type="button" onClick={() => refresh()} disabled={loading} className="rounded-lg bg-red-500/20 px-3 py-1.5 font-semibold text-red-100 hover:bg-red-500/30 disabled:opacity-50">
+            {loading ? 'Yeniden deneniyor…' : 'Yeniden dene'}
+          </button>
+        </div>
+      )}
+
       {/* Istatistikler */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
-        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 text-center">
-          <div className="text-2xl font-bold text-white">{stats.total}</div>
-          <div className="text-gray-400 text-xs">Toplam</div>
-        </div>
-        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 text-center">
-          <div className="text-2xl font-bold text-green-400">{stats.active}</div>
-          <div className="text-gray-400 text-xs">Aktif</div>
-        </div>
-        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 text-center">
-          <div className="text-2xl font-bold text-yellow-400">{stats.companies}</div>
-          <div className="text-gray-400 text-xs">Sirket</div>
-        </div>
-        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 text-center">
-          <div className="text-2xl font-bold text-purple-400">{stats.individuals}</div>
-          <div className="text-gray-400 text-xs">Bireysel</div>
-        </div>
-        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 text-center">
-          <div className="text-2xl font-bold text-blue-400">{stats.kurumlar}</div>
-          <div className="text-gray-400 text-xs">Kurumlar</div>
-        </div>
-        <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 text-center">
-          <div className="text-2xl font-bold text-orange-400">{stats.gelir}</div>
-          <div className="text-gray-400 text-xs">Gelir</div>
-        </div>
+        {[
+          { label: 'Toplam', value: stats.total, color: 'text-white' },
+          { label: 'Aktif', value: stats.active, color: 'text-green-400' },
+          { label: 'Sirket', value: stats.companies, color: 'text-yellow-400' },
+          { label: 'Bireysel', value: stats.individuals, color: 'text-purple-400' },
+          { label: 'Kurumlar', value: stats.kurumlar, color: 'text-blue-400' },
+          { label: 'Gelir', value: stats.gelir, color: 'text-orange-400' }
+        ].map(stat => (
+          <div key={stat.label} className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 text-center">
+            <div className={`text-2xl font-bold ${stat.color}`}>{istatistikBilinmiyor ? '—' : stat.value}</div>
+            <div className="text-gray-400 text-xs">{stat.label}</div>
+          </div>
+        ))}
       </div>
 
       {/* Filtreler */}
@@ -1134,7 +1138,7 @@ export default function MusteriListesi() {
               {filteredClients.length === 0 ? (
                 <tr>
                   <td colSpan="7" className="text-center py-8 text-gray-400">
-                    {isFilterActive() ? 'Filtrelere uygun musteri bulunamadi' : 'Henuz musteri eklenmemis'}
+                    {loading ? 'Müşteriler yükleniyor…' : error ? 'Müşteri verileri alınamadı' : isFilterActive() ? 'Filtrelere uygun musteri bulunamadi' : 'Henuz musteri eklenmemis'}
                   </td>
                 </tr>
               ) : (

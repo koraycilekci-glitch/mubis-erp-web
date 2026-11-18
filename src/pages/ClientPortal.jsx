@@ -12,7 +12,7 @@ import {
   FileSearch, ChevronRight, ChevronDown, Folder, X, RefreshCw, Users, ChevronLeft, Camera, Calculator,
   Home as HomeIcon, Megaphone, Mic, Menu as MenuIcon, Headphones, LayoutGrid, ArrowRight, KeyRound, Monitor, Inbox, BookOpen, LogOut, ScanLine, Landmark
 } from 'lucide-react'
-import { etebligatlariGetir, etebligatlariSorgula, sgkEtebligatlariSorgula, etebligatBelgesiAl, listeCiktisiMi, yeniTebligatlariTemizle, okunduAyarla, kullaniciOkunduSeti } from '../services/etebligatService'
+import { etebligatlariGetir, etebligatlariSorgula, sgkEtebligatlariSorgula, etebligatBelgesiAl, tebligatPdfGetir, yeniTebligatlariTemizle, okunduAyarla, kullaniciOkunduSeti } from '../services/etebligatService'
 import EFaturaKesim from './EFaturaKesim'
 import CariHesapModul from '../components/CariHesapModul'
 import FileUploader from '../components/FileUploader'
@@ -50,6 +50,8 @@ import PortalTaramalarim from '../components/PortalTaramalarim'
 import FisElleEkleTablosu, { elleBosSatir } from '../components/FisElleEkleTablosu'
 import { musteriManuelFisEkle } from '../services/taramaService'
 
+import FisDokumTablosu from '../components/FisDokumTablosu'
+import { fisKaydiMi } from '../utils/fisDetay'
 import { faturalariGetir, faturaGruplari, faturaTuruAdi, faturaTurEslesir, faturaTurEtiketi, belgeTuruAdi, kdvDetaylariGetir, fisKdvDetayUret } from '../services/efaturaService'
 import { kdvDurumuGetir } from '../services/kdvDurumService'
 import { krediKartiHasilatGetir, dvsSorgula } from '../services/dvsSorguService'
@@ -704,10 +706,8 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
       const birlestir = (h) => {
         const b = { ...h }
         for (const f of liste) {
-          if (!b[f.id]?.length) {
-            const d = fisKdvDetayUret(f)
-            if (d) b[f.id] = d
-          }
+          const detay = fisKdvDetayUret(f)
+          if (detay && !b[f.id]?.length) b[f.id] = detay
         }
         setKdvDetaylar(b)
       }
@@ -1534,8 +1534,8 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
       for (let i = 0; i < adaylar.length; i += 4) {
         const grup = adaylar.slice(i, i + 4)
         await Promise.all(grup.map(async t => {
-          const kotu = await listeCiktisiMi(t.file_url).catch(() => false)
-          hazirOnbellek.set(t.file_url, !kotu)
+          const belge = await tebligatPdfGetir(t.file_url)
+          hazirOnbellek.set(t.file_url, belge.ok)
         }))
         if (iptal) return
         guncelle()
@@ -1556,18 +1556,20 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
       } catch { /* okundu isareti kritik degil */ }
     }
     if (t.file_url && !yenidenIndir) {
-      // 2.7.472: dogrulanmis hazir belge dogrudan acilir; liste ciktisi
-      // bilinen belgede yardimciya baglanilmaz, Indir'e yonlendirilir.
-      const kotu = hazirOnbellek.has(t.file_url)
-        ? hazirOnbellek.get(t.file_url) === false
-        : await listeCiktisiMi(t.file_url).catch(() => false)
-      if (!kotu) {
-        window.open(t.file_url, '_blank', 'noopener')
+      const belge = await tebligatPdfGetir(t.file_url)
+      hazirOnbellek.set(t.file_url, belge.ok)
+      setTebligatHazir(prev => ({ ...prev, [t.belge_no]: belge.ok }))
+      if (belge.ok) {
+        const objeUrl = URL.createObjectURL(belge.blob)
+        window.open(objeUrl, '_blank', 'noopener')
+        setTimeout(() => URL.revokeObjectURL(objeUrl), 5 * 60 * 1000)
         await benimIcinOkunduIsaretle()
         return
       }
-      alert('Bu kaydın PDF’i tebligat LİSTESİ çıktısı — görüntülemeye hazır değil. Yanındaki İndir tuşunu kullanın.')
-      return
+      if (belge.reason === 'liste-ciktisi') {
+        alert('Bu kaydın PDF’i tebligat LİSTESİ çıktısı — görüntülemeye hazır değil. Yanındaki İndir tuşunu kullanın.')
+        return
+      }
     }
     if ((t.kaynak || 'vergi') === 'sgk') {
       alert('Bu SGK tebligatinin PDF’i bulunamadı. SGK sekmesinden tebligatlari yeniden sorgulayın.')
@@ -1613,12 +1615,10 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
       setTimeout(() => URL.revokeObjectURL(objeUrl), 60 * 1000)
     }
     if (t.file_url) {
-      try {
-        const r = await fetch(t.file_url)
-        if (r.ok) { diskeYaz(await r.blob()); return }
-      } catch { /* asagi duser */ }
-      window.open(t.file_url, '_blank', 'noopener')
-      return
+      const belge = await tebligatPdfGetir(t.file_url)
+      hazirOnbellek.set(t.file_url, belge.ok)
+      setTebligatHazir(prev => ({ ...prev, [t.belge_no]: belge.ok }))
+      if (belge.ok) { diskeYaz(belge.blob); return }
     }
     if ((t.kaynak || 'vergi') === 'sgk') {
       alert('Bu SGK tebligatinin PDF’i bulunamadı. SGK sekmesinden tebligatlari yeniden sorgulayın.')
@@ -1789,7 +1789,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
   const faturaAc = async (f) => {
     // UTTS ve Gümrük (ithalat) kayitlari verisiz excellerdir — fiş modalında
     // gösterilir; asla iframe'e excel yüklenmez (bos siyah ekran olurdu).
-    if (f.tur === 'utts' || f.tur === 'gumruk') { setFisGoster(f); return }
+    if (fisKaydiMi(f) || f.tur === 'utts' || f.tur === 'gumruk') { setFisGoster({ ...f, kdvDetaylari: f.kdvDetaylari?.length ? f.kdvDetaylari : kdvDetaylar[f.id] || [] }); return }
     if (f.html_url || f.pdf_url) {
       // Supabase Storage HTML'i text/plain olarak sunar (guvenlik politikasi);
       // metni cekip blob URL ile acarsak tarayici gercek HTML render eder.
@@ -3145,24 +3145,14 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
                       </td>
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-3">
-                          {t.file_url && tebligatHazir[t.belge_no] ? (
-                            <a
-                              href={t.file_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 text-cyan-400 hover:text-cyan-300 text-sm font-medium"
-                              title="Belge hazır — tek tıkla görüntüle"
-                            >
-                              <Eye className="w-4 h-4" /> Görüntüle
-                            </a>
-                          ) : (
-                            <span
-                              className="inline-flex items-center gap-1.5 text-gray-500 opacity-40 text-sm font-medium cursor-not-allowed select-none"
-                              title="Belge henüz hazır değil — İndir tuşuyla DVS’den indirin"
-                            >
-                              <Eye className="w-4 h-4" /> Görüntüle
-                            </span>
-                          )}
+                          <button
+                            onClick={() => portalBelgeAc(t)}
+                            disabled={tebligatIslem.belgeNo === t.belge_no}
+                            className={`inline-flex items-center gap-1.5 text-sm font-medium disabled:opacity-40 ${tebligatHazir[t.belge_no] ? 'text-cyan-400 hover:text-cyan-300' : 'text-gray-400 hover:text-cyan-300'}`}
+                            title={tebligatHazir[t.belge_no] ? 'Belgeyi görüntüle' : 'Belgeyi indir ve görüntüle'}
+                          >
+                            <Eye className="w-4 h-4" /> Görüntüle
+                          </button>
                           <button
                             onClick={() => portalBelgeIndir(t)}
                             disabled={tebligatIslem.belgeNo === t.belge_no}
@@ -3292,7 +3282,8 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
                       {grup.ayAd ? `${grup.ayAd} ${grup.yil}` : 'Tarihsiz'}
                       <span className="ml-2 text-xs text-gray-500 font-normal">({grup.ogeler.length} fatura)</span>
                     </h4>
-                    <table className="w-full">
+                    <FisDokumTablosu faturalar={grup.ogeler.filter(fisKaydiMi)} detaylar={kdvDetaylar} onAc={setFisGoster} />
+                    {grup.ogeler.some(fatura => !fisKaydiMi(fatura)) && <table className="w-full">
                       <thead>
                         <tr className="text-left text-gray-400 text-sm border-b border-blue-800/30">
                           <th className="pb-3">Tarih</th>
@@ -3308,12 +3299,12 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
                         </tr>
                       </thead>
                       <tbody>
-                        {grup.ogeler.map(f => {
+                        {grup.ogeler.filter(fatura => !fisKaydiMi(fatura)).map(f => {
                           const cokluKdv = kdvDetaylar[f.id]?.length > 1
                           return (
                           <Fragment key={f.id}>
                             {/* Coklu KDV: oran basina ayri satir */}
-                            {cokluKdv ? kdvDetaylar[f.id].map(d => (
+                            {cokluKdv ? kdvDetaylar[f.id].map((d, detaySira) => (
                               <tr
                                 key={`${f.id}-kdv-${d.oran}`}
                                 onClick={() => { const u = f.html_url || f.pdf_url || f.xml_url; if (u) faturaAc(f) }}
@@ -3443,7 +3434,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
                           )
                         })}
                       </tbody>
-                    </table>
+                    </table>}
                   </div>
                 ))}
               </div>

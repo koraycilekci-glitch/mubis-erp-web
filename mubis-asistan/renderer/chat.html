@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+  body { font: 14px 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 12px 16px; background: #1e3a5f; display: flex; align-items: center; gap: 8px; -webkit-app-region: drag; }
+  header b { flex: 1; } header button { -webkit-app-region: no-drag; }
+  #mesajlar { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .m { max-width: 85%; padding: 8px 12px; border-radius: 12px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; user-select: text; }
+  .ben { align-self: flex-end; background: #1d4ed8; }
+  .on { align-self: flex-start; background: #334155; }
+  footer { padding: 10px; display: flex; gap: 6px; border-top: 1px solid #334155; }
+  input { flex: 1; padding: 9px 12px; border-radius: 8px; border: 1px solid #475569; background: #1e293b; color: #e2e8f0; outline: none; }
+  button { padding: 9px 12px; border-radius: 8px; border: none; background: #1d4ed8; color: #fff; cursor: pointer; }
+  button.ic { background: #334155; }
+  button.ic.kayit { background: #dc2626; animation: nabiz 1s infinite; }
+  @keyframes nabiz { 50% { opacity: .6 } }
+  .ipucu { font-size: 11px; color: #94a3b8; padding: 0 12px 6px; }
+</style>
+</head>
+<body>
+  <header><b>🐾 MUBiS Asistan</b><button class="ic" id="kapat">✕</button></header>
+  <div id="mesajlar"></div>
+  <div class="ipucu">Komut: "MUBiS'i aç", "hatırlat 10 dk: sunucu" · Soru: "e-arşiv fatura nedir?" · 🎤 ile konuşabilirsiniz</div>
+  <footer>
+    <button class="ic" id="mic" title="Konuş">🎤</button>
+    <input id="giris" placeholder="Bir şey yazın veya sorun..." autofocus>
+    <button id="gonder">➤</button>
+  </footer>
+<script>
+  const $ = (s) => document.querySelector(s)
+  const mesajlar = $('#mesajlar'), giris = $('#giris')
+  function ekle(kim, metin) {
+    const d = document.createElement('div')
+    d.className = 'm ' + (kim === 'ben' ? 'ben' : 'on')
+    d.textContent = metin
+    mesajlar.appendChild(d)
+    mesajlar.scrollTop = mesajlar.scrollHeight
+  }
+  ekle('on', 'Merhaba! Ben MUBiS asistanınızım. Bana yazabilir veya 🎤 ile konuşabilirsiniz.')
+
+  let gonderiyor = false
+  async function yolla() {
+    const m = giris.value.trim()
+    if (!m || gonderiyor) return
+    giris.value = ''
+    ekle('ben', m)
+    gonderiyor = true
+    const cevap = await window.asistan.sohbetGonder(m)
+    ekle('on', cevap)
+    gonderiyor = false
+  }
+  $('#gonder').addEventListener('click', yolla)
+  giris.addEventListener('keydown', (e) => { if (e.key === 'Enter') yolla() })
+  window.asistan.onSohbetYanit((c) => ekle('on', c))
+  $('#kapat').addEventListener('click', () => window.close())
+
+  // Sesli komut (Turkce) - Electron webkitSpeechRecognition destekler
+  let tanima = null, kayit = false
+  $('#mic').addEventListener('click', () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) { ekle('on', 'Bu bilgisayarda ses tanima desteklenmiyor; yazarak iletebilirsiniz.') ; return }
+    if (kayit) { tanima.stop(); return }
+    tanima = new SR()
+    tanima.lang = 'tr-TR'; tanima.interimResults = false; tanima.maxAlternatives = 1
+    tanima.onstart = () => { kayit = true; $('#mic').classList.add('kayit') }
+    tanima.onend = () => { kayit = false; $('#mic').classList.remove('kayit') }
+    tanima.onerror = (e) => { kayit = false; $('#mic').classList.remove('kayit'); if (e.error !== 'aborted') ekle('on', 'Ses tanima hatasi: ' + e.error) }
+    tanima.onresult = (e) => {
+      const m = e.results[0][0].transcript
+      giris.value = m
+      yolla()
+    }
+    tanima.start()
+  })
+</script>
+</body>
+</html>

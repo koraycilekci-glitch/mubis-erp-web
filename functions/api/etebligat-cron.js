@@ -5,7 +5,7 @@
 // DELETE /api/etebligat-cron?id=...  -> plan sil
 // Not: Otomatik sorgu yalnizca Vergi Dairesi (DVS) tebligatlari icindir;
 // SGK tebligatlari e-Devlet guvenlik kodu gerektirdiginden otomatiklestirilemez.
-import { json, supabaseAdmin } from './_lib.js'
+import { json, supabaseAdmin, normalizePhone } from './_lib.js'
 
 export async function onRequestGet({ env, request }) {
   const supabase = supabaseAdmin(env)
@@ -140,6 +140,33 @@ export async function onRequestPatch({ env, request }) {
         }).then(({ error: nHata }) => {
           if (nHata) console.log('[etebligat-cron] bildirim yazilamadi:', nHata.message)
         })
+        // 2.9.x: Musteriye WhatsApp bildirimi — "yeni tebligatiniz var" mesaji
+        // (API kanali + opt-out secmemis musteri). Dosya gonderimi etebligat-gonder
+        // tarafinda tercih akisindan devam eder; burada yalniz uyari metni gider.
+        try {
+          const [{ data: cl2 }, { data: stRows }] = await Promise.all([
+            supabase.from('clients').select('name, company_name, phone, whatsapp_opt_out').eq('id', plan.client_id).maybeSingle(),
+            supabase.from('app_settings').select('key, value').in('key', ['whatsapp_channel', 'whatsapp_access_token', 'whatsapp_phone_number_id'])
+          ])
+          const stMap = {}
+          ;(stRows || []).forEach(r => { if (r.value) stMap[r.key] = r.value })
+          const tel = normalizePhone(cl2?.phone || '')
+          if (stMap.whatsapp_channel !== 'web' && stMap.whatsapp_access_token && stMap.whatsapp_phone_number_id && tel.length >= 12 && !cl2?.whatsapp_opt_out) {
+            const waMesaj = `Sayın ${cl2?.company_name || cl2?.name || ''},\n${yeniler.length} adet yeni e-Tebligatınız var. MUBiS portalından inceleyebilirsiniz: https://www.mubiserp.com/portal\nSaygılarımızla, MUBiS ERP`
+            const r = await fetch(`https://graph.facebook.com/v18.0/${stMap.whatsapp_phone_number_id}/messages`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${stMap.whatsapp_access_token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: tel, type: 'text', text: { body: waMesaj } })
+            })
+            await supabase.from('whatsapp_logs').insert({
+              client_id: plan.client_id, beyan_type: 'etebligat', year: new Date().getFullYear(),
+              document_type: 'etebligat_bildirim', phone: tel, email: '', channel: 'whatsapp',
+              message_id: '', status: r.ok ? 'sent' : 'failed', sent_at: new Date().toISOString()
+            })
+          }
+        } catch (waErr) {
+          console.log('[etebligat-cron] whatsapp bildirimi atlandi:', waErr?.message || waErr)
+        }
       }
     }
   }

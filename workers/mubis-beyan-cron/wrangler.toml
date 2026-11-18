@@ -1,0 +1,7 @@
+name = "mubis-beyan-cron"
+main = "index.js"
+compatibility_date = "2024-09-23"
+
+# Her gün 07:00 UTC = TR 10:00 (VPS yardımcısınun odeme tetiğiyle aynı saat)
+[triggers]
+crons = ["0 7 * * *"]

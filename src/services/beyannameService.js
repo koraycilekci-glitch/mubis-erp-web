@@ -1,7 +1,8 @@
 // Beyanname Kontrol Listesi servisi
-// - GİB Dijital VD "onaylı beyanname" sorgusunu yerel yardımcı programa
-//   yaptırır (beyanname-sorgula işi; mali müşavir kimliğiyle tüm temsil
-//   edilen mükelleflerin onaylı beyannameleri tek sorguda gelir)
+// - GİB Dijital VD "onaylı beyanname" sorgusunu önce VPS yardımcı sunucusuna
+//   yaptırır, VPS'e ulaşılamazsa yerel yardımcıya düşer (beyanname-sorgula işi;
+//   mali müşavir kimliğiyle tüm temsil edilen mükelleflerin onaylı beyannameleri
+//   tek sorguda gelir)
 // - Kayıtlar Supabase "beyanname_kayitlari" tablosuna upsert edilir (VKN bazlı)
 // - Kullanıcı kararları "beyanname_kararlar" tablosunda tutulur
 // (firma × tür × dönem: review/required/not-required)
@@ -9,9 +10,10 @@ import { supabase } from '../lib/supabase'
 import { yardimciIsSunucu } from '../utils/gibOdemeHelper'
 import { getMyOfficeId } from './officeService'
 
-// Supabase tek istekte en fazla 1000 satir dondurur. Donem toplamlari ve
-// listeler eksik kalmasin diye range() ile sayfa sayfa okunur.
-const SAYFA_BOYU = 1000
+// Supabase/PostgREST tek istekte en fazla 999 satir dondurur (1000 istense
+// bile 999 gelir). 1000 beklenirse ilk sayfada "bitti" sanilir ve yeni
+// kayitlar hic okunmaz. Bu yuzden sayfa boyu 999, ikincil siralama `id`.
+const SAYFA_BOYU = 999
 
 async function sayfaliGetir(kur) {
   const hepsi = []
@@ -112,14 +114,24 @@ export function yuklemeAyinda(yuklemeZamani, yil, ay) {
 }
 
 // Secili doneme ait onayli kayitlar (VKN bazli, ham)
-// Detay: hata yutulmaz — okuma hatasi ekranda gosterilir (2.7.495)
+// Oncelikle sunucu ucunu (/api/beyanname-kayitlari) kullanir: 999 satir
+// siniri, kararsiz siralama ve RLS kaynakli eksik okuma orada cozulur.
+// Erişilemezse eski tarayici okumasina yedeklenir (hata yutulmaz).
 export async function beyannameKayitlariGetirDetay(yil, ay) {
+  try {
+    const r = await fetch(`/api/beyanname-kayitlari?yil=${+yil}&ay=${+ay}`, { cache: 'no-store' })
+    if (r.ok) {
+      const j = await r.json().catch(() => ({}))
+      if (j?.ok && Array.isArray(j.kayitlar)) return { kayitlar: j.kayitlar, hata: '' }
+    }
+  } catch { /* yedek okumaya gec */ }
   try {
     const { data, error } = await sayfaliGetir(() => supabase
       .from('beyanname_kayitlari')
       .select('*')
       .eq('onayli', true)
-      .order('sorgu_ts', { ascending: false }))
+      .order('sorgu_ts', { ascending: false })
+      .order('id', { ascending: true }))
     if (error) return { kayitlar: [], hata: error.message }
     return { kayitlar: (data || []).filter(k => yuklemeAyinda(k.yukleme_zamani, yil, ay)), hata: '' }
   } catch (e) {

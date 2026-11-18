@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useClients } from '../hooks/useClients'
-import { borcDokumuToplu, borcOzetle, borcDetaySatirlari, eskiBorclariSil } from '../services/borcDokumuService'
+import { borcDokumuToplu, borcOzetle, borcDetaySatirlari, eskiBorclariSil, musteriBorclariSil } from '../services/borcDokumuService'
 import { gibBorcSorgula, sgkBorcSorgula, gibLucaSorguDurdur } from '../utils/gibOdemeHelper'
 import { openWhatsAppWeb, sendEmail } from '../services/whatsappService'
 import {
@@ -230,6 +230,7 @@ export default function MusteriBorcDokumu() {
   const [muhasebeDahil, setMuhasebeDahil] = useState(false)
   const [yukleniyor, setYukleniyor] = useState(false)
   const [sorguYukleniyor, setSorguYukleniyor] = useState(false)
+  const [borcSiliniyor, setBorcSiliniyor] = useState(false)
   const [sorguMesaj, setSorguMesaj] = useState('')
   const [sorguIlerleme, setSorguIlerleme] = useState(null)
   const [hata, setHata] = useState('')
@@ -733,6 +734,30 @@ export default function MusteriBorcDokumu() {
     }
   }
 
+  // 2.8.x: Seçili müşterinin TÜM borç kayıtlarını sil, sonra canlı sorgu yap
+  // ve güncel borcu göster.
+  const borcSilVeSorgula = async () => {
+    if (!seciliId) { setSorguMesaj('Önce bir müşteri seçin.'); return }
+    const c = siraliMusteriler.find(x => String(x.id) === String(seciliId))
+    if (!c) { setSorguMesaj('Seçili müşteri bulunamadı.'); return }
+    const onay = window.confirm(
+      `${musteriAdi(c)} müşterisinin TÜM borç kayıtları (eski ve güncel) silinecek, ardından canlı sorgu yapılarak güncel borç alınacak.\n\nDevam edilsin mi?`
+    )
+    if (!onay) return
+    setBorcSiliniyor(true)
+    setSorguMesaj('')
+    try {
+      const silinen = await musteriBorclariSil(seciliId)
+      if (silinen > 0) setSilinenAdet(silinen)
+      setSorguMesaj(`${silinen} borç kaydı silindi. Güncel borç sorgulanıyor…`)
+      await sorgula([c], tip === 'hepsi' ? null : [tip])
+    } catch (e) {
+      setSorguMesaj(`Silme hatası: ${e?.message || e}`)
+    } finally {
+      setBorcSiliniyor(false)
+    }
+  }
+
   const durdur = async () => {
     sorguIptalRef.current = true
     setSorguMesaj('Durduruluyor… çalışan ve kuyrukta bekleyen sorgular iptal ediliyor.')
@@ -866,6 +891,18 @@ export default function MusteriBorcDokumu() {
             >
               <Search className="w-4 h-4" />
               {kapsam === 'tek' ? 'Bu Müşteriyi Sorgula' : 'Tümünü Sorgula'}
+            </button>
+          )}
+          {kapsam === 'tek' && seciliId && (
+            <button
+              type="button"
+              onClick={borcSilVeSorgula}
+              disabled={borcSiliniyor || sorguYukleniyor}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-red-600/20 border border-red-500/40 text-red-300 text-sm font-medium hover:bg-red-600/30 disabled:opacity-40"
+              title="Seçili müşterinin tüm borç kayıtlarını siler, ardından canlı sorgu ile güncel borcu gösterir"
+            >
+              {borcSiliniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+              {borcSiliniyor ? 'Siliniyor…' : 'Borçları Sil ve Yeniden Sorgula'}
             </button>
           )}
           <button

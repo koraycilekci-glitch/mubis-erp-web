@@ -8,7 +8,7 @@ import {
 import { gibYardimciDurumu } from '../utils/gibOdemeHelper'
 import {
   etebligatlariGetir, etebligatlariSorgula, etebligatlariTopluBelgeIndir, sgkEtebligatlariSorgula,
-  etebligatBelgesiAl, okunduAyarla, kullaniciOkunduSeti, gonderimKaydet, etebligatSil, listeCiktisiMi, yeniTebligatlariTemizle
+  etebligatBelgesiAl, okunduAyarla, kullaniciOkunduSeti, gonderimKaydet, etebligatSil, tebligatPdfGetir, yeniTebligatlariTemizle
 } from '../services/etebligatService'
 import { sendDocumentViaWhatsAppChannel, sendEmail } from '../services/whatsappService'
 import { getSettings } from '../services/settingsService'
@@ -210,8 +210,8 @@ export default function Tebligatlar() {
       for (let i = 0; i < adaylar.length; i += 4) {
         const grup = adaylar.slice(i, i + 4)
         await Promise.all(grup.map(async s => {
-          const kotu = await listeCiktisiMi(s.file_url).catch(() => false)
-          hazirKontrolOnbellek.set(s.file_url, !kotu)
+          const belge = await tebligatPdfGetir(s.file_url)
+          hazirKontrolOnbellek.set(s.file_url, belge.ok)
         }))
         if (iptal) return
         tumunuGuncelle()
@@ -467,17 +467,14 @@ export default function Tebligatlar() {
     setIslem({ belgeNo: satir.belge_no, tip: 'indir' })
     setMesaj(null)
     try {
-      // Kayitli PDF varsa once kalite kontrolu: DVS "liste yazdir" ciktisi
-      // (JasperReports) ise yok say ve yeniden indir (2.7.240 duzeltmesi).
-      // 2.7.472: dogrulanmis (hazir) belgede tekrar kontrol YAPILMAZ — tek
-      // tikla dogrudan acilir; "hazir degil" bilinen belgede yardimciya
-      // baglanmak yerine kullaniciya yonlendirme gosterilir.
       if (satir.file_url && !yenidenIndir) {
-        const kotu = hazirKontrolOnbellek.has(satir.file_url)
-          ? hazirKontrolOnbellek.get(satir.file_url) === false
-          : await listeCiktisiMi(satir.file_url)
-        if (!kotu) {
-          window.open(satir.file_url, '_blank', 'noopener')
+        const belge = await tebligatPdfGetir(satir.file_url)
+        hazirKontrolOnbellek.set(satir.file_url, belge.ok)
+        setHazirMap(prev => ({ ...prev, [satir.belge_no]: belge.ok }))
+        if (belge.ok) {
+          const objeUrl = URL.createObjectURL(belge.blob)
+          window.open(objeUrl, '_blank', 'noopener')
+          setTimeout(() => URL.revokeObjectURL(objeUrl), 5 * 60 * 1000)
           // 2.8.5: belgeyi ACAN kullanicida okundu isaretlenir (kisiye ozel)
           try {
             await okunduAyarla(seciliId, satir.belge_no, true)
@@ -486,9 +483,11 @@ export default function Tebligatlar() {
           setIslem({ belgeNo: null, tip: null })
           return
         }
-        setMesaj({ tip: 'hata', metin: 'Bu kaydın PDF’i tebligat LİSTESİ çıktısı — görüntülemeye hazır değil. Yanındaki İndir tuşuyla DVS’ten belgeyi yeniden indirin.' })
-        setIslem({ belgeNo: null, tip: null })
-        return
+        if (belge.reason === 'liste-ciktisi') {
+          setMesaj({ tip: 'hata', metin: 'Bu kaydın PDF’i tebligat LİSTESİ çıktısı — görüntülemeye hazır değil. Yanındaki İndir tuşuyla DVS’ten belgeyi yeniden indirin.' })
+          setIslem({ belgeNo: null, tip: null })
+          return
+        }
       }
       // SGK satirlarinda PDF sorgu sirasinda iner; sonradan DVS'ten
       // indirilemeyecegi icin yardimciya gitmek anlamsizdir.
@@ -554,9 +553,11 @@ export default function Tebligatlar() {
   const gonderCekirdek = useCallback(async (satir, kanal) => {
     if (!seciliMusteri) return { ok: false, hata: 'Müşteri seçilmedi' }
     let url = satir.file_url
-    // Kayitli PDF liste ciktisiysa (JasperReports) gonderme — yeniden indir
-    if (url && await listeCiktisiMi(url)) url = null
+    if (url && !(await tebligatPdfGetir(url)).ok) url = null
     if (!url) {
+      if ((satir.kaynak || 'vergi') === 'sgk') {
+        return { ok: false, hata: 'SGK tebligatının PDF’i bulunamadı. SGK tebligatlarını yeniden sorgulayın.' }
+      }
       const res = await etebligatBelgesiAl(seciliMusteri, satir)
       if (!res.ok) return { ok: false, hata: 'Belge indirilemedi: ' + (res.reason || res.hata || 'bilinmeyen') }
       url = res.url

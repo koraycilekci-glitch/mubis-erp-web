@@ -3,6 +3,7 @@ import { Loader2, RefreshCw, Upload, FileSpreadsheet, FileText, Receipt, Percent
 import { fisListesi, fisYukle, fisManuelEkle, mukerrerBul, taramaFotoUrl, taramaSil } from '../services/taramaService'
 import BilgisayarTarama from '../components/BilgisayarTarama'
 import { supabase } from '../lib/supabase'
+import { fisDetaylariniDogrula, fisOranSatirlari } from '../utils/fisDetay'
 import FisElleEkleTablosu, { elleBosSatir, elleSatirHesap, donemUyumsuz, sayiAl } from '../components/FisElleEkleTablosu'
 
 const AYLAR = ['OCAK', 'ŞUBAT', 'MART', 'NİSAN', 'MAYIS', 'HAZİRAN', 'TEMMUZ', 'AĞUSTOS', 'EYLÜL', 'EKİM', 'KASIM', 'ARALIK']
@@ -150,27 +151,25 @@ export default function Fisler() {
   // 2) Uymazsa %10/%20 karışım çözümü: m20 = 10K − M (kalan m10).
   const zSatirHesapla = (f) => {
     const n2 = (x) => Math.round((Number(x) || 0) * 100) / 100
-    const M = Number(f.matrah) || 0, K = Number(f.kdv) || 0
+    const detaylar = fisDetaylariniDogrula(f.kdvDetaylari, f.matrah, f.kdv, f.toplam)
+    if (!detaylar.length) {
+      // Fallback: KDV oranini matrah/kdv/toplam'dan tahmin et
+      const oranTahmin = f.kdv && f.matrah ? Math.round((Number(f.kdv) / Number(f.matrah)) * 100) : null
+      if (oranTahmin && [1, 10, 20].includes(oranTahmin)) {
+        const toplam = n2(Number(f.matrah) + Number(f.kdv))
+        return { s0: 0, s1: oranTahmin === 1 ? toplam : 0, s10: oranTahmin === 10 ? toplam : 0, s20: oranTahmin === 20 ? toplam : 0, m1: oranTahmin === 1 ? n2(f.matrah) : 0, m10: oranTahmin === 10 ? n2(f.matrah) : 0, m20: oranTahmin === 20 ? n2(f.matrah) : 0, k1: oranTahmin === 1 ? n2(f.kdv) : 0, k10: oranTahmin === 10 ? n2(f.kdv) : 0, k20: oranTahmin === 20 ? n2(f.kdv) : 0 }
+      }
+      throw new Error(`${f.fisNo || f.satici || 'Z raporu'}: KDV oranları doğrulanamadı; kaynak dökümü kontrol edin.`)
+    }
     const r = { s0: 0, s1: 0, s10: 0, s20: 0, m1: 0, m10: 0, m20: 0, k1: 0, k10: 0, k20: 0 }
-    if (K > 0 && M > 0) {
-      const hesap = (K / M) * 100
-      if (Math.abs(hesap - 1) < 0.6) { r.m1 = n2(M); r.k1 = n2(K) }
-      else if (Math.abs(hesap - 10) < 0.6) { r.m10 = n2(M); r.k10 = n2(K) }
-      else if (Math.abs(hesap - 20) < 0.6) { r.m20 = n2(M); r.k20 = n2(K) }
-      else {
-        let m20 = Math.round((10 * K - M) * 100) / 100
-        if (m20 < 0.5) m20 = 0
-        else if (M - m20 < 0.5) m20 = M
-        r.m20 = n2(m20)
-        r.m10 = n2(M - r.m20)
-        r.k20 = n2(r.m20 * 0.20)
-        r.k10 = n2(Math.round((K - r.k20) * 100) / 100)
+    for (const detay of detaylar) {
+      if (![0, 1, 10, 20].includes(detay.oran)) throw new Error(`Bu Z raporu şablonu %${detay.oran} oranını desteklemiyor; Fiş Kalemleri Excel dökümünü kullanın.`)
+      r[`s${detay.oran}`] = n2(detay.matrah + detay.kdv)
+      if (detay.oran) {
+        r[`m${detay.oran}`] = n2(detay.matrah)
+        r[`k${detay.oran}`] = n2(detay.kdv)
       }
     }
-    r.s0 = n2(M - r.m1 - r.m10 - r.m20)
-    r.s1 = n2(r.m1 + r.k1)
-    r.s10 = n2(r.m10 + r.k10)
-    r.s20 = n2(r.m20 + r.k20)
     return r
   }
 
@@ -184,33 +183,26 @@ export default function Fisler() {
       const n2 = (x) => Math.round((Number(x) || 0) * 100) / 100
       const trg = tarihGgAaYyyy
       const yerTutucuMu = (v) => !v || /^(ZR|FİŞ)-M$/i.test(String(v))
-      const oranBul = (f) => {
-        if (f.kdvOran != null) return Number(f.kdvOran)
-        const M = Number(f.matrah) || 0, K = Number(f.kdv) || 0
-        if (!M || !K) return null
-        const hesap = (K / M) * 100
-        for (const o of [1, 5, 8, 10, 20]) if (Math.abs(hesap - o) < 0.6) return o
-        return Math.round(hesap)
-      }
+      const oranBul = (f) => f.kdvOran != null ? Number(f.kdvOran) : null
       // Z raporları: ortak hesap (tek oran testi + %10/%20 karışım)
       const zVeri = liste.filter(f => f.kaynak === 'zrapor' || f.tur === 'Z RAPORU').map((f, i) => {
         const r = zSatirHesapla(f)
-        const nakit = f.nakit != null ? n2(f.nakit) : 0
-        const kredi = f.toplam != null ? Math.max(n2(Number(f.toplam) - nakit), 0) : 0
+        const nakit = f.nakit != null ? n2(f.nakit) : ''
+        const kredi = f.kredi != null ? n2(f.kredi) : ''
         const evrakNo = yerTutucuMu(f.fisNo) ? (f.zNo != null ? String(f.zNo) : String(i + 1)) : String(f.fisNo)
         return [trg(f.tarih), evrakNo, (f.satici || 'Z RAPORU').replace(/;/g, ' '),
           r.s0, r.s1, r.s10, r.s20, nakit, kredi,
           r.m1, r.m10, r.m20, r.k1, r.k10, r.k20]
       })
       // Gider fişleri: tek oranlı 7 kolon
-      const gVeri = liste.filter(f => String(f.tur || '').includes('GİDER')).map(f => {
+      const gVeri = liste.filter(f => String(f.tur || '').includes('GİDER')).flatMap(fisOranSatirlari).map(f => {
         const oran = oranBul(f)
         return [trg(f.tarih), f.fisNo != null && !yerTutucuMu(f.fisNo) ? String(f.fisNo) : '',
           (f.satici || f.unvan || '').replace(/;/g, ' '),
-          oran != null ? oran : '', n2(f.toplam), n2(f.matrah), n2(f.kdv)]
+          oran != null ? oran : '', n2(f.toplam), n2(f.matrah), n2(f.kdv), f.nakit ?? '', f.kredi ?? '']
       })
       const zBaslik = ['TARİH', 'EVRAK NO', 'AÇIKLAMA', 'SATIŞ 0', 'SATIŞ 1', 'SATIŞ 10', 'SATIŞ 20', 'NAKİT', 'KREDİ K', 'MATRAH 1', 'MATRAH 10', 'MATRAH 20', 'KDV 1', 'KDV 10', 'KDV 20']
-      const gBaslik = ['FİŞ TARİHİ', 'FİŞ NO', 'ÜNVANI', 'KDV ORANI', 'TOPLAM', 'KDV MATRAHI', 'KDV TUTARI']
+      const gBaslik = ['FİŞ TARİHİ', 'FİŞ NO', 'ÜNVANI', 'KDV ORANI', 'TOPLAM', 'KDV MATRAHI', 'KDV TUTARI', 'NAKİT (BELGE TOPLAMI)', 'KREDİ KARTI (BELGE TOPLAMI)']
       const zToplam = zBaslik.slice(3).map((_, ci) => zVeri.reduce((a, r) => a + (Number(r[ci + 3]) || 0), 0))
       const gToplam = gBaslik.slice(4).map((_, ci) => gVeri.reduce((a, r) => a + (Number(r[ci + 4]) || 0), 0))
       const wb = XLSX.utils.book_new()
@@ -244,37 +236,12 @@ export default function Fisler() {
       const yerTutucu = !f.fisNo || /^(ZR|FİŞ)-M$/i.test(String(f.fisNo))
       const evrakNo = yerTutucu ? (zMi && f.zNo != null ? String(f.zNo) : String(siraNo)) : String(f.fisNo)
       siraNo++
-      const M = Number(f.matrah) || 0, K = Number(f.kdv) || 0
-      // Z raporlarında %10 ve %20 satış karışıktır: KDV'den matrahları ayrıştır
-      // (T = 1.1*m10 + 1.2*m20, M = m10 + m20  →  m20 = 10K - M)
-      const parcalar = []
-      if (zMi && K > 0 && M > 0) {
-        let m20 = Math.round((10 * K - M) * 100) / 100
-        if (m20 < 0.5) m20 = 0
-        else if (M - m20 < 0.5) m20 = M
-        const m10 = Math.round((M - m20) * 100) / 100
-        if (m20 > 0 && m10 > -0.005 && m20 <= M) {
-          if (m20 > 0.005) parcalar.push({ oran: 20, matrah: m20, kdv: Math.round(m20 * 20) / 100 })
-          if (m10 > 0.005) parcalar.push({ oran: 10, matrah: m10, kdv: Math.round(m10 * 10) / 100 })
-        }
-      }
-      if (!parcalar.length) {
-        let oran = f.kdvOran != null ? Number(f.kdvOran) : null
-        if (oran == null && K && M) {
-          const hesap = (K / M) * 100
-          for (const o of [1, 5, 8, 10, 20]) if (Math.abs(hesap - o) < 0.6) { oran = o; break }
-        }
-        parcalar.push({ oran: oran != null ? oran : 0, matrah: M, kdv: K })
-      }
+      const parcalar = fisDetaylariniDogrula(f.kdvDetaylari, f.matrah, f.kdv, f.toplam)
+      if (!parcalar.length) throw new Error(`${evrakNo}: KDV oranları doğrulanamadı; kaynak belgeyi kontrol edin.`)
       // Bölünen satırlar aynı evrak no'yu (Z no) paylaşır
       // KREDİLİ TUTAR yalnızca ilk satıra yazılır (her satıra tekrarlanmaz, Luca'da çift sayılmasın)
       // FAALİYET KODU: müşteri kartındaki NACE kodu (Z raporu satırlarında)
-      let krediTutar = null
-      if (zMi) {
-        if (f.nakit != null && f.toplam != null) krediTutar = Number(f.toplam) - Number(f.nakit)
-        else if (f.kredi != null) krediTutar = Number(f.kredi)
-      }
-      if (krediTutar != null && (krediTutar < 0.005 || !isFinite(krediTutar))) krediTutar = null
+      const krediTutar = f.kredi != null && Number.isFinite(Number(f.kredi)) ? Number(f.kredi) : null
       const faaliyetKodu = zMi ? (f.naceKodu || '') : ''
       parcalar.forEach((p, pi) => {
         satirlar.push([
@@ -335,8 +302,8 @@ export default function Fisler() {
       siraNo++
       // Ortak hesap: tek oran (%1/%10/%20) → o kolona; karışımsa %10/%20 çözümü
       const r = zSatirHesapla(f)
-      const nakit = f.nakit != null ? Number(f.nakit) : 0
-      const kredi = f.toplam != null ? Math.round((Number(f.toplam) - nakit) * 100) / 100 : 0
+      const nakit = f.nakit != null ? Number(f.nakit) : null
+      const kredi = f.kredi != null ? Number(f.kredi) : null
       satirlar.push([
         tarih, evrakNo, (f.satici || 'Z RAPORU').replace(/;/g, ' '),
         sayi(r.s0), sayi(r.s1), sayi(r.s10), sayi(r.s20),
@@ -352,7 +319,7 @@ export default function Fisler() {
   const GIDER_CSV_BASLIK = ['FİŞ TARİHİ', 'FİŞ NO', 'ÜNVANI', 'KDV ORANI', 'TOPLAM', 'KDV MATRAHI', 'KDV TUTARI']
 
   const lucaGiderSatirlari = () => {
-    const giderler = dokumListe.filter(f => String(f.tur || '').includes('GİDER'))
+    const giderler = dokumListe.filter(f => String(f.tur || '').includes('GİDER')).flatMap(fisOranSatirlari)
     const satirlar = [GIDER_CSV_BASLIK]
     let siraNo = 1
     for (const f of giderler) {
@@ -361,12 +328,8 @@ export default function Fisler() {
       const fisNo = yerTutucu ? String(siraNo) : String(f.fisNo)
       siraNo++
       const M = Number(f.matrah) || 0, K = Number(f.kdv) || 0
-      let oran = f.kdvOran != null ? Number(f.kdvOran) : null
-      if (oran == null && K && M) {
-        const hesap = (K / M) * 100
-        for (const o of [1, 5, 8, 10, 20]) if (Math.abs(hesap - o) < 0.6) { oran = o; break }
-        if (oran == null) oran = Math.round(hesap)
-      }
+      const oran = f.kdvOran != null ? Number(f.kdvOran) : null
+      if (oran == null) throw new Error(`${fisNo}: KDV oranı doğrulanamadı; kaynak belgeyi kontrol edin.`)
       satirlar.push([
         tarih, fisNo, (f.satici || f.unvan || '').replace(/;/g, ' '),
         oran != null ? String(oran) : '',
@@ -427,7 +390,7 @@ export default function Fisler() {
     try {
       if (!dokumListe.length) { setYukleme('Seçilen müşteri/dönemde fiş yok — ay ve yıl seçimini kontrol edin.'); return }
       const XLSX = await import('xlsx')
-    const veri = dokumListe.map((f, i) => ({
+    const veri = dokumListe.flatMap(fisOranSatirlari).map((f, i) => ({
       'Sıra': i + 1,
       'Tarih': tarihGgAaYyyy(f.tarih),
       'Satıcı': f.satici || '',
@@ -438,6 +401,8 @@ export default function Fisler() {
       'KDV': f.kdv ?? '',
       'KDV Oranı': f.kdvOran != null ? `%${f.kdvOran}` : '',
       'Toplam': f.toplam ?? '',
+      'Nakit (belge toplamı)': f.nakit ?? '',
+      'Kredi Kartı (belge toplamı)': f.kredi ?? '',
       'Müşteri': f.musteriAd,
       'Durum': f.durum,
       'Kaynak': f.kaynak,
@@ -499,7 +464,7 @@ export default function Fisler() {
             clientId: yukMusteri,
             tip: 'z',
             tarih: isoTarih(s.tarih),
-            evrakNo: s.evakNo,
+            evrakNo: s.evrakNo,
             aciklama: s.aciklama,
             satis: { s0: sayiAl(s.s0), s1: sayiAl(s.s1), s10: sayiAl(s.s10), s20: sayiAl(s.s20) },
             nakit: elleSatirHesap(s).nakit,
@@ -745,15 +710,19 @@ export default function Fisler() {
                 <th className="sticky top-0 z-10 bg-[#13224a] px-3 py-2.5 font-semibold whitespace-nowrap">Satıcı</th>
                 <th className="sticky top-0 z-10 bg-[#13224a] px-3 py-2.5 font-semibold whitespace-nowrap">Müşteri</th>
                 <th className="sticky top-0 z-10 bg-[#13224a] px-3 py-2.5 font-semibold whitespace-nowrap">Kategori</th>
+                <th className="sticky top-0 z-10 bg-[#13224a] px-3 py-2.5 font-semibold text-right whitespace-nowrap">Matrah</th>
+                <th className="sticky top-0 z-10 bg-[#13224a] px-3 py-2.5 font-semibold text-right whitespace-nowrap">KDV Oranı</th>
                 <th className="sticky top-0 z-10 bg-[#13224a] px-3 py-2.5 font-semibold text-right whitespace-nowrap">Toplam</th>
                 <th className="sticky top-0 z-10 bg-[#13224a] px-3 py-2.5 font-semibold text-right whitespace-nowrap">KDV</th>
+                <th className="sticky top-0 z-10 bg-[#13224a] px-3 py-2.5 font-semibold text-right whitespace-nowrap">Nakit</th>
+                <th className="sticky top-0 z-10 bg-[#13224a] px-3 py-2.5 font-semibold text-right whitespace-nowrap">Kredi Kartı</th>
                 <th className="sticky top-0 z-10 bg-[#13224a] px-3 py-2.5 font-semibold whitespace-nowrap">Durum</th>
                 <th className="sticky top-0 z-10 bg-[#13224a] px-3 py-2.5 w-16" />
               </tr>
             </thead>
             <tbody>
-              {gorunen.map(f => (
-                <tr key={f.id} className={`border-t border-blue-900/30 hover:bg-blue-900/20 transition ${mukerrer.has(f.id) ? 'bg-red-950/20' : ''}`}>
+              {gorunen.flatMap(fisOranSatirlari).map(f => (
+                <tr key={f.satirKey || f.id} className={`border-t border-blue-900/30 hover:bg-blue-900/20 transition ${mukerrer.has(f.id) ? 'bg-red-950/20' : ''}`}>
                   <td className="px-3 py-2.5">
                     <input type="checkbox" checked={secili.has(f.id)} onChange={() => tekSec(f.id)} className="accent-blue-500" />
                   </td>
@@ -764,8 +733,16 @@ export default function Fisler() {
                   </td>
                   <td className="px-3 py-2.5 text-gray-400 max-w-[160px] truncate">{f.musteriAd}</td>
                   <td className="px-3 py-2.5 text-cyan-300 font-medium">{f.kategori || <span className="text-gray-600">—</span>}</td>
+                  <td className="px-3 py-2.5 text-right text-gray-300 tabular-nums">{tl(f.matrah)}</td>
+                  <td className="px-3 py-2.5 text-right text-cyan-300" title={f.fisDetayUyari || ''}>{f.kdvOran != null ? `%${f.kdvOran}` : 'Bilinmiyor'}</td>
                   <td className="px-3 py-2.5 text-right text-white tabular-nums">{tl(f.toplam)}</td>
                   <td className="px-3 py-2.5 text-right text-gray-300 tabular-nums">{tl(f.kdv)}</td>
+                  {['nakit', 'kredi'].map(alan => (
+                    <td key={alan} className="px-3 py-2.5 text-right text-cyan-300 tabular-nums whitespace-nowrap">
+                      {f.odemeDevamSatiri ? '—' : f[alan] == null ? 'Bilinmiyor' : tl(f[alan])}
+                      {f.odemeBelgeToplami && !f.odemeDevamSatiri && <span className="block text-[10px] text-gray-500">Belge toplamı</span>}
+                    </td>
+                  ))}
                   <td className="px-3 py-2.5">
                     <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${f.durum === 'islendi' ? 'text-emerald-400 bg-emerald-500/10' : 'text-amber-400 bg-amber-500/10'}`}>
                       {f.durum === 'islendi' ? 'İşlendi' : 'Yeni'}

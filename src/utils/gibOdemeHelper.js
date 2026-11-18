@@ -293,8 +293,12 @@ async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 100
   // kilitlenmesin. Yerel yardimci da yoksa anlasilir hata doner.
   // secenekler.yerelYedek === false: yerel yardimciya ASLA dusme (SGK/vergi
   // borcu gibi musteri sorgulari yalnizca VPS uzerinden calisir).
+  const iptalEdildiMi = () => secenekler.iptalKontrol?.() === true
+  const iptalSonucu = () => ({ ok: false, reason: 'KULLANICI_DURDURDU' })
+  if (iptalEdildiMi()) return iptalSonucu()
   const yerelYedekAktif = secenekler?.yerelYedek !== false
   const yerelYedek = async () => {
+    if (iptalEdildiMi()) return iptalSonucu()
     if (!yerelYedekAktif) {
       return { ok: false, reason: secenekler?.yerelYedekKapaliMesaj || SUNUCU_KAPALI_MESAJ }
     }
@@ -302,7 +306,7 @@ async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 100
       return { ok: false, reason: SUNUCU_KAPALI_MESAJ }
     }
     try { onDurum?.('yerel-yedek') } catch {}
-    const sonuc = await yardimciIsYerel(isAdi, params, zamanAsimiMs)
+    const sonuc = await yardimciIsYerel(isAdi, params, zamanAsimiMs, onDurum, secenekler)
     return sonuc?.ok ? { ...sonuc, yerelYedek: true } : sonuc
   }
   // Yerel yedek kapali islerde (SGK/vergi borcu) sunucu bekleme bayragi
@@ -332,8 +336,18 @@ async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 100
   sunucuHataTemizle()
   let yerelYedegeDus = false
   const t0 = Date.now()
+  let sonAdim = null
+  let adimBaslangici = t0
+  const adimZamanAsimi = () => {
+    const sinir = secenekler.adimZamanAsimlari?.[sonAdim]
+    return sinir > 0 && Date.now() - adimBaslangici >= sinir
+  }
+  const zamanAsimiSonucu = () => ({ ok: false, reason: `Luca islem takibi suresinde tamamlanmadi (${sonAdim || 'yanıt bekleniyor'}). İşlem sunucuda devam ediyor olabilir; Durdur düğmesine basmadan yeniden sorgulamayın.` })
   while (!yerelYedegeDus && Date.now() - t0 < zamanAsimiMs) {
+    if (iptalEdildiMi()) return iptalSonucu()
+    if (adimZamanAsimi()) return zamanAsimiSonucu()
     await new Promise(r => setTimeout(r, 3000))
+    if (iptalEdildiMi()) return iptalSonucu()
     let j1 = null
     try {
       const r1 = await yardimciFetch(`/api/yardimci/is-sonuc?id=${encodeURIComponent(j0.isId)}`, { headers: sunucuZorunluBasliklar(), signal: AbortSignal.timeout(15000) })
@@ -342,8 +356,13 @@ async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 100
     } catch (error) {
       if (error?.message === 'Sunucu yardımcısı için oturum açın') return { ok: false, reason: error.message }
     }
+    if (iptalEdildiMi()) return iptalSonucu()
     if (!j1?.success) continue
     if (j1.durum === 'calisiyor' && typeof j1.adim === 'string') {
+      if (j1.adim !== sonAdim) {
+        sonAdim = j1.adim
+        adimBaslangici = Date.now()
+      }
       try { onDurum?.(j1.adim) } catch {}
     }
     if (j1.durum === 'bitti') return { ok: true, ...j1 }
@@ -359,7 +378,9 @@ async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 100
       return { ok: false, reason: j1.error || 'is-hatasi' }
     }
   }
+  if (iptalEdildiMi()) return iptalSonucu()
   if (!yerelYedegeDus) {
+    if (isAdi === 'efatura-sorgula') return zamanAsimiSonucu()
     return {
       ok: false,
       reason: yerelYedekAktif ? 'servis-yanit-vermedi' : (secenekler?.yerelYedekKapaliMesaj || SUNUCU_KAPALI_MESAJ)
@@ -369,20 +390,32 @@ async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 100
   return yerelYedek()
 }
 
-export async function yardimciIsYerel(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 1000) {
+export async function yardimciIsYerel(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 1000, onDurum, secenekler = {}) {
+  const controller = new AbortController()
+  const iptalEdildiMi = () => secenekler.iptalKontrol?.() === true
+  const zamanlayici = setTimeout(() => controller.abort(), zamanAsimiMs)
+  const iptalTakibi = secenekler.iptalKontrol ? setInterval(() => {
+    if (iptalEdildiMi()) controller.abort()
+  }, 250) : null
   try {
+    if (iptalEdildiMi()) return { ok: false, reason: 'KULLANICI_DURDURDU' }
     if (!await yerelYardimciUygunMu()) return { ok: false, reason: 'kurulu-degil' }
+    if (iptalEdildiMi()) return { ok: false, reason: 'KULLANICI_DURDURDU' }
     const r = await yardimciFetch('http://127.0.0.1:8765/is', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ is: isAdi, ...params }),
-      signal: AbortSignal.timeout(zamanAsimiMs)
+      signal: controller.signal
     })
     const j = await r.json().catch(() => ({}))
+    if (iptalEdildiMi()) return { ok: false, reason: 'KULLANICI_DURDURDU' }
     if (j?.success) return { ok: true, ...j }
     return { ok: false, reason: j?.error || 'servis-hatasi' }
   } catch (e) {
-    return { ok: false, reason: e?.name === 'TimeoutError' ? 'servis-yanit-vermedi' : 'servis-hatasi' }
+    return { ok: false, reason: iptalEdildiMi() ? 'KULLANICI_DURDURDU' : controller.signal.aborted || e?.name === 'TimeoutError' ? 'servis-yanit-vermedi' : 'servis-hatasi' }
+  } finally {
+    clearTimeout(zamanlayici)
+    if (iptalTakibi !== null) clearInterval(iptalTakibi)
   }
 }
 
@@ -468,10 +501,12 @@ export async function gibLucaSorguDurdur(kaynak = 'otomatik', tumu = false) {
   const ek = tumu ? '?tumu=1' : ''
   const istekler = kaynak === 'yerel'
     ? [yardimciFetch(`http://127.0.0.1:8765/is-durdur${ek}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(5000) })]
-    : [
-        yardimciFetch(`${YARDIMCI_BASE()}/is-durdur${ek}`, { method: 'POST', headers: yardimciBasliklar(), signal: AbortSignal.timeout(5000) }),
-        yardimciFetch(`/api/yardimci/is-durdur${ek}`, { method: 'POST', headers: sunucuZorunluBasliklar(), signal: AbortSignal.timeout(5000) })
-      ]
+    : kaynak === 'sunucu'
+      ? [yardimciFetch(`/api/yardimci/is-durdur${ek}`, { method: 'POST', headers: sunucuZorunluBasliklar(), signal: AbortSignal.timeout(5000) })]
+      : [
+          yardimciFetch(`${YARDIMCI_BASE()}/is-durdur${ek}`, { method: 'POST', headers: yardimciBasliklar(), signal: AbortSignal.timeout(5000) }),
+          yardimciFetch(`/api/yardimci/is-durdur${ek}`, { method: 'POST', headers: sunucuZorunluBasliklar(), signal: AbortSignal.timeout(5000) })
+        ]
   const yanitlar = await Promise.allSettled(istekler)
   return yanitlar.some(r => r.status === 'fulfilled' && r.value.ok)
 }
@@ -840,21 +875,21 @@ export async function sunucuYardimciDurumu() {
   }
 }
 
-const SUNUCU_KAPALI_MESAJ = 'Yardımcı sunucu (VPS) yanıt vermiyor (HTTP 521/502). Sunucuda mubis-yardimci servisini kontrol edin veya yerel yardımcı programı açın.'
+const SUNUCU_KAPALI_MESAJ = 'Yardımcı sunucuya son bağlantı denemesi başarısız oldu. Bir süre sonra tekrar deneyin; sorun sürerse sunucu bağlantısını kontrol edin.'
 
 // Yardimci programin "indirilenler" klasorundeki belgeleri listeler
 // Donus: [{ ad, boyut, tarih }] (tarih = mtime ms) veya hata
 export async function gibDosyalariListele(kaynak = 'otomatik') {
   let sunucuHata = ''
   if (kaynak !== 'yerel') {
-    if (sunucuBeklemede()) {
+    if (kaynak !== 'sunucu' && sunucuBeklemede()) {
       sunucuHata = SUNUCU_KAPALI_MESAJ
     } else {
       try {
         const rs = await yardimciFetch(`${sunucuProxyTaban()}/dosyalar`, { cache: 'no-store', headers: sunucuZorunluBasliklar(), signal: AbortSignal.timeout(10000) })
         const js = await rs.json().catch(() => null)
         if (rs.ok && js?.ok) { sunucuHataTemizle(); return js.dosyalar || [] }
-        const detay = js?.error || js?.message || `HTTP ${rs.status}`
+        const detay = js?.error || js?.message || (js ? JSON.stringify(js).slice(0, 200) : `HTTP ${rs.status}`)
         if (rs.status === 401 || rs.status === 403) sunucuHataIsaretle()
         else if (!rs.ok && !js?.ok && /^HTTP (5\d\d)$/.test(detay)) sunucuHataIsaretle()
         sunucuHata = `VPS dosya listesi alınamadı: ${detay}`

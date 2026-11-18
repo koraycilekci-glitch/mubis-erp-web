@@ -61,6 +61,7 @@ export default function ClientDetail() {
   // Tecilli Tahsilat odeme plani
   const [tecilliYukleniyor, setTecilliYukleniyor] = useState(false)
   const [tahakkukTercihKaydediyor, setTahakkukTercihKaydediyor] = useState(false)
+  const [waOptOutKaydediyor, setWaOptOutKaydediyor] = useState(false)
   const [tecilliDurum, setTecilliDurum] = useState('')
   const tecilliFileRef = useRef(null)
   const [hesapKodlari, setHesapKodlari] = useState([])
@@ -705,6 +706,20 @@ export default function ClientDetail() {
       alert('Gönderim tercihi kaydedilemedi: ' + (e.message || 'Bilinmeyen hata'))
     } finally {
       setTahakkukTercihKaydediyor(false)
+    }
+  }
+
+  const handleWhatsappOptOutDegistir = async (deger) => {
+    if (!client) return
+    setWaOptOutKaydediyor(true)
+    try {
+      await updateClientDb(client.id, { whatsappOptOut: deger })
+      setClient(prev => ({ ...prev, whatsappOptOut: deger }))
+    } catch (e) {
+      console.error('WhatsApp opt-out kaydedilemedi:', e)
+      alert('Tercih kaydedilemedi: ' + (e.message || 'Bilinmeyen hata'))
+    } finally {
+      setWaOptOutKaydediyor(false)
     }
   }
 
@@ -2469,7 +2484,28 @@ export default function ClientDetail() {
                   </select>
                 </div>
               </div>
-              
+
+              {/* WhatsApp otomatik bildirim opt-out: otomatik hatirlatmalar bu musteriye WhatsApp'tan gitmez */}
+              <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
+                <div>
+                  <span className="text-gray-400 text-sm block">WhatsApp Otomatik Bildirim</span>
+                  <span className="text-gray-600 text-xs">Hatırlatmalar kapalıyken e-posta + portal bildirimi yine de gönderilir.</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {waOptOutKaydediyor && <span className="text-yellow-400 text-xs">kaydediliyor...</span>}
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={!!(client.whatsappOptOut)}
+                      onChange={(e) => handleWhatsappOptOutDegistir(e.target.checked)}
+                      disabled={waOptOutKaydediyor}
+                      className="w-4 h-4 rounded border-blue-700/50 bg-blue-900/30 text-yellow-500 focus:ring-yellow-500"
+                    />
+                    <span className="text-white text-sm">{client.whatsappOptOut ? 'Kapalı (istemiyor)' : 'Açık'}</span>
+                  </label>
+                </div>
+              </div>
+
               {/* Birden Fazla Telefon / WhatsApp */}
               <div className="p-3 bg-blue-900/20 rounded-xl">
                 <div className="flex items-center justify-between mb-2">

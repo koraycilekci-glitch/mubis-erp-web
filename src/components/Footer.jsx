@@ -22,7 +22,7 @@ export default function Footer() {
                 href="/pwa-kurulum"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="group mt-4 inline-block w-full max-w-[170px] sm:max-w-[190px] rounded-lg overflow-hidden ring-1 ring-blue-700/50 hover:ring-cyan-400/70 transition-shadow hover:shadow-lg hover:shadow-cyan-500/10"
+                className="group mt-4 inline-block w-full max-w-[200px] sm:max-w-[300px] rounded-lg overflow-hidden ring-1 ring-blue-700/50 hover:ring-cyan-400/70 transition-shadow hover:shadow-lg hover:shadow-cyan-500/10"
                 title="Mobil Kurulum Kılavuzu"
               >
                 <img

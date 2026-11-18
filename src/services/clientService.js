@@ -44,29 +44,40 @@ const normalizeEmployeeSalaryPayload = (payload) => {
 const withEmployeeSalary = (payload) => normalizeEmployeeSalaryPayload(payload)
 
 export async function getClients() {
-  let query = supabase
-    .from('clients')
-    .select('*')
-    .order('created_at', { ascending: false })
+  // Ortak onbellek: ayni anda cagrilan tum istekler tek sorguya iner.
+  const { onbellekliGetir } = await import('../lib/veriOrtak')
+  return onbellekliGetir('clients:raw', async () => {
+    let query = supabase
+      .from('clients')
+      .select('*')
+      .order('created_at', { ascending: false })
 
-  // Ikinci katman guvenlik: super_admin degilse kendi ofisinin
-  // musterilerini iste (RLS ek olarak veritabaninda da filtreler)
-  const { data: { user } } = await supabase.auth.getUser()
-  if (user) {
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('role, office_id')
-      .eq('id', user.id)
-      .maybeSingle()
-    if (prof && prof.role !== 'super_admin' && prof.role !== 'musteri' && prof.role !== 'client') {
-      const officeId = prof.office_id || (await getMyOffice())?.id
-      if (officeId) query = query.eq('office_id', officeId)
+    // Ikinci katman guvenlik: super_admin degilse kendi ofisinin
+    // musterilerini iste (RLS ek olarak veritabaninda da filtreler)
+    // Oturum yerel JWT'den okunur (getUser() ekstra network roundtrip yapar)
+    const { data: { session } } = await supabase.auth.getSession()
+    const user = session?.user
+    if (user) {
+      // Profil/ofis onbellegini tekrar sorgulamak yerine dogrudan office_id'yi
+      // profiles'tan tek istekle al; super_admin/musteri icin filtre yok.
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('role, office_id')
+        .eq('id', user.id)
+        .maybeSingle()
+      if (prof && prof.role !== 'super_admin' && prof.role !== 'musteri' && prof.role !== 'client') {
+        let officeId = prof.office_id
+        if (!officeId) {
+          try { officeId = (await getMyOffice())?.id } catch { /* yoksay */ }
+        }
+        if (officeId) query = query.eq('office_id', officeId)
+      }
     }
-  }
 
-  const { data, error } = await query
-  if (error) throw error
-  return data || []
+    const { data, error } = await query
+    if (error) throw error
+    return data || []
+  }, { ttl: 60 * 1000 })
 }
 
 export async function getClient(id) {
@@ -435,6 +446,7 @@ export async function updateClient(id, updateData) {
     defterTipi: 'defter_tipi', lucaBilgileri: 'luca_bilgileri',
     beyanProfile: 'beyan_profile',
     beyanDurumlari: 'beyan_durumlari',
+    whatsappOptOut: 'whatsapp_opt_out',
     status: 'status', username: 'username', password: 'password',
     tempPassword: 'temp_password',
     officials: 'officials',
@@ -1081,6 +1093,7 @@ export function dbToFrontend(dbClient) {
     lucaBilgileri: dbClient.luca_bilgileri || {},
     beyanProfile: dbClient.beyan_profile || {},
     beyanDurumlari: dbClient.beyan_durumlari || {},
+    whatsappOptOut: !!dbClient.whatsapp_opt_out,
     status: dbClient.status,
     username: dbClient.username,
     password: dbClient.password,

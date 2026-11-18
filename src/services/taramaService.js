@@ -1,5 +1,7 @@
 // MUBiS — Tarama (Android fiş/Z raporu) servisleri
 import { supabase } from '../lib/supabase'
+import { faturaFisDetaylariniTamamla, fisKdvDetayUret, kdvDetaylariGetir } from './efaturaService'
+import { satisKdvDetaylari, fisDetaylariniDogrula, fisYuvarla } from '../utils/fisDetay'
 
 const BUCKET = 'tarama-belgeler'
 
@@ -112,7 +114,11 @@ export async function fisListesi({ yil, ay } = {}) {
       vkn: fatura?.karsi_vkn || on.vkn || null,
       matrah: fatura?.matrah ?? null,
       kdv: fatura?.kdv ?? on.toplamKdv ?? null,
-      kdvOran: on.kdvOran || null,
+      kdvOran: on.kdvOran ?? null,
+      tur: 'GİDER FİŞİ',
+      nakit: on.nakit ?? null,
+      kredi: on.kredi ?? null,
+      kdvDetaylari: on.kdvDetaylari || (on.kdvOran != null && fatura?.matrah != null && fatura?.kdv != null ? [{ oran: on.kdvOran, matrah: fatura.matrah, kdv: fatura.kdv }] : []),
       toplam: fatura?.tutar ?? on.tutar ?? null,
       kategori: fatura?.hesap_kodu || null,
       cari: fatura?.cari_kodu || null,
@@ -123,7 +129,7 @@ export async function fisListesi({ yil, ay } = {}) {
   // Z raporları (telefondan gelen veya panelden yüklenen) Fişler listesine satış kaydı olarak katılır
   let zQ = supabase
     .from('z_reports')
-    .select('id, client_id, year, month, report_date, z_no, total_amount, total_kdv, kdv_matrah, credit_card_amount, ocr_status, created_at, clients(name, company, nace_code)')
+    .select('id, client_id, year, month, report_date, z_no, total_amount, total_kdv, kdv_matrah, cash_amount, credit_card_amount, parsed_data, ocr_status, created_at, clients(name, company, nace_code)')
     .order('created_at', { ascending: false })
     .limit(500)
   if (yil) zQ = zQ.eq('year', yil)
@@ -140,14 +146,16 @@ export async function fisListesi({ yil, ay } = {}) {
       storagePath: null,
       createdAt: z.created_at,
       kaynak: 'zrapor',
+      tur: 'Z RAPORU',
       tarih: z.report_date,
       satici: 'Z Raporu' + (z.z_no ? ` Z:${z.z_no}` : ''),
       vkn: null,
       matrah: z.kdv_matrah,
       kdv: z.total_kdv,
       toplam: z.total_amount,
-      nakit: z.total_amount != null && z.credit_card_amount != null ? z.total_amount - z.credit_card_amount : null,
+      nakit: z.cash_amount ?? null,
       kredi: z.credit_card_amount ?? null,
+      kdvDetaylari: fisDetaylariniDogrula(satisKdvDetaylari(z.parsed_data), z.kdv_matrah, z.total_kdv, z.total_amount),
       kategori: null,
       cari: null,
       zRaporId: z.id,
@@ -159,16 +167,20 @@ export async function fisListesi({ yil, ay } = {}) {
   // Manuel eklenen fişler (fotoğrafsız)
   let manuelQ = supabase
     .from('efatura_faturalar')
-    .select('id, client_id, tarih, karsi_unvan, karsi_vkn, fatura_turu, fatura_no, matrah, kdv, tutar, nakit_tutar, hesap_kodu, durum, sorgu_ts, clients(name, company, nace_code)')
-    .like('fatura_uuid', 'manuel-%')
+    .select('id, client_id, tarih, karsi_unvan, karsi_vkn, fatura_turu, fatura_uuid, fatura_no, xml_url, matrah, kdv, tutar, nakit_tutar, hesap_kodu, durum, sorgu_ts, clients(name, company, nace_code)')
+    .in('fatura_turu', ['Z RAPORU', 'GİDER FİŞİ', 'GİDER DÖKÜMÜ'])
+    .not('fatura_uuid', 'like', 'tarama-%')
+    .not('fatura_uuid', 'like', 'ztarama-%')
+    .not('fatura_uuid', 'like', 'musteri-%')
     .order('sorgu_ts', { ascending: false })
     .limit(300)
   if (yil) {
     manuelQ = manuelQ.gte('tarih', `${yil}-01-01`).lte('tarih', `${yil}-12-31`)
   }
-  const { data: manuel } = await manuelQ
-  for (const m of (manuel || [])) {
-    if (ay && m.tarih && !m.tarih.startsWith(`${yil}-${String(ay).padStart(2, '0')}`)) continue
+  const { data: manuel, error: manuelHata } = await manuelQ
+  if (manuelHata) throw manuelHata
+  const donemKayitlari = (manuel || []).filter(kayit => !ay || !kayit.tarih || kayit.tarih.startsWith(`${yil}-${String(ay).padStart(2, '0')}`))
+  for (const m of await faturaFisDetaylariniTamamla(donemKayitlari)) {
     liste.push({
       id: 'm' + m.id,
       clientId: m.client_id,
@@ -188,14 +200,18 @@ export async function fisListesi({ yil, ay } = {}) {
       kdv: m.kdv,
       kdvOran: null,
       toplam: m.tutar,
-      nakit: m.nakit_tutar ?? null,
+      nakit: m.nakit ?? m.nakit_tutar ?? null,
+      kredi: m.kredi ?? (m.fatura_turu === 'Z RAPORU' && !m.xml_url && m.nakit_tutar != null && m.tutar != null ? fisYuvarla(Number(m.tutar) - Number(m.nakit_tutar)) : null),
+      kdvDetaylari: m.kdvDetaylari,
+      fisDetayUyari: m.fisDetayUyari,
       naceKodu: m.clients?.nace_code || null,
       kategori: m.hesap_kodu,
       cari: null,
       faturaId: m.id,
     })
   }
-  return liste
+  const detayHarita = await kdvDetaylariGetir(liste.map(fis => fis.faturaId).filter(Boolean))
+  return liste.map(fis => ({ ...fis, kdvDetaylari: fis.kdvDetaylari?.length ? fis.kdvDetaylari : detayHarita[fis.faturaId] || fisKdvDetayUret({ ...fis, fatura_turu: fis.tur, tutar: fis.toplam }) || [] }))
 }
 
 // Panelden fiş/tarama yükleme (dosya seç, sürükle-bırak, tarayıcı klasörü) → tarama-belgeler + satır
@@ -231,18 +247,19 @@ export async function fisYukle({ clientId, yil, ay, file, yukleyenId, belgeTipi 
 export async function fisManuelEkle({ clientId, tarih, satici, vkn, matrah, kdv, toplam, kategori, tip, evrakNo, aciklama, satis, nakit, kdvOran }) {
   const n = (x) => { const v = Number(x); return isFinite(v) ? v : 0 }
   let m = matrah ?? null, k = kdv ?? null, t = toplam ?? null
-  if (satis) {
-    const s0 = n(satis.s0), s1 = n(satis.s1), s10 = n(satis.s10), s20 = n(satis.s20)
-    const m1 = s1 / 1.01, m10 = s10 / 1.10, m20 = s20 / 1.20
-    m = s0 + m1 + m10 + m20
-    k = (s1 - m1) + (s10 - m10) + (s20 - m20)
-    t = s0 + s1 + s10 + s20
-  } else if (t != null && kdvOran != null) {
-    // KDV dahil toplam + oran → matrah ve kdv
+  if (!satis && t != null && kdvOran != null) {
     m = t / (1 + n(kdvOran) / 100)
     k = t - m
   }
-  const yuvarla = (x) => (x ? Math.round(x * 100) / 100 : null)
+  const detaylar = satis ? satisKdvDetaylari(satis) : []
+  if (satis) {
+    m = fisYuvarla(detaylar.reduce((sum, detay) => sum + detay.matrah, 0))
+    k = fisYuvarla(detaylar.reduce((sum, detay) => sum + detay.kdv, 0))
+    t = fisYuvarla(m + k)
+  } else if (kdvOran != null && m != null && k != null) {
+    detaylar.push({ oran: Number(kdvOran), matrah: fisYuvarla(m), kdv: fisYuvarla(k) })
+  }
+  const yuvarla = (x) => x == null ? null : fisYuvarla(x)
   const zMi = tip === 'z'
   const { data, error } = await supabase
     .from('efatura_faturalar')
@@ -259,7 +276,7 @@ export async function fisManuelEkle({ clientId, tarih, satici, vkn, matrah, kdv,
       matrah: yuvarla(m),
       kdv: yuvarla(k),
       tutar: yuvarla(t),
-      nakit_tutar: zMi && nakit != null && n(nakit) > 0 ? yuvarla(n(nakit)) : null,
+      nakit_tutar: nakit != null ? yuvarla(n(nakit)) : null,
       para_birimi: 'TRY',
       hesap_kodu: kategori || null,
       durum: 'yeni',
@@ -268,6 +285,13 @@ export async function fisManuelEkle({ clientId, tarih, satici, vkn, matrah, kdv,
     .select('id')
     .single()
   if (error) throw error
+  if (detaylar.length) {
+    const { error: detayHata } = await supabase.from('efatura_kdv_detay').insert(detaylar.map(detay => ({ ...detay, fatura_id: data.id })))
+    if (detayHata) {
+      const { error: geriAlHata } = await supabase.from('efatura_faturalar').delete().eq('id', data.id)
+      throw new Error(`KDV ayrıntısı kaydedilemedi: ${detayHata.message}${geriAlHata ? ' Belge kaydı oluştu; yeniden eklemeden önce kontrol edin.' : ''}`)
+    }
+  }
   return data.id
 }
 

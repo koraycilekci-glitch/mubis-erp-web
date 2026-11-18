@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
 import { getSettings, saveSettings, getDefaultDocumentPermissions, parseDocumentPermissions, getDefaultDocumentFolders, parseDocumentFolders } from '../services/settingsService'
 import { getBankInfo, saveBankInfo, getBankAccounts, saveBankAccounts } from '../services/paymentService'
-import { gibYardimciIs, yardimciFetch } from '../utils/gibOdemeHelper'
+import { yardimciFetch, yardimciIsYerel } from '../utils/gibOdemeHelper'
 import { Settings as SettingsIcon, Lock, Clock, Users, Eye, EyeOff, CheckCircle, AlertCircle, Save, RefreshCw, MessageCircle, Mail, FolderOpen, FolderTree, Plus, Minus, Trash2, Pencil, Volume2, Play, CreditCard, Building2, Link2, Bot, Landmark, Shield, KeyRound } from 'lucide-react'
 import FolderStructureEditor from '../components/FolderStructureEditor'
 import PlanDilimSatirlari from '../components/PlanDilimSatirlari'
@@ -55,6 +55,8 @@ export default function Settings() {
   const [namazGoster, setNamazGoster] = useState(() => localStorage.getItem('admin_namaz_v1') === '1')
   // 2.7.546: ana ekranda web radyo (varsayilan kapali)
   const [radyoGoster, setRadyoGoster] = useState(() => localStorage.getItem('admin_radio_v1') === '1')
+  // 2.7.560: ana ekranda tarih/saat kartinin altinda doviz+altin kurlari (varsayilan acik)
+  const [kurlarGoster, setKurlarGoster] = useState(() => localStorage.getItem('admin_kurlar_v1') !== '0')
   // 2.7.546: ana ekranda YouTube Müzik (varsayilan kapali)
   const [ytMuzikGoster, setYtMuzikGoster] = useState(() => localStorage.getItem('admin_ytmusic_v1') === '1')
   // 2.7.546: ana ekranda Spotify (varsayilan kapali)
@@ -65,7 +67,10 @@ export default function Settings() {
   }
 
   useEffect(() => {
-    if (activeTab === 'masaustu-asistan') adminAtaDurumGetir()
+    if (activeTab !== 'masaustu-asistan') return
+    adminAtaDurumGetir()
+    window.addEventListener('mubis-admin-ata-degisti', adminAtaDurumGetir)
+    return () => window.removeEventListener('mubis-admin-ata-degisti', adminAtaDurumGetir)
   }, [activeTab])
 
   // Yardimci programi "yonetici olarak calistir"a sabitleme (guncelleme
@@ -74,18 +79,18 @@ export default function Settings() {
   const [adminAtaMsg, setAdminAtaMsg] = useState('')
   const adminAtaDurumGetir = async () => {
     try {
-      const s = await gibYardimciIs('admin-durum', {})
+      const s = await yardimciIsYerel('admin-durum', {})
       setAdminAta(s?.ok ? !!s.ata : null)
     } catch { setAdminAta(null) }
   }
   const adminAtaKaydet = async (acik) => {
     setAdminAtaMsg('')
     try {
-      const s = await gibYardimciIs('admin-ata', { acik })
+      const s = await yardimciIsYerel('admin-ata', { acik })
       if (s?.ok) { setAdminAta(acik); setAdminAtaMsg(acik ? 'Yardimci program "yonetici olarak calistir"a sabitlendi' : 'Yonetici bayragi kaldirildi') }
-      else setAdminAtaMsg('Islem basarisiz: ' + (s?.hata || '?'))
+      else setAdminAtaMsg('İşlem başarısız: ' + (s?.reason === 'kurulu-degil' ? 'Bu bilgisayarda yerel yardımcı program çalışmıyor.' : s?.hata || s?.reason || 'Bilinmeyen hata'))
     } catch {
-      setAdminAta('MUBiS yardimci programi bu bilgisayarda calismiyor')
+      setAdminAtaMsg('Bu bilgisayarda yerel yardımcı programa ulaşılamadı.')
     }
   }
 
@@ -2207,7 +2212,7 @@ export default function Settings() {
 
             </>)}
 
-            {/* Google Drive — belge depolama merkezi */}
+            {activeTab === 'depolama' && (
             <div className="bg-blue-900/20 border border-blue-700/30 rounded-xl p-5 mb-4 max-w-2xl">
               <h3 className="text-white font-medium mb-2 flex items-center gap-2">
                 <FolderOpen className="w-4 h-4 text-cyan-300" />
@@ -2269,6 +2274,7 @@ export default function Settings() {
                 Supabase Storage'daki mevcut dosyalar, Drive'a aktarılıp doğrulanmadan silinmez.
               </p>
             </div>
+            )}
           </div>
         )}
 
@@ -2348,6 +2354,28 @@ export default function Settings() {
                   className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${radyoGoster ? 'bg-emerald-500' : 'bg-blue-700/60'}`}
                 >
                   <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${radyoGoster ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* 2.7.560: Doviz + Altin kurlari ac-kapa (varsayilan acik) */}
+            <div className="mt-3 bg-blue-900/20 rounded-xl p-4 max-w-lg">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-start space-x-3">
+                  <span className="text-2xl leading-none" aria-hidden="true">💱</span>
+                  <div>
+                    <span className="text-gray-300 text-sm font-medium">Döviz &amp; Altın Kurları</span>
+                    <p className="text-gray-500 text-xs mt-0.5">Açık olursa ana ekranda tarih/saat kartının altında günlük döviz (TCMB) ve altın fiyatları şeridi gösterilir. Altın değerleri ons fiyatı ve USD/TRY üzerinden hesaplanan gösterge rakamlardır.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={kurlarGoster}
+                  onClick={() => { const yeni = !kurlarGoster; setKurlarGoster(yeni); localStorage.setItem('admin_kurlar_v1', yeni ? '1' : '0') }}
+                  className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${kurlarGoster ? 'bg-emerald-500' : 'bg-blue-700/60'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${kurlarGoster ? 'translate-x-6' : 'translate-x-1'}`} />
                 </button>
               </div>
             </div>

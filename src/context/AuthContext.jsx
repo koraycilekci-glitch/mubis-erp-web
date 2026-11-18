@@ -1,7 +1,8 @@
-import { createContext, useContext, useState, useEffect, useRef } from 'react'
+import { createContext, useContext, useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import * as clientService from '../services/clientService'
 import { getMyOffice, clearOfficeCache, buildClientLoginEmail } from '../services/officeService'
+import { perfBaslat, perfBitir } from '../utils/perf'
 import { recordClientLogin } from '../services/statsService'
 
 const AuthContext = createContext()
@@ -12,62 +13,81 @@ export function AuthProvider({ children }) {
   const [office, setOffice] = useState(null)
   const [loading, setLoading] = useState(true)
   const [needsPasswordChange, setNeedsPasswordChange] = useState(false)
+  const [dbHatasi, setDbHatasi] = useState(false)
   // Sifre guncellemesi sirasinda USER_UPDATED olayi profili yeniden okur;
   // profiles.temp_password=false DB'ye yazilana kadar BAYAT true okuyabilir
   // ve flag geri true'ya donup kullaniciyi /sifre-degistir'e geri seker
   // (sonsuz dongu). Bu ref acikken bayat okuma yok sayilir.
   const sifreGuncelleniyorRef = useRef(false)
 
-  // Profil bilgisini cek
-  const fetchProfile = async (authUser) => {
+  // Profil bilgisini cek. Baglanti havuzu tukendiyse (PGRST003) tek
+  // seferde basarisiz olmaz; kisa gecikmelerle yeniden dener. Basarisiz
+  // olursa onceki profil korunur (menu kaybolmaz), hata raporlanir.
+  const fetchProfile = useCallback(async (authUser, deneme = 0) => {
     if (!authUser) { setProfile(null); setOffice(null); return null }
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', authUser.id)
         .single()
+      if (error) throw error
+      setDbHatasi(false)
 
-      // Ofis bilgisini yukle (hata olursa akis bozulmasin)
-      getMyOffice(true).then(o => setOffice(o)).catch(() => {})
+      // Şifre değiştirilmiş ama DB henüz güncellenmemişse bayat true okumayı yok say
+      try {
+        const bayrak = localStorage.getItem('mubis_sifre_degistirildi')
+        if (bayrak && bayrak === String(authUser.id) && data) data.temp_password = false
+      } catch {}
 
-      // Eger musteri ise, client_id'yi clients tablosundan bul
+      // Ofis bilgisini paralel yukle (onbellekli; force degil)
+      getMyOffice().then(o => { if (o) setOffice(o) }).catch(() => {})
+
+      // Musteri ise client kaydini bul
       if (data?.role === 'musteri' || data?.role === 'client') {
-        const emailPrefix = authUser.email?.split('@')[0]
-        const { data: clientData } = await supabase
-          .from('clients')
-          .select('id, name, company, phone, email, city, office_id, phonenumbers, short_name, tax_office')
-          .or(`auth_user_id.eq.${authUser.id},username.eq.${emailPrefix},email.eq.${authUser.email}`)
-          .limit(1)
-          .maybeSingle()
-
-        if (clientData) {
-          const merged = {
-            ...data,
-            clientId: clientData.id,
-            officeId: clientData.office_id,
-            name: clientData.name || clientData.company || data.name,
-            shortName: clientData.short_name || clientData.name || clientData.company || data.name,
-            short_name: clientData.short_name,
-            phone: clientData.phone,
-            phoneNumbers: clientData.phonenumbers || [],
-            email: clientData.email,
-            city: clientData.city,
-            tax_office: clientData.tax_office,
-            // Uygulama genelinde musteri rolu 'musteri' olarak beklenir
-            role: 'musteri'
+        try {
+          const emailPrefix = authUser.email?.split('@')[0]
+          const { data: clientData } = await supabase
+            .from('clients')
+            .select('id, name, company, phone, email, city, office_id, phonenumbers, short_name, tax_office')
+            .or(`auth_user_id.eq.${authUser.id},username.eq.${emailPrefix},email.eq.${authUser.email}`)
+            .limit(1)
+            .maybeSingle()
+          if (clientData) {
+            const merged = {
+              ...data,
+              clientId: clientData.id,
+              officeId: clientData.office_id,
+              name: clientData.name || clientData.company || data.name,
+              shortName: clientData.short_name || clientData.name || clientData.company || data.name,
+              short_name: clientData.short_name,
+              phone: clientData.phone,
+              phoneNumbers: clientData.phonenumbers || [],
+              email: clientData.email,
+              city: clientData.city,
+              tax_office: clientData.tax_office,
+              role: 'musteri'
+            }
+            setProfile(merged)
+            return merged
           }
-          setProfile(merged)
-          return merged
-        }
+        } catch { /* client kaydi bulunamazsa profil yine de kullanilir */ }
       }
 
       setProfile(data)
       return { ...data, officeId: data?.office_id || null }
-    } catch {
+    } catch (e) {
+      // Tekrar dene (en fazla 2 kez) — baglanti havuzu gecici olarak bosalir
+      if (deneme < 2) {
+        await new Promise(r => setTimeout(r, 800 * (deneme + 1)))
+        return fetchProfile(authUser, deneme + 1)
+      }
+      console.warn('Profil yuklenemedi:', e?.message || e)
+      setDbHatasi(true)
+      // Onceki profil varsa koru (menu kaybolmaz)
       return null
     }
-  }
+  }, [])
 
   // Oturum takibi
   useEffect(() => {
@@ -167,7 +187,8 @@ export function AuthProvider({ children }) {
   }, [])
 
   // Giris yap (email veya TC/VKN destekli)
-  const login = async (identifier, password, rememberMe = true) => {
+  const login = useCallback(async (identifier, password, rememberMe = true) => {
+    const _t = perfBaslat('Login')
     try {
       // TC/VKN ise @mubis.app ekle, email ise direkt kullan
       let email = identifier
@@ -216,22 +237,25 @@ export function AuthProvider({ children }) {
       }
     } catch (err) {
       return { success: false, error: err.message }
+    } finally {
+      perfBitir('Login', _t)
     }
-  }
+  }, [fetchProfile])
 
   // Cikis yap
-  const logout = async () => {
+  const logout = useCallback(async () => {
     await supabase.auth.signOut()
     clearOfficeCache()
     setUser(null)
     setProfile(null)
     setOffice(null)
     setNeedsPasswordChange(false)
-  }
+  // Ortak musteri onbellegini temizle
+  try { const { musteriListesiSifirla } = await import('../services/clientStore'); musteriListesiSifirla(user?.id || null) } catch {}
+  }, [])
 
   // Sifre sifirlama emaili gonder
-  const resetPassword = async (identifier) => {
-    try {
+  const resetPassword = useCallback(async (identifier) => {    try {
       let email = identifier
       if (!identifier.includes('@')) {
         // TC/VKN ile giris yapan musteri - onun gercek emailini bul
@@ -256,10 +280,10 @@ export function AuthProvider({ children }) {
     } catch (err) {
       return { success: false, error: err.message }
     }
-  }
+  }, [])
 
   // Sifre guncelle (gecici sifre degistirme veya normal degistirme)
-  const updatePassword = async (newPassword) => {
+  const updatePassword = useCallback(async (newPassword) => {
     try {
       sifreGuncelleniyorRef.current = true
       const { error } = await supabase.auth.updateUser({ password: newPassword })
@@ -267,11 +291,22 @@ export function AuthProvider({ children }) {
 
       // Gecici sifre flagini kaldir
       if (profile?.id) {
-        const { error: profErr } = await supabase
-          .from('profiles')
-          .update({ temp_password: false })
-          .eq('id', profile.id)
-        if (profErr) console.error('temp_password kaldirilamadi:', profErr.message)
+        let profErr = null
+        for (let i = 0; i < 2; i++) {
+          const r = await supabase
+            .from('profiles')
+            .update({ temp_password: false })
+            .eq('id', profile.id)
+          profErr = r.error
+          if (!profErr) break
+          await new Promise(res => setTimeout(res, 600))
+        }
+        if (profErr) {
+          console.error('temp_password kaldirilamadi:', profErr.message)
+          try { localStorage.setItem('mubis_sifre_degistirildi', profile.id) } catch {}
+        } else {
+          try { localStorage.removeItem('mubis_sifre_degistirildi') } catch {}
+        }
       }
 
       setNeedsPasswordChange(false)
@@ -284,52 +319,64 @@ export function AuthProvider({ children }) {
       // bitene kadar guard acik kalsin; bayat true okuma yok sayilir.
       setTimeout(() => { sifreGuncelleniyorRef.current = false }, 5000)
     }
-  }
+  }, [profile?.id])
 
   // Musteri islemleri
-  const getClients = async () => {
+  const getClients = useCallback(async () => {
     try {
       const data = await clientService.getClients()
       return clientService.dbToFrontendList(data)
-    } catch {
+    } catch (e) {
+      console.error('getClients hatasi:', e?.message || e)
       return []
     }
-  }
+  }, [])
 
-  const addClient = async (clientData) => {
-    try {
+  const addClient = useCallback(async (clientData) => {    try {
       const data = await clientService.addClient(clientData)
+      const { onbellekSil } = await import('../lib/veriOrtak')
+      onbellekSil('clients:raw')
+      const { musteriListesiGecersizKil } = await import('../services/clientStore')
+      musteriListesiGecersizKil(user?.id || null)
+      window.dispatchEvent(new Event('mubis-clients-refresh'))
       return { success: true, client: clientService.dbToFrontend(data) }
     } catch (err) {
       return { success: false, error: err.message }
     }
-  }
+  }, [])
 
-  const deleteClient = async (id) => {
-    try {
+  const deleteClient = useCallback(async (id) => {    try {
       await clientService.deleteClient(id)
+      const { onbellekSil } = await import('../lib/veriOrtak')
+      onbellekSil('clients:raw')
+      const { musteriListesiGecersizKil } = await import('../services/clientStore')
+      musteriListesiGecersizKil(user?.id || null)
+      window.dispatchEvent(new Event('mubis-clients-refresh'))
       return { success: true }
     } catch (err) {
       return { success: false, error: err.message }
     }
-  }
+  }, [])
 
-  const updateClient = async (id, data) => {
-    try {
+  const updateClient = useCallback(async (id, data) => {    try {
       const result = await clientService.updateClient(id, data)
+      const { onbellekSil } = await import('../lib/veriOrtak')
+      onbellekSil('clients:raw')
+      const { musteriListesiGecersizKil } = await import('../services/clientStore')
+      musteriListesiGecersizKil(user?.id || null)
+      window.dispatchEvent(new Event('mubis-clients-refresh'))
       return { success: true, client: clientService.dbToFrontend(result) }
     } catch (err) {
       console.error('updateClient hatasi:', err)
       const detail = err?.message || err?.error_description || err?.details || err?.hint || JSON.stringify(err)
       return { success: false, error: detail }
     }
-  }
+  }, [])
 
   // Musteri icin Supabase Auth hesabi olustur (admin tarafindan)
   // Giris adi ofise gore uretilir: ana ofis 'vkn@mubis.app',
   // diger ofisler 'ofiskodu-vkn@mubis.app'
-  const createClientAuth = async (identifier, tempPassword, name, clientEmail) => {
-    try {
+  const createClientAuth = useCallback(async (identifier, tempPassword, name, clientEmail) => {    try {
       const ofis = office || await getMyOffice()
       const authEmail = buildClientLoginEmail(identifier, ofis)
 
@@ -361,7 +408,7 @@ export function AuthProvider({ children }) {
     } catch (err) {
       return { success: false, error: err.message }
     }
-  }
+  }, [office])
 
   const currentUser = user ? {
     id: user.clientId || user.id,
@@ -378,23 +425,36 @@ export function AuthProvider({ children }) {
     isSuperAdmin: profile?.role === 'super_admin',
   } : null
 
+  const dbYenidenDene = useCallback(async () => {
+    const s = await supabase.auth.getSession()
+    if (s?.data?.session?.user) {
+      await fetchProfile(s.data.session.user)
+    }
+  }, [fetchProfile])
+
+  const deger = useMemo(() => ({
+    user: currentUser,
+    loading,
+    needsPasswordChange,
+    dbHatasi,
+    dbYenidenDene,
+    login,
+    logout,
+    resetPassword,
+    updatePassword,
+    getClients,
+    addClient,
+    deleteClient,
+    updateClient,
+    createClientAuth,
+    profile,
+    office
+  }), [currentUser, loading, needsPasswordChange, dbHatasi, dbYenidenDene, login, logout,
+       resetPassword, updatePassword, getClients, addClient, deleteClient, updateClient,
+       createClientAuth, profile, office])
+
   return (
-    <AuthContext.Provider value={{ 
-      user: currentUser, 
-      loading, 
-      needsPasswordChange,
-      login, 
-      logout, 
-      resetPassword,
-      updatePassword,
-      getClients, 
-      addClient, 
-      deleteClient, 
-      updateClient,
-      createClientAuth,
-      profile,
-      office
-    }}>
+    <AuthContext.Provider value={deger}>
       {children}
     </AuthContext.Provider>
   )

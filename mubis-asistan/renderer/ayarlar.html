@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+  body { font: 13px 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 12px 16px; background: #1e3a5f; display: flex; align-items: center; -webkit-app-region: drag; }
+  header b { flex: 1; } header button { -webkit-app-region: no-drag; }
+  #govde { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+  .kart { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 12px; }
+  .kart h3 { font-size: 13px; margin-bottom: 10px; color: #93c5fd; }
+  .satir { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+  label { flex: 1; }
+  select, input[type=text], input[type=password], input[type=datetime-local] {
+    padding: 6px 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #e2e8f0; outline: none;
+  }
+  .karakterler { display: flex; gap: 8px; }
+  .karakter { flex: 1; text-align: center; padding: 8px 4px; border: 2px solid #334155; border-radius: 10px; cursor: pointer; background: #0f172a; }
+  .karakter img { width: 64px; height: 64px; object-fit: contain; }
+  .karakter.secili { border-color: #3b82f6; background: #1e3a5f; }
+  .karakter div { margin-top: 4px; font-size: 12px; }
+  button { padding: 8px 14px; border-radius: 8px; border: none; background: #1d4ed8; color: #fff; cursor: pointer; }
+  button.sil { background: #7f1d1d; padding: 4px 8px; }
+  .hat { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid #334155; font-size: 12px; }
+  .hat .metin { flex: 1; word-break: break-word; }
+  footer { padding: 10px 14px; border-top: 1px solid #334155; display: flex; gap: 8px; }
+  footer .bos { flex: 1; }
+</style>
+</head>
+<body>
+  <header><b>⚙️ Asistan Ayarları</b><button id="kapat">✕</button></header>
+  <div id="govde">
+    <div class="kart">
+      <h3>Character</h3>
+      <div class="karakterler" id="karakterler"></div>
+    </div>
+    <div class="kart">
+      <h3>Davranış</h3>
+      <div class="satir"><label>Hız</label>
+        <select id="hiz"><option value="0.5">Yavaş</option><option value="1">Normal</option><option value="2">Hızlı</option></select>
+      </div>
+      <div class="satir"><label>Masaüstünde gezsin</label><input type="checkbox" id="geziyor"></div>
+      <div class="satir"><label>Sesli yanıt</label><input type="checkbox" id="sesliYanit"></div>
+    </div>
+    <div class="kart">
+      <h3>Yapay Zeka (soru-cevap)</h3>
+      <div class="satir"><label style="width:70px">API adres</label><input type="text" id="aiAdres" style="flex:1" placeholder="https://api.openai.com/v1/chat/completions"></div>
+      <div class="satir"><label style="width:70px">Anahtar</label><input type="password" id="aiAnahtar" style="flex:1" placeholder="sk-..."></div>
+      <div class="satir"><label style="width:70px">Model</label><input type="text" id="aiModel" style="flex:1" placeholder="gpt-4o-mini"></div>
+    </div>
+    <div class="kart">
+      <h3>Hatırlatmalar</h3>
+      <div id="hatirlatmalar"></div>
+      <div class="satir" style="margin-top:8px">
+        <input type="text" id="hMetin" placeholder="Ne hatırlatayım?" style="flex:1">
+        <input type="datetime-local" id="hZaman">
+        <button id="hEkle">Ekle</button>
+      </div>
+    </div>
+  </div>
+  <footer><div class="bos"></div><button id="kaydet">Kaydet</button></footer>
+<script>
+  const $ = (s) => document.querySelector('#' + s)
+  const KARAKTER = [['kopek', 'Köpek'], ['kedi', 'Kedi'], ['kalem', 'Kalem']]
+  let secili = 'kopek'
+  let ayar = null
+
+  function karakterKartiCiz() {
+    const k = $('karakterler')
+    k.innerHTML = ''
+    for (const [id, ad] of KARAKTER) {
+      const d = document.createElement('div')
+      d.className = 'karakter' + (id === secili ? ' secili' : '')
+      d.innerHTML = `<img src="../assets/${id}/oturuyor.png"><div>${ad}</div>`
+      d.addEventListener('click', () => { secili = id; karakterKartiCiz() })
+      k.appendChild(d)
+    }
+  }
+
+  function hatirlatmaCiz(liste) {
+    const k = $('hatirlatmalar')
+    k.innerHTML = ''
+    if (!liste.length) { k.innerHTML = '<div style="color:#64748b;font-size:12px">Hatırlatma yok</div>'; return }
+    for (const h of [...liste].sort((a, b) => a.zaman - b.zaman)) {
+      const d = document.createElement('div')
+      d.className = 'hat'
+      const saat = new Date(h.zaman).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' })
+      d.innerHTML = `<span class="metin">${h.gosterildi ? '✅ ' : '🔔 '}${h.metin} <span style="color:#64748b">(${saat})</span></span>`
+      const b = document.createElement('button')
+      b.className = 'sil'; b.textContent = 'Sil'
+      b.addEventListener('click', async () => hatirlatmaCiz(await window.asistan.hatirlatmaSil(h.id)))
+      d.appendChild(b)
+      k.appendChild(d)
+    }
+  }
+
+  async function yukle() {
+    ayar = await window.asistan.ayarGetir()
+    secili = ayar.karakter || 'kopek'
+    karakterKartiCiz()
+    $('hiz').value = String(ayar.hiz || 1)
+    $('geziyor').checked = !!ayar.geziyor
+    $('sesliYanit').checked = !!ayar.sesliYanit
+    $('aiAdres').value = ayar.ai?.adres || ''
+    $('aiAnahtar').value = ayar.ai?.anahtar || ''
+    $('aiModel').value = ayar.ai?.model || 'gpt-4o-mini'
+    hatirlatmaCiz(ayar.hatirlatmalar || [])
+  }
+  yukle()
+
+  $('hEkle').addEventListener('click', async () => {
+    const metin = $('hMetin').value.trim()
+    if (!metin) return
+    const zaman = $('hZaman').value ? new Date($('hZaman').value).getTime() : Date.now() + 60000
+    hatirlatmaCiz(await window.asistan.hatirlatmaEkle({ metin, zaman }))
+    $('hMetin').value = ''
+  })
+
+  $('kaydet').addEventListener('click', async () => {
+    await window.asistan.ayarKaydet({
+      karakter: secili,
+      hiz: parseFloat($('hiz').value),
+      geziyor: $('geziyor').checked,
+      sesliYanit: $('sesliYanit').checked,
+      ai: { adres: $('aiAdres').value.trim(), anahtar: $('aiAnahtar').value.trim(), model: $('aiModel').value.trim() }
+    })
+    $('kaydet').textContent = 'Kaydedildi ✓'
+    setTimeout(() => { $('kaydet').textContent = 'Kaydet' }, 1500)
+  })
+  $('kapat').addEventListener('click', () => window.close())
+</script>
+</body>
+</html>

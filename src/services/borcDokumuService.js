@@ -104,6 +104,19 @@ export async function eskiBorclariSil(gun = 10) {
   return (data || []).length
 }
 
+// 2.8.x: Seçili müşterinin TÜM borç kayıtlarını siler (eski/yeni fark etmez).
+// Silindikten sonra caller yeniden sorgulayarak güncel borcu gösterebilir.
+export async function musteriBorclariSil(clientId) {
+  if (!clientId) return 0
+  const { data, error } = await supabase
+    .from('borc_sonuclari')
+    .delete()
+    .eq('client_id', clientId)
+    .select('id')
+  if (error) throw error
+  return (data || []).length
+}
+
 export function borcToplam(kayitlar) {
   const t = (kayitlar || []).reduce((acc, k) => acc + sayi(k.toplam), 0)
   return Math.round(t * 100) / 100

@@ -1,36 +1,79 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '../context/AuthContext'
+import {
+  musteriListesiGetir,
+  musteriListesiOnbellek,
+  musteriListesineAboneOl,
+  musteriListesiSifirla
+} from '../services/clientStore'
 
-// Musteri listesini async olarak yukleyen hook
 export function useClients() {
-  const [clients, setClients] = useState([])
-  const [loading, setLoading] = useState(true)
-  const { getClients } = useAuth()
+  const { getClients, user } = useAuth()
+  const kapsam = user?.authUserId || null
+  const kapsamRef = useRef(kapsam)
+  kapsamRef.current = kapsam
+  const getiriciRef = useRef(getClients)
+  getiriciRef.current = getClients
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
-    try {
-      const data = await getClients()
-      setClients(data || [])
-    } catch (err) {
-      console.error('Musteri listesi yuklenemedi:', err)
-      setClients([])
+  const ilkVeri = musteriListesiOnbellek(kapsam)
+  const [liste, setListe] = useState({ kapsam, veri: ilkVeri || [] })
+  const [loading, setLoading] = useState(!!kapsam && !ilkVeri)
+  const [error, setError] = useState(null)
+  const clients = liste.kapsam === kapsam ? liste.veri : (ilkVeri || [])
+
+  const yukle = useCallback(async (zorla = false) => {
+    if (!kapsam) {
+      setListe({ kapsam, veri: [] })
+      setLoading(false)
+      setError(null)
+      return
     }
-    setLoading(false)
-  }, [getClients])
+    if (!musteriListesiOnbellek(kapsam)) setLoading(true)
+    try {
+      const veri = await musteriListesiGetir(() => getiriciRef.current(), { kapsam, zorla })
+      if (kapsamRef.current !== kapsam) return
+      setListe({ kapsam, veri })
+      setError(null)
+    } catch (err) {
+      if (kapsamRef.current !== kapsam) return
+      console.error('Musteri listesi yuklenemedi:', err)
+      setError('Müşteri verileri alınamadı. Bağlantıyı kontrol edip yeniden deneyin.')
+    } finally {
+      if (kapsamRef.current === kapsam) setLoading(false)
+    }
+  }, [kapsam])
 
   useEffect(() => {
-    refresh()
+    let canli = true
+    const onbellek = musteriListesiOnbellek(kapsam)
+    setListe({ kapsam, veri: onbellek || [] })
+    setError(null)
+    setLoading(!!kapsam && !onbellek)
+    const abone = musteriListesineAboneOl(kapsam, (veri) => {
+      if (canli) setListe({ kapsam, veri: veri || [] })
+    })
+    yukle(false)
 
-    // Global yenileme eventini dinle
-    const handleRefresh = () => {
-      refresh()
-    }
-    window.addEventListener('mubis-clients-refresh', handleRefresh)
+    const dinle = () => { yukle(true) }
+    window.addEventListener('mubis-clients-refresh', dinle)
     return () => {
-      window.removeEventListener('mubis-clients-refresh', handleRefresh)
+      canli = false
+      abone()
+      window.removeEventListener('mubis-clients-refresh', dinle)
     }
-  }, [refresh])
+  }, [kapsam, yukle])
 
-  return { clients, loading, refresh, setClients }
+  const refresh = useCallback(() => yukle(true), [yukle])
+  const setClients = useCallback((veri) => {
+    setListe(onceki => {
+      const mevcut = onceki.kapsam === kapsam ? onceki.veri : (musteriListesiOnbellek(kapsam) || [])
+      return { kapsam, veri: typeof veri === 'function' ? veri(mevcut) : (veri || []) }
+    })
+  }, [kapsam])
+  const temizle = useCallback(() => {
+    musteriListesiSifirla(kapsam)
+    setListe({ kapsam, veri: [] })
+  }, [kapsam])
+
+  return { clients, loading, error, refresh, setClients, temizle }
 }

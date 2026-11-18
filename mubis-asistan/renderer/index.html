@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; user-select: none; }
+  body { background: transparent; overflow: hidden; width: 100vw; height: 100vh; }
+  #pet {
+    width: 200px; height: 200px; object-fit: contain;
+    position: absolute; bottom: 0; left: 20px;
+    cursor: grab; -webkit-app-region: no-drag;
+    filter: drop-shadow(0 4px 8px rgba(0,0,0,.35));
+  }
+  #pet.geziyor { animation: zipla 0.45s ease-in-out infinite; }
+  #pet.kosuyor { animation: zipla 0.25s ease-in-out infinite; }
+  @keyframes zipla { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-8px) } }
+  .sola { transform: scaleX(-1); }
+  #bubble {
+    position: absolute; bottom: 205px; left: 50%; transform: translateX(-50%);
+    max-width: 230px; background: #fff; color: #1e3a5f; font: 13px 'Segoe UI', sans-serif;
+    padding: 10px 14px; border-radius: 14px; box-shadow: 0 4px 14px rgba(0,0,0,.3);
+    display: none; z-index: 5; line-height: 1.4; word-break: break-word;
+  }
+  #bubble:after { content: ''; position: absolute; bottom: -8px; left: 50%; margin-left: -8px;
+    border: 8px solid transparent; border-top-color: #fff; border-bottom: 0; }
+  #zzz { position: absolute; top: 8px; right: 30px; font: bold 20px 'Segoe UI'; color: #7dd3fc;
+    display: none; animation: yuz 2s ease-in-out infinite; z-index: 4; }
+  @keyframes yuz { 0%,100% { opacity: .4; transform: translateY(0) } 50% { opacity: 1; transform: translateY(-6px) } }
+  #mini {
+    position: absolute; bottom: 6px; right: 6px; width: 34px; height: 34px; border-radius: 50%;
+    background: #1d4ed8; color: #fff; border: none; font-size: 16px; cursor: pointer;
+    opacity: 0; transition: opacity .2s; z-index: 6;
+  }
+  body:hover #mini { opacity: .85; }
+</style>
+</head>
+<body>
+  <div id="bubble"></div>
+  <div id="zzz">Z z z</div>
+  <img id="pet" draggable="false" alt="">
+  <button id="mini" title="Sohbet">💬</button>
+<script>
+  const $ = (s) => document.querySelector(s)
+  const pet = $('#pet'), bubble = $('#bubble'), zzz = $('#zzz')
+  let karakter = localStorage.getItem('karakter') || 'kopek'
+  let poz = 'oturuyor'
+  let bubbleTimer = null
+
+  function gorselGuncelle() {
+    pet.src = `../assets/${karakter}/${poz}.png`
+    pet.className = ''
+    if (poz === 'yuruyor') pet.classList.add('geziyor')
+    if (poz === 'kosuyor') pet.classList.add('kosuyor')
+    zzz.style.display = poz === 'uyuyor' ? 'block' : 'none'
+  }
+  gorselGuncelle()
+
+  window.asistan.onAyar((a) => {
+    if (a.karakter && a.karakter !== karakter) { karakter = a.karakter; localStorage.setItem('karakter', karakter) }
+    gorselGuncelle()
+  })
+  window.asistan.onPoz((p) => { poz = p; gorselGuncelle() })
+  window.asistan.onYon((y) => pet.classList.toggle('sola', y === -1))
+
+  window.asistan.onKonus((metin) => {
+    bubble.textContent = metin
+    bubble.style.display = 'block'
+    clearTimeout(bubbleTimer)
+    bubbleTimer = setTimeout(() => { bubble.style.display = 'none' }, 6000)
+  })
+  window.asistan.onTts((metin) => {
+    try {
+      speechSynthesis.cancel()
+      const u = new SpeechSynthesisUtterance(metin)
+      const tr = speechSynthesis.getVoices().find(v => v.lang && v.lang.startsWith('tr'))
+      if (tr) u.voice = tr
+      u.lang = 'tr-TR'; u.rate = 1.05
+      speechSynthesis.speak(u)
+    } catch (e) {}
+  })
+
+  // Surukleme
+  let surukleAktif = false, sonX = 0, sonY = 0
+  pet.addEventListener('pointerdown', (e) => {
+    surukleAktif = true; sonX = e.screenX; sonY = e.screenY
+    pet.setPointerCapture(e.pointerId)
+  })
+  pet.addEventListener('pointermove', (e) => {
+    if (!surukleAktif) return
+    window.asistan.surukle(e.screenX - sonX, e.screenY - sonY)
+    sonX = e.screenX; sonY = e.screenY
+  })
+  pet.addEventListener('pointerup', () => { surukleAktif = false })
+
+  // Cift tik: konus | sag tik: menu
+  let tikSay = 0, tikTimer = null
+  pet.addEventListener('click', () => {
+    tikSay++
+    if (tikSay === 1) tikTimer = setTimeout(() => { tikSay = 0 }, 350)
+    else { clearTimeout(tikTimer); tikSay = 0; window.asistan.konusIste() }
+  })
+  pet.addEventListener('contextmenu', (e) => { e.preventDefault(); window.asistan.menuAc() })
+  $('#mini').addEventListener('click', () => window.asistan.sohbetAc())
+</script>
+</body>
+</html>

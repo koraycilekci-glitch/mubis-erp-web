@@ -447,7 +447,7 @@ function IhbarKidem() {
               ]} />
               {isverenKaynak === 'musteri' && (
                 <Select label="Musteri Sec" value={selectedClient} onChange={setSelectedClient}
-                  options={[{ value: '', label: '-- Secin --' }, ...clients.map(c => ({ value: String(c.id), label: c.type === 'company' ? (c.company || c.name) : c.name }))]} />
+                  options={[{ value: '', label: '-- Secin --' }, ...clients.slice().sort((a, b) => (a.name || a.company || "").localeCompare(b.name || b.company || "", "tr")).map(c => ({ value: String(c.id), label: c.type === 'company' ? (c.company || c.name) : c.name }))]} />
               )}
               <Input label="Isveren Adi / Unvani" value={isverenAd} onChange={setIsverenAd} type="text" disabled={isverenKaynak === 'musteri' && !!selectedClient} />
               <TextArea label="Isveren Adresi" value={isverenAdres} onChange={setIsverenAdres} />

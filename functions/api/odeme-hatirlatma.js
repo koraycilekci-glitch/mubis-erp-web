@@ -38,12 +38,15 @@ async function calistir(env) {
       settings[r.key] = r.value
     })
 
-    const hatirlatmaGun = Math.max(0, parseInt(settings.odeme_hatirlatma_gun || '5') || 5)
+    // `parseInt(...) || 5` yazmayın — 0 (sadece bugün) ayarı falsy olduğundan
+    // sessizce 5'e döner (beyan-hatirlatma'da bu bug gerçek gönderim yaptırdı).
+    const gunHam = parseInt(settings.odeme_hatirlatma_gun ?? '5')
+    const hatirlatmaGun = Number.isFinite(gunHam) ? Math.max(0, gunHam) : 5
     const waChannel = settings.whatsapp_channel === 'web' ? 'web' : 'api'
 
     const { data: clients, error: cErr } = await supabase
       .from('clients')
-      .select('id, name, email, phone, beyan_durumlari')
+      .select('id, name, email, phone, beyan_durumlari, whatsapp_opt_out')
     if (cErr) throw cErr
 
     const bugun = new Date(); bugun.setHours(0, 0, 0, 0)
@@ -95,9 +98,9 @@ async function calistir(env) {
           `Saygılarımızla, MUBiS ERP`
         ].filter(Boolean).join('\n')
 
-        // 1) WhatsApp (yalniz API kanalinda; web kanali sunucudan acilamaz)
+        // 1) WhatsApp (yalniz API kanalinda + musteri opt-out secmemisse)
         let waSonuc = 'atlandi'
-        if (waChannel === 'api' && settings.whatsapp_phone_number_id && settings.whatsapp_access_token) {
+        if (waChannel === 'api' && settings.whatsapp_phone_number_id && settings.whatsapp_access_token && !c.whatsapp_opt_out) {
           const to = normalizePhone(c.phone)
           if (to.length >= 12) {
             try {

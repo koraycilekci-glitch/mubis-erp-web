@@ -5,7 +5,7 @@ import { useClients } from '../hooks/useClients'
 import {
   Loader2, Play, Eye, CheckCircle2, XCircle, AlertTriangle, Search,
   Users, User, ChevronDown, ChevronRight, Info, RefreshCw, ScanLine,
-  FileCheck, ClipboardList
+  FileCheck
 } from 'lucide-react'
 import { topluBelgeDuzenle, HATA_TURLERI } from '../services/topluBelgeService'
 import { fisTara, FIS_TURLERI, AYLAR } from '../services/fisTaramaService'
@@ -17,31 +17,12 @@ const yilSecenekleri = () => {
 
 const musteriAdi = (c) => c?.name || c?.company || c?.shortName || `Müşteri #${c?.id}`
 
-const SEKMELER = [
-  {
-    id: 'belge',
-    ad: 'Toplu Belge Türü ve Ödeme Yöntemi',
-    kisa: 'Toplu Belge Düzenleme',
-    ikon: FileCheck,
-    aciklama: 'Luca\'daki E-Defter uyumsuzluklarını (belge türü boş / diğer) toplu düzeltir: belge türü (FT/MF/PS), ödeme yöntemi (Banka), boş belge tarihi ve belge numarası. Dolu belge numaralarına ve fatura fişlerine dokunulmaz.'
-  },
-  {
-    id: 'tarama',
-    ad: 'Fiş Taraması',
-    kisa: 'Fiş Taraması',
-    ikon: ScanLine,
-    aciklama: 'Luca\'daki fiş listesinden boş, dengesiz ve pasif fişleri seçilen dönem için tarar. Salt okunurdur — hiçbir kayıt değiştirilmez veya silinmez.'
-  }
-]
-
 export default function TopluBelgeIslemleri() {
   const { user } = useAuth()
   if (!user) return <Navigate to="/giris" replace />
   if (!['admin', 'super_admin', 'personel'].includes(user.role)) return <Navigate to="/portal" replace />
 
   const { clients, loading: musterilerYukleniyor, error: musteriHatasi } = useClients()
-
-  const [sekme, setSekme] = useState('belge')
 
   // Ortak secim
   const [yil, setYil] = useState(String(new Date().getFullYear()))
@@ -51,6 +32,9 @@ export default function TopluBelgeIslemleri() {
   const [secililer, setSecililer] = useState(() => new Set())
   const [arama, setArama] = useState('')
 
+  // Tarama turleri (fiş taraması için)
+  const [turler, setTurler] = useState(() => new Set(FIS_TURLERI.map((t) => t.kod)))
+
   // Toplu belge durumu
   const [belgeCalisiyor, setBelgeCalisiyor] = useState(false)
   const [belgeAdim, setBelgeAdim] = useState('')
@@ -59,7 +43,6 @@ export default function TopluBelgeIslemleri() {
   const [belgeHata, setBelgeHata] = useState('')
 
   // Fis tarama durumu
-  const [turler, setTurler] = useState(() => new Set(FIS_TURLERI.map((t) => t.kod)))
   const [tarmaCalisiyor, setTaramaCalisiyor] = useState(false)
   const [taramaAdim, setTaramaAdim] = useState('')
   const [taramaSonuclar, setTaramaSonuclar] = useState([])
@@ -87,7 +70,7 @@ export default function TopluBelgeIslemleri() {
     return sirali.filter((c) => secililer.has(c.id))
   }, [secimModu, tekMusteri, sirali, secililer])
 
-  const calisiyor = sekme === 'belge' ? belgeCalisiyor : tarmaCalisiyor
+  const calisiyor = belgeCalisiyor || tarmaCalisiyor
 
   const secimDegistir = (id) => {
     setSecililer((onceki) => {
@@ -218,36 +201,15 @@ export default function TopluBelgeIslemleri() {
   const taramaTamam = taramaSonuclar.filter((s) => s.durum === 'tamam').length
   const taramaHataSayisi = taramaSonuclar.filter((s) => s.durum === 'hata').length
 
-  const aktifSekme = SEKMELER.find((s) => s.id === sekme)
-
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6 text-white">
       <div>
-        <h1 className="text-2xl sm:text-3xl font-bold">Toplu Belge İşlemleri</h1>
-        <p className="mt-2 text-blue-100/70 text-sm">{aktifSekme?.aciklama}</p>
-      </div>
-
-      {/* Sekmeler */}
-      <div className="flex flex-wrap gap-2 border-b border-blue-400/20">
-        {SEKMELER.map((s) => {
-          const Ikon = s.ikon
-          const aktif = sekme === s.id
-          return (
-            <button
-              key={s.id}
-              onClick={() => setSekme(s.id)}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
-                aktif
-                  ? 'border-blue-400 text-white bg-blue-900/40'
-                  : 'border-transparent text-blue-300 hover:text-white hover:bg-blue-900/20'
-              }`}
-            >
-              <Ikon className="w-4 h-4" />
-              <span className="hidden sm:inline">{s.ad}</span>
-              <span className="sm:hidden">{s.kisa}</span>
-            </button>
-          )
-        })}
+        <h1 className="text-2xl sm:text-3xl font-bold">Toplu Belge Türü ve Ödeme Yöntemi Düzenleme</h1>
+        <p className="mt-2 text-blue-100/70 text-sm">
+          Luca'daki E-Defter uyumsuzluklarını (belge türü boş / diğer) toplu düzeltir ve seçilen dönemde
+          boş / dengesiz / pasif fişleri tarar. Dolu belge numaralarına ve fatura fişlerine dokunulmaz;
+          fiş taraması salt okunurdur.
+        </p>
       </div>
 
       {/* Ortak secim paneli */}
@@ -264,19 +226,17 @@ export default function TopluBelgeIslemleri() {
             </select>
           </div>
 
-          {sekme === 'tarama' && (
-            <div>
-              <label className="text-sm text-blue-300 block mb-1">Dönem (ay)</label>
-              <select
-                value={ay}
-                onChange={(e) => setAy(e.target.value)}
-                className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm"
-              >
-                <option value="">Tüm yıl</option>
-                {AYLAR.map((ad, i) => <option key={ad} value={i + 1}>{ad}</option>)}
-              </select>
-            </div>
-          )}
+          <div>
+            <label className="text-sm text-blue-300 block mb-1">Dönem (ay) — fiş taraması için</label>
+            <select
+              value={ay}
+              onChange={(e) => setAy(e.target.value)}
+              className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm"
+            >
+              <option value="">Tüm yıl</option>
+              {AYLAR.map((ad, i) => <option key={ad} value={i + 1}>{ad}</option>)}
+            </select>
+          </div>
 
           <div>
             <label className="text-sm text-blue-300 block mb-1">Müşteri seçimi</label>
@@ -325,27 +285,26 @@ export default function TopluBelgeIslemleri() {
           </div>
         </div>
 
-        {sekme === 'tarama' && (
-          <div className="rounded-lg border border-blue-400/20 bg-blue-900/20 p-3">
-            <div className="text-sm text-blue-300 mb-2">Tarama türleri</div>
-            <div className="flex flex-wrap gap-4">
-              {FIS_TURLERI.map((t) => (
-                <label key={t.kod} className="flex items-start gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={turler.has(t.kod)}
-                    onChange={() => turDegistir(t.kod)}
-                    className="w-4 h-4 mt-0.5 accent-blue-500"
-                  />
-                  <span className="text-sm">
-                    {t.ad}
-                    <span className="block text-xs text-blue-300/70">{t.aciklama}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
+        {/* Tarama turleri */}
+        <div className="rounded-lg border border-blue-400/20 bg-blue-900/20 p-3">
+          <div className="text-sm text-blue-300 mb-2">Fiş taraması türleri (salt okunur)</div>
+          <div className="flex flex-wrap gap-4">
+            {FIS_TURLERI.map((t) => (
+              <label key={t.kod} className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={turler.has(t.kod)}
+                  onChange={() => turDegistir(t.kod)}
+                  className="w-4 h-4 mt-0.5 accent-blue-500"
+                />
+                <span className="text-sm">
+                  {t.ad}
+                  <span className="block text-xs text-blue-300/70">{t.aciklama}</span>
+                </span>
+              </label>
+            ))}
           </div>
-        )}
+        </div>
 
         {secimModu === 'toplu' && (
           <div className="rounded-lg border border-blue-400/20 bg-blue-900/20">
@@ -387,70 +346,59 @@ export default function TopluBelgeIslemleri() {
         )}
 
         <div className="flex flex-wrap items-center gap-3 pt-1">
-          {sekme === 'belge' ? (
-            <>
-              <button
-                onClick={() => belgeCalistir('onizle')}
-                disabled={calisiyor || !hedefMusteriler.length}
-                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-50"
-              >
-                {belgeCalisiyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
-                Önizle
-              </button>
-              <button
-                onClick={() => belgeCalistir('uygula')}
-                disabled={calisiyor || !hedefMusteriler.length}
-                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50"
-              >
-                {belgeCalisiyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                Uygula ve Kaydet
-              </button>
-            </>
-          ) : (
-            <button
-              onClick={taramaBaslat}
-              disabled={calisiyor || !hedefMusteriler.length || !turler.size}
-              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-50"
-            >
-              {tarmaCalisiyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanLine className="w-4 h-4" />}
-              Seçilen firmalarda fiş tara
-            </button>
-          )}
+          <button
+            onClick={() => belgeCalistir('onizle')}
+            disabled={calisiyor || !hedefMusteriler.length}
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-50"
+          >
+            {belgeCalisiyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+            Önizle (belge türü)
+          </button>
+          <button
+            onClick={() => belgeCalistir('uygula')}
+            disabled={calisiyor || !hedefMusteriler.length}
+            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50"
+          >
+            {belgeCalisiyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+            Uygula ve Kaydet
+          </button>
+          <button
+            onClick={taramaBaslat}
+            disabled={calisiyor || !hedefMusteriler.length || !turler.size}
+            className="inline-flex items-center gap-2 rounded-lg bg-slate-600 px-4 py-2 text-sm font-medium hover:bg-slate-500 disabled:opacity-50"
+          >
+            {tarmaCalisiyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanLine className="w-4 h-4" />}
+            Fiş tara (salt okunur)
+          </button>
 
           {calisiyor && (belgeAdim || taramaAdim) && (
             <span className="text-sm text-blue-200 inline-flex items-center gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" />
-              {(sekme === 'belge' ? belgeAdim : taramaAdim)} {sekme === 'belge' ? 'işleniyor' : 'taranıyor'}...
+              {(sekme === 'belge' ? belgeAdim : taramaAdim)} {belgeCalisiyor ? 'işleniyor' : 'taranıyor'}...
             </span>
           )}
           <span className="text-xs text-blue-300 ml-auto">Seçili: {hedefMusteriler.length} müşteri</span>
         </div>
 
-        {belgeHata && sekme === 'belge' && (
+        {belgeHata && (
           <div className="rounded-lg bg-red-500/10 border border-red-400/30 px-3 py-2 text-sm text-red-200">{belgeHata}</div>
         )}
 
         <div className="rounded-lg bg-blue-900/20 border border-blue-400/10 px-3 py-2 text-xs text-blue-200 flex gap-2">
           <Info className="w-4 h-4 shrink-0 mt-0.5" />
-          {sekme === 'belge' ? (
-            <span>
-              E-Defter hata türleri: {HATA_TURLERI.map((h) => `${h.kod} (${h.ad})`).join(' · ')}.
-              Yalnız <b>20041</b> ve <b>20042</b> düzeltilir; diğerleri bilgi amaçlı okunur.
-            </span>
-          ) : (
-            <span>
-              Dönem seçilmezse yılın tamamı taranır. Ay seçilirse o ayın 1'i ile son günü arası
-              (içinde bulunulan ayda bugüne kadar) taranır. Sonuçlar Luca'nın kendi fiş listesinden okunur.
-            </span>
-          )}
+          <span>
+            E-Defter hata türleri: {HATA_TURLERI.map((h) => `${h.kod} (${h.ad})`).join(' · ')}.
+            Yalnız <b>20041</b> ve <b>20042</b> düzeltilir; diğerleri bilgi amaçlı okunur.
+            Fiş taraması (boş/dengesiz/pasif) salt okunurdur; hiçbir kayıt değiştirilmez.
+          </span>
         </div>
       </div>
 
       {/* === TOPLU BELGE SONUCLARI === */}
-      {sekme === 'belge' && belgeSonuclar.length > 0 && (
+      {belgeSonuclar.length > 0 && (
         <div className="rounded-xl border border-blue-400/20 bg-blue-950/50 overflow-hidden">
           <div className="flex flex-wrap items-center gap-4 px-4 py-3 border-b border-blue-400/10 text-sm">
-            <span className="font-semibold">Sonuçlar</span>
+            <span className="font-semibold">Toplu Belge Düzenleme — Sonuçlar</span>
             <span className="text-blue-200">Tamam: {belgeTamam}</span>
             {belgeHataSayisi > 0 && <span className="text-red-300">Hata: {belgeHataSayisi}</span>}
             <span className="text-blue-200">Düzeltilecek/gereken toplam satır: {belgeToplam}</span>
@@ -558,7 +506,7 @@ export default function TopluBelgeIslemleri() {
         </div>
       )}
 
-      {sekme === 'belge' && belgeHataSayisi > 0 && (
+      {belgeHataSayisi > 0 && (
         <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm text-amber-100 flex gap-2">
           <AlertTriangle className="w-5 h-5 shrink-0" />
           <div>
@@ -570,10 +518,10 @@ export default function TopluBelgeIslemleri() {
       )}
 
       {/* === FIS TARAMA SONUCLARI === */}
-      {sekme === 'tarama' && taramaSonuclar.length > 0 && (
+      {taramaSonuclar.length > 0 && (
         <div className="rounded-xl border border-blue-400/20 bg-blue-950/50 overflow-hidden">
           <div className="flex flex-wrap items-center gap-4 px-4 py-3 border-b border-blue-400/10 text-sm">
-            <span className="font-semibold">Sonuçlar</span>
+            <span className="font-semibold">Fiş Taraması — Sonuçlar (salt okunur)</span>
             <span className="text-blue-200">Tamam: {taramaTamam}</span>
             {taramaHataSayisi > 0 && <span className="text-red-300">Hata: {taramaHataSayisi}</span>}
             <span className="text-blue-200">Bulunan fiş: {taramaToplam}</span>
@@ -695,7 +643,7 @@ export default function TopluBelgeIslemleri() {
         </div>
       )}
 
-      {sekme === 'tarama' && taramaHataSayisi > 0 && (
+      {taramaHataSayisi > 0 && (
         <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm text-amber-100 flex gap-2">
           <AlertTriangle className="w-5 h-5 shrink-0" />
           <div>

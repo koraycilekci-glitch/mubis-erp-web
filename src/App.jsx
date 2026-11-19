@@ -28,7 +28,6 @@ const TaxCalendar = lazy(() => import('./pages/TaxCalendar'))
 const MevzuatKaynaklari = lazy(() => import('./pages/MevzuatKaynaklari'))
 const KdvMuavinKontrol = lazy(() => import('./pages/KdvMuavinKontrol'))
 const TopluBelgeIslemleri = lazy(() => import('./pages/TopluBelgeIslemleri'))
-const FisTarama = lazy(() => import('./pages/FisTarama'))
 const AllBeyanReport = lazy(() => import('./pages/AllBeyanReport'))
 const TaxCenter = lazy(() => import('./pages/TaxCenter'))
 const EInvoiceDownloader = lazy(() => import('./pages/EInvoiceDownloader'))
@@ -250,7 +249,6 @@ function AppContent() {
           <Route path="/admin/mevzuat-kaynaklari" element={<MevzuatKaynaklari />} />
           <Route path="/admin/kdv-muavin-kontrol" element={<KdvMuavinKontrol />} />
           <Route path="/admin/toplu-belge-islemleri" element={<TopluBelgeIslemleri />} />
-          <Route path="/admin/fis-tarama" element={<FisTarama />} />
           <Route path="/admin/all-beyan" element={<AllBeyanReport />} />
           <Route path="/admin/tax-center" element={<TaxCenter />} />
           <Route path="/admin/documents" element={<DocumentCenter />} />

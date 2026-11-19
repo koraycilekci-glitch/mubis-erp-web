@@ -106,7 +106,8 @@ export default function TopluBelgeIslemleri() {
   const belgeCalistir = async (mod) => {
     if (belgeCalisiyor) return
     if (!hedefMusteriler.length) {
-      setBelgeHata(secimModu === 'tek' ? 'Lütfen bir müşteri seçin.' : 'Lütfen en az bir müşteri seçin.')
+      setBelgeHata(secimModu === 'tek' ? 'Lütfen önce bir müşteri seçin.' : 'Lütfen en az bir müşteri seçin.')
+      alert(secimModu === 'tek' ? 'Lütfen önce bir müşteri seçin.' : 'Lütfen en az bir müşteri seçin.')
       return
     }
     if (mod === 'uygula' && !confirm(
@@ -149,7 +150,7 @@ export default function TopluBelgeIslemleri() {
   const taramaBaslat = async () => {
     if (tarmaCalisiyor) return
     if (!hedefMusteriler.length) {
-      alert(secimModu === 'tek' ? 'Lütfen bir müşteri seçin.' : 'Lütfen en az bir müşteri seçin.')
+      alert(secimModu === 'tek' ? 'Lütfen önce bir müşteri seçin.' : 'Lütfen en az bir müşteri seçin.')
       return
     }
     if (!turler.size) {
@@ -348,24 +349,27 @@ export default function TopluBelgeIslemleri() {
         <div className="flex flex-wrap items-center gap-3 pt-1">
           <button
             onClick={() => belgeCalistir('onizle')}
-            disabled={calisiyor || !hedefMusteriler.length}
-            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-50"
+            disabled={calisiyor}
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            title={!hedefMusteriler.length ? 'Önce müşteri seçin' : ''}
           >
             {belgeCalisiyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
             Önizle (belge türü)
           </button>
           <button
             onClick={() => belgeCalistir('uygula')}
-            disabled={calisiyor || !hedefMusteriler.length}
-            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50"
+            disabled={calisiyor}
+            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            title={!hedefMusteriler.length ? 'Önce müşteri seçin' : ''}
           >
             {belgeCalisiyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
             Uygula ve Kaydet
           </button>
           <button
             onClick={taramaBaslat}
-            disabled={calisiyor || !hedefMusteriler.length || !turler.size}
-            className="inline-flex items-center gap-2 rounded-lg bg-slate-600 px-4 py-2 text-sm font-medium hover:bg-slate-500 disabled:opacity-50"
+            disabled={calisiyor || !turler.size}
+            className="inline-flex items-center gap-2 rounded-lg bg-slate-600 px-4 py-2 text-sm font-medium hover:bg-slate-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            title={!hedefMusteriler.length ? 'Önce müşteri seçin' : ''}
           >
             {tarmaCalisiyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanLine className="w-4 h-4" />}
             Fiş tara (salt okunur)
@@ -375,6 +379,12 @@ export default function TopluBelgeIslemleri() {
             <span className="text-sm text-blue-200 inline-flex items-center gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" />
               {(sekme === 'belge' ? belgeAdim : taramaAdim)} {belgeCalisiyor ? 'işleniyor' : 'taranıyor'}...
+            </span>
+          )}
+          {!hedefMusteriler.length && (
+            <span className="text-sm text-amber-300 inline-flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4" />
+              Önce müşteri seçin (tek müşteri veya toplu seçim).
             </span>
           )}
           <span className="text-xs text-blue-300 ml-auto">Seçili: {hedefMusteriler.length} müşteri</span>
@@ -569,7 +579,7 @@ export default function TopluBelgeIslemleri() {
                       </td>
                     ))}
                     <td className="px-4 py-3 text-xs text-blue-100/80 max-w-[320px]">
-                      <div className="truncate" title={s.mesaj}>{s.mesaj}</div>
+                      <div className="whitespace-normal break-words" title={s.mesaj}>{s.mesaj}</div>
                     </td>
                     <td className="px-4 py-3 text-right">
                       {listelenecek > 0 && (

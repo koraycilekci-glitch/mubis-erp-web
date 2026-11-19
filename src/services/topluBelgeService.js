@@ -39,7 +39,7 @@ export async function topluBelgeDuzenle({ client, yil, mod = 'onizle', onDurum }
     fullName: client.name || client.company || '',
     yil: String(yil || new Date().getFullYear()),
     mod
-  }, mod === 'uygula' ? 60 * 60 * 1000 : 15 * 60 * 1000)
+  }, mod === 'uygula' ? 60 * 60 * 1000 : 15 * 60 * 1000, durum)
 
   if (!sonuc.ok) {
     const neden = String(sonuc.reason || sonuc.not || '')

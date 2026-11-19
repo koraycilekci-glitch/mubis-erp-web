@@ -3331,7 +3331,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
                                   ) : '-'}
                                 </td>
                                 <td className="py-3 text-sm font-medium text-white text-right whitespace-nowrap">
-                                  {(d.matrah != null && d.kdv != null) ? `${(d.matrah + d.kdv).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${f.para_birimi || 'TRY'}` : '-'}
+                                  {(d.matrah != null && d.kdv != null) ? `${(f.para_birimi && f.para_birimi !== 'TRY' && f.doviz_kur ? ((Number(d.matrah) + Number(d.kdv)) * Number(f.doviz_kur)) : (d.matrah + d.kdv)).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${(f.para_birimi && f.para_birimi !== 'TRY' && f.doviz_kur) ? 'TRY' : (f.para_birimi || 'TRY')}` : '-'}
                                 </td>
                                 <td className="py-3">
                                   <div className="flex space-x-2">
@@ -3392,7 +3392,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
                               ) : '-'}
                             </td>
                             <td className="py-3 text-sm font-medium text-white text-right whitespace-nowrap">
-                              {f.tutar != null ? `${Number(f.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${f.para_birimi || 'TRY'}` : '-'}
+                              {f.tutar != null ? (f.para_birimi && f.para_birimi !== 'TRY' && f.doviz_kur ? `${(Number(f.tutar) * Number(f.doviz_kur)).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} TRY` : `${Number(f.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${f.para_birimi || 'TRY'}`) : '-'}
                             </td>
                             <td className="py-3">
                               <div className="flex space-x-2">
@@ -3453,7 +3453,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
                       {gosterilenFatura.f.tarih ? formatDateTR(gosterilenFatura.f.tarih) : ''}
                       {' · '}{gosterilenFatura.f.yon === 'giden' ? 'Kesilen' : 'Alinan'}
                       {' · '}{gosterilenFatura.f.karsi_unvan || gosterilenFatura.f.karsi_vkn || '-'}
-                      {gosterilenFatura.f.tutar != null ? ` · ${Number(gosterilenFatura.f.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${gosterilenFatura.f.para_birimi || 'TRY'}` : ''}
+                      {gosterilenFatura.f.tutar != null ? ` · ${gosterilenFatura.f.para_birimi && gosterilenFatura.f.para_birimi !== 'TRY' && gosterilenFatura.f.doviz_kur ? `${(Number(gosterilenFatura.f.tutar) * Number(gosterilenFatura.f.doviz_kur)).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} TRY` : `${Number(gosterilenFatura.f.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${gosterilenFatura.f.para_birimi || 'TRY'}`}` : ''}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">

@@ -42,7 +42,8 @@ export const MENU = [
       { to: '/admin/fatura-sorgulama', icon: Receipt, label: 'Fatura Sorgulama' },
       { to: '/admin/fisler', icon: Receipt, label: 'Fişler' },
       { to: '/admin/taramalar', icon: ScanLine, label: 'Taramalar' },
-      { to: '/admin/muhasebe-kayit', icon: Calculator, label: 'Fatura Muhasebeleştime' }
+      { to: '/admin/muhasebe-kayit', icon: Calculator, label: 'Fatura Muhasebeleştime' },
+      { to: '/admin/toplu-belge-islemleri', icon: FileCheck, label: 'Toplu Belge Türü ve Ödeme Yöntemi Düzenleme' }
     ]
   },
   { to: '/admin/kdv-dokumleri', icon: BarChart3, label: 'KDV Dökümleri' },
@@ -93,22 +94,6 @@ export const MENU = [
   },
   { to: '/admin/tax-calendar', icon: CalendarDays, label: 'Vergi Takvimi' },
   { to: '/admin/kdv-muavin-kontrol', icon: FileText, label: 'KDV Muavin Kontrol' },
-  {
-    id: 'kontrol-raporlama', icon: BarChart3, label: 'Kontrol & Raporlama',
-    children: [
-      { to: '/admin/defter-beyan-uyumu', icon: FileText, label: 'Defter-Beyan Uyumu' },
-      { to: '/admin/vergi-deneme-bilancosu', icon: FileText, label: 'Vergi Deneme Bilançosu' },
-      { to: '/admin/beyanname-tahakkuk-eslestirme', icon: FileText, label: 'Beyanname-Tahakkuk Eşleştirme' },
-      { to: '/admin/gider-fisi-siniflandirma', icon: FileText, label: 'Gider Fişi Sınıflandırma' },
-      { to: '/admin/isletme-giderleri', icon: FileText, label: 'İşletme Giderleri' },
-      { to: '/admin/stopaj-kanitlari', icon: FileText, label: 'Stopaj/Tevkifat Kanıtları' },
-      { to: '/admin/finansman-gider-kisitlamasi', icon: FileText, label: 'Finansman Gider Kısıtlaması' },
-      { to: '/admin/toplu-belge-islemleri', icon: FileText, label: 'Toplu Belge İşlemleri' },
-      { to: '/admin/belge-arsiv-karsilastirma', icon: FileText, label: 'Belge Arşiv Karşılaştırma' },
-      { to: '/admin/esmm-gecmisi', icon: FileText, label: 'E-SMM Geçmişi' },
-      { to: '/admin/raporlama-export', icon: FileText, label: 'Raporlama / Export' }
-    ]
-  },
   {
     id: 'mevzuat-asistan', icon: Brain, label: 'Mevzuat & AI Asistan',
     children: [

@@ -542,7 +542,7 @@ ${b.kalemler.map((k, i) => `<tr><td>${i + 1}</td><td>${k.ad}</td><td>${k.miktar}
                     <td className="px-4 py-3 text-gray-400 text-sm">{f.tarih ? formatDateTR(f.tarih) : '-'}</td>
                     <td className="px-4 py-3 max-w-[180px] truncate text-gray-300 text-sm" title={f.karsi_unvan || f.karsi_vkn || ''}>{f.karsi_unvan || f.karsi_vkn || '-'}</td>
                     <td className="px-4 py-3 text-white font-medium text-right whitespace-nowrap">
-                      {f.tutar != null ? `${Number(f.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${f.para_birimi || 'TRY'}` : '-'}
+                      {f.tutar != null ? (f.para_birimi && f.para_birimi !== 'TRY' && f.doviz_kur ? `${(Number(f.tutar) * Number(f.doviz_kur)).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} TRY` : `${Number(f.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${f.para_birimi || 'TRY'}`) : '-'}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex space-x-1.5">

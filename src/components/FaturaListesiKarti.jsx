@@ -1320,7 +1320,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
                             ) : '-'}
                           </td>
                         <td className="py-2 whitespace-nowrap text-white font-medium text-right">
-                          {(d.matrah != null && d.kdv != null) ? `${(d.matrah + d.kdv).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${f.para_birimi || 'TRY'}` : '-'}
+                          {(d.matrah != null && d.kdv != null) ? `${(f.para_birimi && f.para_birimi !== 'TRY' && f.doviz_kur ? ((Number(d.matrah) + Number(d.kdv)) * Number(f.doviz_kur)) : (d.matrah + d.kdv)).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${(f.para_birimi && f.para_birimi !== 'TRY' && f.doviz_kur) ? 'TRY' : (f.para_birimi || 'TRY')}` : '-'}
                         </td>
                         <td className="py-2">
                           <div className="flex space-x-1.5">

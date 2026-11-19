@@ -333,7 +333,7 @@ export function faturaMetadatasiXml(xmlText, musteriVkn = '', sorguYon = '') {
   // bloklarindaki cbc:CalculationRate — TL isleme icin (TRY faturalarda null).
   let dovizKur = null
   if ((al('DocumentCurrencyCode') || 'TRY').toLocaleUpperCase('tr') !== 'TRY') {
-    for (const blokAd of ['PaymentExchangeRate', 'PricingExchangeRate', 'TaxExchangeRate']) {
+    for (const blokAd of ['PaymentExchangeRate', 'PricingExchangeRate', 'TaxExchangeRate', 'ExchangeRate']) {
       for (const onek of ['cac:', '']) {
         const blok = doc.getElementsByTagName(onek + blokAd)[0]
         const kurEl = blok?.getElementsByTagName('cbc:CalculationRate')[0] || blok?.getElementsByTagName('CalculationRate')[0]

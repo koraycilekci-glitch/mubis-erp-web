@@ -27,17 +27,6 @@ const Notifications = lazy(() => import('./pages/Notifications'))
 const TaxCalendar = lazy(() => import('./pages/TaxCalendar'))
 const MevzuatKaynaklari = lazy(() => import('./pages/MevzuatKaynaklari'))
 const KdvMuavinKontrol = lazy(() => import('./pages/KdvMuavinKontrol'))
-const GiderFisiSiniflandirma = lazy(() => import('./pages/GiderFisiSiniflandirma'))
-const DefterBeyanUyumu = lazy(() => import('./pages/DefterBeyanUyumu'))
-const VergiDenemeBilancosu = lazy(() => import('./pages/VergiDenemeBilancosu'))
-const TopluBelgeIslemleri = lazy(() => import('./pages/TopluBelgeIslemleri'))
-const FinansmanGiderKisitlamasi = lazy(() => import('./pages/FinansmanGiderKisitlamasi'))
-const StopajKanitlari = lazy(() => import('./pages/StopajKanitlari'))
-const IsletmeGiderleri = lazy(() => import('./pages/IsletmeGiderleri'))
-const BelgeArsivKarsilastirma = lazy(() => import('./pages/BelgeArsivKarsilastirma'))
-const RaporlamaExport = lazy(() => import('./pages/RaporlamaExport'))
-const EsmmGecmisi = lazy(() => import('./pages/EsmmGecmisi'))
-const BeyannameTahakkukEslestirme = lazy(() => import('./pages/BeyannameTahakkukEslestirme'))
 const AllBeyanReport = lazy(() => import('./pages/AllBeyanReport'))
 const TaxCenter = lazy(() => import('./pages/TaxCenter'))
 const EInvoiceDownloader = lazy(() => import('./pages/EInvoiceDownloader'))
@@ -258,17 +247,7 @@ function AppContent() {
           <Route path="/admin/tax-calendar" element={<TaxCalendar />} />
           <Route path="/admin/mevzuat-kaynaklari" element={<MevzuatKaynaklari />} />
           <Route path="/admin/kdv-muavin-kontrol" element={<KdvMuavinKontrol />} />
-          <Route path="/admin/gider-fisi-siniflandirma" element={<GiderFisiSiniflandirma />} />
-          <Route path="/admin/defter-beyan-uyumu" element={<DefterBeyanUyumu />} />
-          <Route path="/admin/vergi-deneme-bilancosu" element={<VergiDenemeBilancosu />} />
           <Route path="/admin/toplu-belge-islemleri" element={<TopluBelgeIslemleri />} />
-          <Route path="/admin/finansman-gider-kisitlamasi" element={<FinansmanGiderKisitlamasi />} />
-          <Route path="/admin/stopaj-kanitlari" element={<StopajKanitlari />} />
-          <Route path="/admin/isletme-giderleri" element={<IsletmeGiderleri />} />
-          <Route path="/admin/belge-arsiv-karsilastirma" element={<BelgeArsivKarsilastirma />} />
-          <Route path="/admin/raporlama-export" element={<RaporlamaExport />} />
-          <Route path="/admin/esmm-gecmisi" element={<EsmmGecmisi />} />
-          <Route path="/admin/beyanname-tahakkuk-eslestirme" element={<BeyannameTahakkukEslestirme />} />
           <Route path="/admin/all-beyan" element={<AllBeyanReport />} />
           <Route path="/admin/tax-center" element={<TaxCenter />} />
           <Route path="/admin/documents" element={<DocumentCenter />} />

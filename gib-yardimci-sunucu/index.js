@@ -7461,7 +7461,234 @@ function pdfYanitYakalayiciKur(b, page) {
   }
 }
 
+// ============================================================
+// TOPLU BELGE TURU VE ODEME YONTEMI DUZENLEME (muhasebe)
+// Luca masaustu otomasyonunun ayni adli akisinin sunucu karsiligi.
+// Adimlar: oturum -> firma/donem -> menu -> yeni pencere -> filtre ->
+// onizleme/uygulama. Kurallar toplu-belge.js icinde (saf plan + sayfa betigi).
+// ============================================================
+const TOPLU_BELGE_PENCERE_RE = /(parameter|list)BelgeTuruDuzenlemeAction\.do/i
+
+function topluBelgeBekle(ms) {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+// Menu etiketini gercek fare ile tiklar (Luca animasyonlu alt menuleri
+// yalniz gercek fare olaylariyla acar).
+async function topluBelgeMenuAdimi(page, etiket, ad) {
+  const son = Date.now() + 20000
+  while (Date.now() < son) {
+    for (const f of page.frames()) {
+      const k = await f.evaluate((hedef) => {
+        const norm = (s) => String(s || "").replace(/\s+/g, " ").trim().toLocaleLowerCase("tr")
+        const hedefN = norm(hedef)
+        if (!hedefN) return null
+        const uygun = []
+        for (const el of document.querySelectorAll("a, li, span, div, td, button")) {
+          if (!el.getClientRects().length) continue
+          if (getComputedStyle(el).visibility === "hidden") continue
+          const t = norm(el.textContent)
+          if (!t || t.length > 70) continue
+          if (t === hedefN) uygun.push({ el, puan: 2 })
+          else if (t.includes(hedefN)) uygun.push({ el, puan: 1 })
+        }
+        if (!uygun.length) return null
+        uygun.sort((a, b) => b.puan - a.puan || a.el.textContent.length - b.el.textContent.length)
+        const el = uygun[0].el
+        const r = el.getBoundingClientRect()
+        let x = 0, y = 0, w = window, fe = window.frameElement, guvenlik = 0
+        while (fe && guvenlik++ < 5) {
+          const rr = fe.getBoundingClientRect()
+          x += rr.left
+          y += rr.top
+          w = w.parent
+          fe = w.frameElement
+        }
+        return { x: x + r.left + r.width / 2, y: y + r.top + r.height / 2, metin: String(el.textContent || "").trim().slice(0, 60) }
+      }, ad).catch(() => null)
+      if (!k) continue
+      try {
+        await page.mouse.move(k.x, k.y)
+        await topluBelgeBekle(450)
+        await page.mouse.click(k.x, k.y)
+        console.log(`[${etiket}] menu adimi tiklandi: ${ad} -> "${k.metin}"`)
+        return true
+      } catch { /* sonraki cerceve */ }
+    }
+    await topluBelgeBekle(400)
+  }
+  return false
+}
+
+async function topluBelgeMenuAc(page, etiket) {
+  const adimlar = ["Muhasebe", "Fiş İşlemleri", "Toplu Belge Türü ve Ödeme Yöntemi Düzenleme"]
+  for (let i = 0; i < adimlar.length; i++) {
+    const ok = await topluBelgeMenuAdimi(page, etiket, adimlar[i])
+    if (!ok) throw new Error("Luca menusu acilmadi: " + adimlar[i])
+    await topluBelgeBekle(i === 0 ? 1200 : 900)
+  }
+}
+
+// Toplu duzenleme penceresini (yeni sekme) bekler.
+async function topluBelgePenceresiBekle(b, ms) {
+  const son = Date.now() + ms
+  while (Date.now() < son) {
+    for (const pg of await b.pages().catch(() => [])) {
+      if (TOPLU_BELGE_PENCERE_RE.test(pg.url() || "")) {
+        try { await pg.bringToFront() } catch { /* yoksay */ }
+        return pg
+      }
+    }
+    await topluBelgeBekle(500)
+  }
+  return null
+}
+
 const ISLER = {
+  // MUBiS > Kontrol & Raporlama > Toplu Belge Turu ve Odeme Yontemi
+  // Duzenleme sayfasi bu isi cagirir.
+  // p: { lucaMember, lucaUsername, lucaPassword, shortName, fullName, vkn,
+  //      yil, mod: 'onizle' | 'uygula' }
+  "toplu-belge-duzenle": async (p) => {
+    const { bulkBelgePlanla, bulkBelgeSayfa } = require("./toplu-belge")
+    const etiket = "toplu-belge"
+    const yil = String(p.yil || (/* @__PURE__ */ new Date()).getFullYear())
+    const mod = p.mod === "uygula" ? "uygula" : "onizle"
+    const musteriAd = String(p.fullName || p.shortName || p.vkn || "").trim()
+    if (!musteriAd) throw new Error("Musteri bilgisi eksik (shortName/fullName/vkn).")
+    console.log(`[${etiket}] basladi: ${musteriAd} [${yil}] mod=${mod}`)
+
+    const g = await ISLER["luca-giris"]({
+      lucaMember: p.lucaMember,
+      lucaUsername: p.lucaUsername,
+      lucaPassword: p.lucaPassword
+    })
+    if (!g.ok) throw new Error(g.not || "Luca girisi basarisiz")
+    const b = await tarayiciAl()
+    const ana = (await b.pages()).find((s) => /luca\.do|auygs/i.test(s.url() || ""))
+    if (!ana) throw new Error("Luca ana sayfa bulunamadi.")
+
+    const secildi = await lucaMusteriSec(ana, etiket, {
+      shortName: p.shortName || p.musteriAd || "",
+      fullName: p.fullName || "",
+      vkn: p.vkn || "",
+      yil
+    })
+    if (!secildi) throw new Error("Luca firma/donem secilemedi: " + musteriAd + " [" + yil + "]")
+
+    await topluBelgeMenuAc(ana, etiket)
+    const pencere = await topluBelgePenceresiBekle(b, 25000)
+    if (!pencere) throw new Error("Toplu belge duzenleme penceresi acilmadi (menu yolu degismis olabilir).")
+
+    let beklenenKod = ""
+    const calistir = async (action, data = {}) => {
+      const istek = { action, expectedCode: beklenenKod, ...data }
+      const kaynak = "(" + bulkBelgeSayfa.toString() + ")(" + JSON.stringify(istek) + ")"
+      return await pencere.evaluate(kaynak)
+    }
+    const durumBekle = async (tur, ms) => {
+      const son = Date.now() + ms
+      let sonDurum = null
+      while (Date.now() < son) {
+        sonDurum = await calistir("state")
+        if (sonDurum[tur]) return sonDurum
+        if (sonDurum.error) throw new Error("Luca toplu belge ekrani hata verdi.")
+        await topluBelgeBekle(400)
+      }
+      throw new Error("Toplu belge ekrani hazir olmadi: " + tur)
+    }
+    const sorgula = async (code) => {
+      beklenenKod = code
+      const s = await calistir("state")
+      if (s.list) {
+        await calistir("back")
+        await durumBekle("filter", 20000)
+      }
+      await durumBekle("filter", 20000)
+      await calistir("filter", { code })
+      await calistir("submit-filter", { code })
+      await durumBekle("list", 90000)
+      const r = await calistir("read", { expectedCode: code })
+      if (r.code !== code) throw new Error("Istenen ve donen filtre ayni degil (" + code + " / " + r.code + ")")
+      if (r.rows.some((x) => x.dirty)) throw new Error("Listede kaydedilmemis degisiklik var; islem alinmadi.")
+      return r
+    }
+
+    await durumBekle("filter", 30000)
+    const sonuc = { ok: true, musteri: musteriAd, yil, mod, kodlar: {}, batches: 0, degisen: 0, ornek: [] }
+
+    const kodlariIsle = mod === "uygula" ? ["20041", "20042"] : ["20041", "20042"]
+    for (const code of kodlariIsle) {
+      let r = await sorgula(code)
+      let plan = bulkBelgePlanla({ errorCode: code, rows: r.rows, emptyConfirmed: r.empty })
+      sonuc.kodlar[code] = {
+        satir: r.rows.length,
+        bos: r.empty,
+        degisecek: plan.changes.length,
+        inceleme: plan.review.length
+      }
+      if (!sonuc.ornek.length && plan.changes.length) {
+        sonuc.ornek = plan.changes.slice(0, 50).map((c) => ({
+          fis: c.before.voucherNo,
+          hesap: c.before.account,
+          belgeTuru: c.before.documentType,
+          belgeNo: c.before.documentNo,
+          degisim: c.updates
+        }))
+      }
+      if (mod !== "uygula") continue
+
+      const gorulen = new Set()
+      let tur = 0
+      while (plan.changes.length) {
+        if (++tur > 200) throw new Error(code + ": paket sinirina ulasildi; tamamlandi sayilmadi.")
+        const imza = r.rows.map((x) => [x.key, x.stableVoucherNo, x.documentType, x.documentNo, x.documentDate].join("|")).join("~")
+        if (gorulen.has(imza)) throw new Error(code + ": ayni degismemis liste tekrar geldi.")
+        gorulen.add(imza)
+        const staged = await calistir("stage", { code, before: r.rows, changes: plan.changes })
+        const anahtar = new Map(plan.changes.map((c) => [c.key, c.updates]))
+        if (staged.rows.length !== r.rows.length) throw new Error("Aktarimda satir sayisi degisti.")
+        for (let i = 0; i < r.rows.length; i++) {
+          const hedef = { ...r.rows[i], ...(anahtar.get(r.rows[i].key) || {}) }
+          const gercek = { ...staged.rows[i] }
+          delete hedef.dirty
+          delete gercek.dirty
+          if (JSON.stringify(hedef) !== JSON.stringify(gercek)) throw new Error("Aktarim beklenen alanlarla sinirli degil; Kaydet yapilmadi.")
+        }
+        await calistir("save", { code, expected: staged.rows, keys: plan.changes.map((c) => c.key) })
+        const bitis = Date.now() + 15 * 60 * 1000
+        let tamam = false
+        while (Date.now() < bitis) {
+          const st = await calistir("state")
+          if (st.error) throw new Error("Luca kayit hatasi; otomatik tekrar yapilmadi.")
+          if (st.saved && !st.loading) { tamam = true; break }
+          await topluBelgeBekle(1000)
+        }
+        if (!tamam) throw new Error("Kayit sonucu dogrulanamadi; tekrar Kaydet yapilmadi.")
+        sonuc.batches++
+        sonuc.degisen += plan.changes.length
+        r = await sorgula(code)
+        plan = bulkBelgePlanla({ errorCode: code, rows: r.rows, emptyConfirmed: r.empty })
+      }
+      sonuc.kodlar[code].kalan = r.rows.length
+      sonuc.kodlar[code].degisecek = plan.changes.length
+    }
+
+    // Diger hata turleri SALT OKUNUR ozet (duzeltme yapilmaz).
+    if (mod === "uygula") {
+      for (const code of ["20044", "20045", "20046", "20047", "20048"]) {
+        const r = await sorgula(code)
+        sonuc.kodlar[code] = { satir: r.rows.length, bos: r.empty, saltOkunur: true }
+      }
+    }
+
+    if (p.pencereKapat !== false) {
+      try { await pencere.close() } catch { /* yoksay */ }
+    }
+    console.log(`[${etiket}] bitti: ${musteriAd} degisen=${sonuc.degisen} paket=${sonuc.batches}`)
+    return sonuc
+  },
+
   // 2.7.543: e-Beyan token durum ozeti â€” token icerigi ASLA donmez
   ebeyanTokenDurumBilgisi(kayit) {
     return {
@@ -33299,7 +33526,7 @@ document.getElementById('gir').addEventListener('click', async () => {
             console.log("[ayar] Luca bilgisi kaydedilemedi:", e.message);
           }
         }
-        if ((["efatura-sorgula", "luca-giris", "luca-oturumu-kapat"].includes(p.is) || p.is === "eb-beyan-otomatik-indir" && p.kaynak === "luca") && !CONFIG.adminMod) {
+        if ((["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle"].includes(p.is) || p.is === "eb-beyan-otomatik-indir" && p.kaynak === "luca") && !CONFIG.adminMod) {
           console.log("[is]", p.is, "| reddedildi: adminMod kapali (musteri kurulumu)");
           res.writeHead(403, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ success: false, error: 'Luca entegrasyonu yalnizca muhasebe ofisi (admin) kurulumunda etkindir. Ayarlar > Luca Baglanti bolumunden bilgileri kaydedip "Luca entegrasyonunu bu bilgisayarda ac" butonuna basin veya yardimci http://127.0.0.1:8765/admin-mod adresini ziyaret edin.' }));
@@ -33498,7 +33725,7 @@ async function protokolIsle(gelenUrl) {
       const captchaSonuc = await guvenlikKoduDoldur(page, "gib-odeme-protokol", { buton: "sorgula" }).catch((e) => ({ ok: false, neden: "hata: " + (e?.message || e) }));
       console.log("[protokol] captcha sonucu:", JSON.stringify(captchaSonuc));
     } else if (ISLER[isAdi]) {
-      if (["efatura-sorgula", "luca-giris", "luca-oturumu-kapat"].includes(isAdi) && !CONFIG.adminMod) {
+      if (["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle"].includes(isAdi) && !CONFIG.adminMod) {
         console.log("[protokol]", isAdi, "| reddedildi: adminMod kapali");
         const page = await sayfaAc("about:blank");
         await page.setContent('<h3 style="font-family:sans-serif">Luca entegrasyonu yalnizca muhasebe ofisi (admin) kurulumunda etkindir.</h3>');

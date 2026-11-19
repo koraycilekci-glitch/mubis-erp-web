@@ -7521,7 +7521,12 @@ async function topluBelgeMenuAdimi(page, etiket, ad) {
 }
 
 async function topluBelgeMenuAc(page, etiket) {
-  const adimlar = ["Muhasebe", "Fiş İşlemleri", "Toplu Belge Türü ve Ödeme Yöntemi Düzenleme"]
+  return await lucaMenuYoluAc(page, etiket, ["Muhasebe", "Fiş İşlemleri", "Toplu Belge Türü ve Ödeme Yöntemi Düzenleme"])
+}
+
+// Genel menu yolu acici: her adimi gercek fare ile tiklar, animasyonlu alt
+// menulerin acilmasini bekler.
+async function lucaMenuYoluAc(page, etiket, adimlar) {
   for (let i = 0; i < adimlar.length; i++) {
     const ok = await topluBelgeMenuAdimi(page, etiket, adimlar[i])
     if (!ok) throw new Error("Luca menusu acilmadi: " + adimlar[i])
@@ -7686,6 +7691,158 @@ const ISLER = {
       try { await pencere.close() } catch { /* yoksay */ }
     }
     console.log(`[${etiket}] bitti: ${musteriAd} degisen=${sonuc.degisen} paket=${sonuc.batches}`)
+    return sonuc
+  },
+
+  // MUBiS > Fatura Islemleri > Fis Taramasi
+  // SALT OKUNUR: Luca "Fis Listesi" ekranindan bos / dengesiz / pasif fisleri
+  // sayfalayarak okur. Hicbir kayit degistirilmez.
+  // p: { lucaMember, lucaUsername, lucaPassword, shortName, fullName, vkn,
+  //      yil, ay, turler: ['empty','unbalanced','passive'] }
+  "fis-tarama": async (p) => {
+    const { fisFiltresi, fisTaramaSayfa, FIS_TURLERI } = require("./fis-tarama")
+    const etiket = "fis-tarama"
+    const yil = String(p.yil || (/* @__PURE__ */ new Date()).getFullYear())
+    const musteriAd = String(p.fullName || p.shortName || p.vkn || "").trim()
+    if (!musteriAd) throw new Error("Musteri bilgisi eksik (shortName/fullName/vkn).")
+    const istenenTurler = (Array.isArray(p.turler) && p.turler.length ? p.turler : Object.keys(FIS_TURLERI))
+      .filter((t) => Object.prototype.hasOwnProperty.call(FIS_TURLERI, t))
+    if (!istenenTurler.length) throw new Error("Tarama turu secilmedi.")
+    console.log(`[${etiket}] basladi: ${musteriAd} [${yil}/${p.ay}] turler=${istenenTurler.join(",")}`)
+
+    const ilerle = (adim) => { try { p._ilerleme?.(adim) } catch { /* yoksay */ } }
+
+    ilerle("luca-girisi")
+    const g = await ISLER["luca-giris"]({
+      lucaMember: p.lucaMember,
+      lucaUsername: p.lucaUsername,
+      lucaPassword: p.lucaPassword
+    })
+    if (!g.ok) throw new Error(g.not || "Luca girisi basarisiz")
+
+    ilerle("firma-secimi")
+    const b = await tarayiciAl()
+    const ana = (await b.pages()).find((s) => /luca\.do|auygs/i.test(s.url() || ""))
+    if (!ana) throw new Error("Luca ana sayfa bulunamadi.")
+    const secildi = await lucaMusteriSec(ana, etiket, {
+      shortName: p.shortName || p.musteriAd || "",
+      fullName: p.fullName || "",
+      vkn: p.vkn || "",
+      yil
+    })
+    if (!secildi) throw new Error("Luca firma/donem secilemedi: " + musteriAd + " [" + yil + "]")
+
+    ilerle("menu")
+    await lucaMenuYoluAc(ana, etiket, ["Muhasebe", "Fiş İşlemleri", "Fiş Listesi"])
+    await topluBelgeBekle(1500)
+
+    // Fis listesi ekrani ayni pencerede ya da iframe icinde acilir.
+    const cerceveBul = () => {
+      for (const f of ana.frames()) {
+        const u = String(f.url() || "")
+        if (/getFisParametreJSPAction\.do|listFisParametreAction\.do/.test(u)) return f
+      }
+      return null
+    }
+    const cerceveBekle = async (ms) => {
+      const son = Date.now() + ms
+      while (Date.now() < son) {
+        const f = cerceveBul()
+        if (f) return f
+        await topluBelgeBekle(500)
+      }
+      return null
+    }
+    let cerceve = await cerceveBekle(20000)
+    if (!cerceve) throw new Error("Fis Listesi ekrani acilmadi (menu yolu degismis olabilir).")
+
+    const sayfa = async (action, data = {}) => {
+      const hedef = cerceveBul()
+      if (!hedef) throw new Error("Fis listesi cercevesi kayboldu.")
+      cerceve = hedef
+      const kaynak = "(" + fisTaramaSayfa.toString() + ")(" + JSON.stringify({ action, ...data }) + ")"
+      return await cerceve.evaluate(kaynak)
+    }
+    const durumBekle = async (tur, ms) => {
+      const son = Date.now() + ms
+      while (Date.now() < son) {
+        const st = await sayfa("state").catch(() => null)
+        if (st && st[tur] && st.ready) return st
+        await topluBelgeBekle(300)
+      }
+      throw new Error("Fis ekrani zamaninda acilmadi: " + tur)
+    }
+
+    await durumBekle("filter", 30000)
+    const sonuc = { ok: true, musteri: musteriAd, yil, ay: p.ay ?? null, turler: {} }
+
+    for (const kind of istenenTurler) {
+      ilerle(`${FIS_TURLERI[kind]} taraniyor`)
+      const filtre = fisFiltresi(kind, { yil, ay: p.ay })
+      const st = await sayfa("state")
+      if (st.list) {
+        await sayfa("back")
+        await durumBekle("filter", 20000)
+      }
+      await durumBekle("filter", 20000)
+      await sayfa("filter", { filter: filtre })
+      await sayfa("submit", { filter: filtre })
+      await durumBekle("list", 90000)
+
+      const satirlar = []
+      const gorulenKimlik = new Map()
+      const gorulenSayfa = new Set()
+      let sayfaNo = 0
+      let bitti = false
+      while (!bitti) {
+        if (++sayfaNo > 300) throw new Error(kind + ": sayfa sinirina ulasildi; tarama tamamlandi sayilmadi.")
+        const sayfaVeri = await sayfa("read")
+        if (!Array.isArray(sayfaVeri.rows)) throw new Error("Fis listesi okunamadi.")
+        const anahtar = String(sayfaNo) + "|" + JSON.stringify(sayfaVeri.rows)
+        if (gorulenSayfa.has(anahtar)) throw new Error("Fis listesi ilerlemedi.")
+        gorulenSayfa.add(anahtar)
+        for (const r of sayfaVeri.rows) {
+          if (!r || !String(r.voucherNo || "").trim() || !String(r.id || "").trim()) {
+            throw new Error("Fis kimligi okunamadi.")
+          }
+          const kodlanmis = JSON.stringify(r)
+          if (gorulenKimlik.has(r.id)) {
+            if (gorulenKimlik.get(r.id) !== kodlanmis) throw new Error("Ayni fis icin celiskili kayit okundu.")
+            continue
+          }
+          gorulenKimlik.set(r.id, kodlanmis)
+          satirlar.push(r)
+        }
+        ilerle(`${FIS_TURLERI[kind]}: ${satirlar.length} fis okundu`)
+        if (sayfaVeri.end) { bitti = true; break }
+        const token = "t" + Date.now() + "_" + Math.random().toString(36).slice(2, 7)
+        try {
+          await sayfa("next", { token })
+        } catch (e) {
+          // "Sonraki Sayfa" dugmesi yoksa liste bitmistir.
+          bitti = true
+          break
+        }
+        await topluBelgeBekle(800)
+        await durumBekle("list", 30000)
+        const sonraki = await sayfa("read").catch(() => null)
+        if (!sonraki || JSON.stringify(sonraki.rows) === JSON.stringify(sayfaVeri.rows)) {
+          bitti = true
+        }
+      }
+
+      sonuc.turler[kind] = {
+        ad: FIS_TURLERI[kind],
+        baslangic: filtre.start,
+        bitis: filtre.end,
+        sayi: satirlar.length,
+        sayfa: sayfaNo,
+        fisler: satirlar.slice(0, 300)
+      }
+      console.log(`[${etiket}] ${kind}: ${satirlar.length} fis, ${sayfaNo} sayfa`)
+    }
+
+    console.log(`[${etiket}] bitti: ${musteriAd}`)
     return sonuc
   },
 
@@ -33471,7 +33628,7 @@ document.getElementById('gir').addEventListener('click', async () => {
           }, 60 * 60 * 1000);
           const isParams = Object.assign({}, p);
           delete isParams.asenkron;
-          if (p.is === "efatura-sorgula") {
+          if (p.is === "efatura-sorgula" || p.is === "toplu-belge-duzenle" || p.is === "fis-tarama") {
             isParams._ilerleme = (adim) => {
               const kayit = IS_SONUCLARI.get(isId);
               if (kayit?.durum === "calisiyor") kayit.adim = adim;
@@ -33526,7 +33683,7 @@ document.getElementById('gir').addEventListener('click', async () => {
             console.log("[ayar] Luca bilgisi kaydedilemedi:", e.message);
           }
         }
-        if ((["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle"].includes(p.is) || p.is === "eb-beyan-otomatik-indir" && p.kaynak === "luca") && !CONFIG.adminMod) {
+        if ((["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle", "fis-tarama"].includes(p.is) || p.is === "eb-beyan-otomatik-indir" && p.kaynak === "luca") && !CONFIG.adminMod) {
           console.log("[is]", p.is, "| reddedildi: adminMod kapali (musteri kurulumu)");
           res.writeHead(403, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ success: false, error: 'Luca entegrasyonu yalnizca muhasebe ofisi (admin) kurulumunda etkindir. Ayarlar > Luca Baglanti bolumunden bilgileri kaydedip "Luca entegrasyonunu bu bilgisayarda ac" butonuna basin veya yardimci http://127.0.0.1:8765/admin-mod adresini ziyaret edin.' }));
@@ -33725,7 +33882,7 @@ async function protokolIsle(gelenUrl) {
       const captchaSonuc = await guvenlikKoduDoldur(page, "gib-odeme-protokol", { buton: "sorgula" }).catch((e) => ({ ok: false, neden: "hata: " + (e?.message || e) }));
       console.log("[protokol] captcha sonucu:", JSON.stringify(captchaSonuc));
     } else if (ISLER[isAdi]) {
-      if (["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle"].includes(isAdi) && !CONFIG.adminMod) {
+      if (["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle", "fis-tarama"].includes(isAdi) && !CONFIG.adminMod) {
         console.log("[protokol]", isAdi, "| reddedildi: adminMod kapali");
         const page = await sayfaAc("about:blank");
         await page.setContent('<h3 style="font-family:sans-serif">Luca entegrasyonu yalnizca muhasebe ofisi (admin) kurulumunda etkindir.</h3>');

@@ -41,6 +41,7 @@ export const MENU = [
     children: [
       { to: '/admin/fatura-sorgulama', icon: Receipt, label: 'Fatura Sorgulama' },
       { to: '/admin/fisler', icon: Receipt, label: 'Fişler' },
+      { to: '/admin/fis-tarama', icon: ScanLine, label: 'Fiş Taraması' },
       { to: '/admin/taramalar', icon: ScanLine, label: 'Taramalar' },
       { to: '/admin/muhasebe-kayit', icon: Calculator, label: 'Fatura Muhasebeleştime' },
       { to: '/admin/toplu-belge-islemleri', icon: FileCheck, label: 'Toplu Belge Türü ve Ödeme Yöntemi Düzenleme' }

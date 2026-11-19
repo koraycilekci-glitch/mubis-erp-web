@@ -886,8 +886,9 @@ export async function gibDosyalariListele(kaynak = 'otomatik') {
       sunucuHata = SUNUCU_KAPALI_MESAJ
     } else {
       try {
-        const rs = await yardimciFetch(`${sunucuProxyTaban()}/dosyalar`, { cache: 'no-store', headers: sunucuZorunluBasliklar(), signal: AbortSignal.timeout(10000) })
-        const js = await rs.json().catch(() => null)
+        const rs = await yardimciFetch(`${sunucuProxyTaban()}/dosyalar`, { cache: 'no-store', headers: sunucuZorunluBasliklar(), signal: AbortSignal.timeout(60000) })
+        const metin = await rs.text()
+        const js = metin ? (() => { try { return JSON.parse(metin) } catch { return null } })() : null
         if (rs.ok && js?.ok) { sunucuHataTemizle(); return js.dosyalar || [] }
         const detay = js?.error || js?.message || (js ? JSON.stringify(js).slice(0, 200) : `HTTP ${rs.status}`)
         if (rs.status === 401 || rs.status === 403) sunucuHataIsaretle()

@@ -378,7 +378,7 @@ export default function TopluBelgeIslemleri() {
           {calisiyor && (belgeAdim || taramaAdim) && (
             <span className="text-sm text-blue-200 inline-flex items-center gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" />
-              {(sekme === 'belge' ? belgeAdim : taramaAdim)} {belgeCalisiyor ? 'işleniyor' : 'taranıyor'}...
+              {(belgeCalisiyor ? belgeAdim : taramaAdim)} {belgeCalisiyor ? 'işleniyor' : 'taranıyor'}...
             </span>
           )}
           {!hedefMusteriler.length && (

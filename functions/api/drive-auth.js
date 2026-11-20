@@ -77,6 +77,35 @@ export async function onRequestGet({ request, env }) {
       return json({ ok: true, url: g.toString() }, 200, { 'Cache-Control': 'no-store' })
     }
 
+    // ---------------- GA4 (ANALYTICS) OAUTH BASLAT ----------------
+    // 2.8.356: Google Analytics paneli icin AYRI bir izin akisi. Drive
+    // yetkisine DOKUNMAZ: yalniz analytics.readonly istenir ve token ayri
+    // anahtarda (ga4_refresh_token) saklanir. Mulk numarasi, olcum kimligi
+    // (G-...) ile eslesen veri akisindan OTOMATIK bulunur.
+    if (action === 'analytics-start') {
+      const kontrol = await dogrulaKullanici(request, env)
+      if (!kontrol.ok) return json({ ok: false, error: kontrol.hata }, kontrol.kod)
+      if (kontrol.profil?.role !== 'super_admin') return json({ ok: false, error: 'Bu islem icin sistem yoneticisi yetkisi gerekir' }, 403)
+      if (!clientId || !clientSecret || !redirectUri) {
+        return json({ ok: false, error: 'GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET ve GOOGLE_REDIRECT_URI tanimli olmali.' }, 500)
+      }
+      const state = 'ga4:' + crypto.randomUUID()
+      const { error: stateHata } = await admin.from('app_settings').upsert(
+        { key: STATE_KEY, value: state, updated_at: new Date().toISOString(), office_id: 1 },
+        { onConflict: 'office_id,key' }
+      )
+      if (stateHata) return json({ ok: false, error: 'Yetkilendirme hazirlanamadi: ' + stateHata.message }, 500)
+      const g = new URL('https://accounts.google.com/o/oauth2/v2/auth')
+      g.searchParams.set('client_id', clientId)
+      g.searchParams.set('redirect_uri', redirectUri)
+      g.searchParams.set('response_type', 'code')
+      g.searchParams.set('scope', 'https://www.googleapis.com/auth/analytics.readonly')
+      g.searchParams.set('access_type', 'offline')
+      g.searchParams.set('prompt', 'consent')
+      g.searchParams.set('state', state)
+      return json({ ok: true, url: g.toString() }, 200, { 'Cache-Control': 'no-store' })
+    }
+
     // ---------------- OAUTH CALLBACK ----------------
     const code = url.searchParams.get('code')
     if (code) {
@@ -108,6 +137,56 @@ export async function onRequestGet({ request, env }) {
           ok: false,
           error: 'Google yetkilendirme tamamlanamadi: ' + mesaj + (j?.refresh_token ? '' : ' (refresh_token gelmedi — prompt=consent ile tekrar deneyin)'),
         }, 400)
+      }
+
+      // 2.8.356: GA4 izin akisi — token'i ayri sakla, mulku olcum kimliginden bul.
+      if (String(state).startsWith('ga4:')) {
+        const { error: ga4Hata } = await admin.from('app_settings').upsert(
+          { key: 'ga4_refresh_token', value: j.refresh_token, updated_at: new Date().toISOString(), office_id: 1 },
+          { onConflict: 'office_id,key' }
+        )
+        if (ga4Hata) return json({ ok: false, error: 'Analytics token kaydedilemedi: ' + ga4Hata.message }, 500)
+
+        // Olcum kimligi (G-...) ile eslesen mulku Admin API'den bul.
+        const hedefKimlik = String(env?.GA_MEASUREMENT_ID || 'G-JQY5VG50Z0').trim()
+        let bulunanMulk = ''
+        let bulunanAd = ''
+        try {
+          const hdr = { Authorization: 'Bearer ' + j.access_token }
+          const ozet = await (await fetch('https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=200', { headers: hdr })).json().catch(() => ({}))
+          const mulkler = []
+          for (const hesap of (ozet.accountSummaries || [])) {
+            for (const p of (hesap.propertySummaries || [])) {
+              if (p.property) mulkler.push({ id: p.property.replace('properties/', ''), ad: p.displayName || '' })
+            }
+          }
+          for (const m of mulkler) {
+            const akislar = await (await fetch(`https://analyticsadmin.googleapis.com/v1beta/properties/${m.id}/dataStreams?pageSize=200`, { headers: hdr })).json().catch(() => ({}))
+            const eslesen = (akislar.dataStreams || []).find(s => String(s.webStreamData?.measurementId || '') === hedefKimlik)
+            if (eslesen) { bulunanMulk = m.id; bulunanAd = m.ad; break }
+          }
+        } catch { /* mulk bulunamadi — panelde elle girilebilir */ }
+
+        if (bulunanMulk) {
+          await admin.from('app_settings').upsert(
+            { key: 'ga4_property_id', value: bulunanMulk, updated_at: new Date().toISOString(), office_id: 1 },
+            { onConflict: 'office_id,key' }
+          )
+          if (bulunanAd) {
+            try {
+              await admin.from('app_settings').upsert(
+                { key: 'ga4_property_name', value: bulunanAd, updated_at: new Date().toISOString(), office_id: 1 },
+                { onConflict: 'office_id,key' }
+              )
+            } catch { /* yoksay */ }
+          }
+        }
+        const hedef = new URL(redirectUri || url.origin)
+        hedef.pathname = '/admin/ayarlar'
+        hedef.search = bulunanMulk
+          ? `?ga4=ok&mulk=${encodeURIComponent(bulunanMulk)}`
+          : '?ga4=mulk-yok'
+        return new Response(null, { status: 302, headers: { ...CORS, Location: hedef.toString() } })
       }
 
       const { error: tokenHata } = await admin.from('app_settings').upsert(

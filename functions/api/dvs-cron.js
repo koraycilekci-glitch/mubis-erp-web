@@ -55,7 +55,22 @@ export async function onRequestGet({ env, request }) {
   if (!adminMi(prof)) return json({ ok: false, error: 'yetkisiz' }, 401)
   // 2.8.47: yenidenOku ayrı kolon değil; turlar_plan.__ayar içinde saklanır
   // (eski şemalarda "Could not find the 'yenidenOku' column" hatası olmasın).
-  const { data: plan } = await supabase.from('dvs_cron').select('id,gunler,saat,turlar,gun_ay,aktif,turlar_plan,son_turlar,son_calisma,son_sonuc,created_at,zamanlar').limit(1).maybeSingle()
+  // 2.8.355: Kolon listesi şemaya göre değişebiliyor (örn. "zamanlar" kolonu
+  // bazı kurulumlarda YOK). Kolon listesi hataya düşerse SELECT * ile okunur;
+  // aksi halde plan null dönüyor, ekran varsayılanlara düşüyor ve kullanıcının
+  // tür seçimleri kalıcı olmuyor gibi görünüyordu.
+  let plan = null
+  {
+    const ilk = await supabase.from('dvs_cron')
+      .select('id,gunler,saat,turlar,gun_ay,aktif,turlar_plan,son_turlar,son_calisma,son_sonuc,created_at,zamanlar')
+      .limit(1).maybeSingle()
+    if (ilk.error) {
+      const tumu = await supabase.from('dvs_cron').select('*').limit(1).maybeSingle()
+      plan = tumu.data || null
+    } else {
+      plan = ilk.data || null
+    }
+  }
   if (plan && plan.turlar_plan && plan.turlar_plan.__ayar) {
     plan.yenidenOku = plan.turlar_plan.__ayar.yenidenOku === true
   }

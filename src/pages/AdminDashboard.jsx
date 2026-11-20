@@ -22,6 +22,7 @@ import NamazVakitleri from '../components/NamazVakitleri'
 import RadioUstBant from '../components/RadioUstBant'
 import YouTubeMuzik from '../components/YouTubeMuzik'
 import SpotifyUstBant from '../components/SpotifyUstBant'
+import AnalyticsOzet from '../components/AnalyticsOzet'
 
 // ── Beyan tipleri ve son tarih gunleri ──
 const BEYAN_TYPES = [
@@ -1210,6 +1211,15 @@ export default function AdminDashboard() {
           )}
         </div>
       </div>
+
+      {/* ═══════════════════════════════════════════ */}
+      {/* SITE İSTATİSTİKLERİ (Google Analytics 4) */}
+      {/* ═══════════════════════════════════════════ */}
+      {['admin', 'super_admin'].includes(user?.role) && (
+        <div className="mt-6">
+          <AnalyticsOzet gun={30} />
+        </div>
+      )}
       </div>
     </div>
   )

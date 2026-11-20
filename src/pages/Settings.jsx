@@ -1047,6 +1047,37 @@ export default function Settings() {
     }
   })
 
+  // Plan nesnesini ekran durumuna çevirir (yükleme ve kayıt sonrası ortak).
+  const dvsPlanDurumaUygula = (plan) => {
+    if (!plan) return false
+    setDvsCronPlan(plan)
+    setDvsCronAktif(plan.aktif !== false)
+    setDvsYenidenOku(plan.yenidenOku === true || plan.turlar_plan?.__ayar?.yenidenOku === true)
+    const tp = plan.turlar_plan && typeof plan.turlar_plan === 'object' ? plan.turlar_plan : null
+    const eskiTurlar = Array.isArray(plan.turlar) ? plan.turlar : ['pos']
+    const ortakZamanlar = Array.isArray(plan.zamanlar) ? plan.zamanlar : []
+    const eskiGun = Array.isArray(plan.gun_ay) ? [Number(plan.gun_ay) || 0].filter(n => n >= 1 && n <= 31) : []
+    const eskiSaat = /^\d{1,2}:\d{2}$/.test(String(plan.saat || '')) ? plan.saat : '05:00'
+    setDvsCronTurlarPlan(Object.fromEntries(DVS_CRON_TURLAR.map(t => {
+      const p = tp?.[t.v]
+      let liste = Array.isArray(p?.zamanlar) ? p.zamanlar : []
+      if (!liste.length && eskiTurlar.includes(t.v)) {
+        if (ortakZamanlar.length) liste = ortakZamanlar
+        else if (p) liste = [{ gunler_ay: Number(p.gun_ay) >= 1 ? [Number(p.gun_ay)] : [], saat: p.saat || '05:00' }]
+        else liste = [{ gunler_ay: eskiGun, saat: eskiSaat }]
+      }
+      const aktif = p ? p.aktif === true || liste.length > 0 : liste.length > 0
+      return [t.v, {
+        aktif,
+        zamanlar: (() => {
+          const bolunmus = dilimleriGunlereBol(liste, '05:00')
+          return bolunmus.length ? bolunmus : [{ gunler_ay: [], saat: '05:00' }]
+        })()
+      }]
+    })))
+    return true
+  }
+
   const dvsCronYukle = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -1054,35 +1085,10 @@ export default function Settings() {
         headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
       })
       const j = await r.json()
-      if (j.ok && j.plan) {
-        setDvsCronPlan(j.plan)
-        setDvsCronAktif(j.plan.aktif !== false)
-        setDvsYenidenOku(j.plan.yenidenOku === true || j.plan.turlar_plan?.__ayar?.yenidenOku === true)
-        // 2.8.47: öncelik turlar_plan[t].zamanlar; yoksa paylaşılan eski
-        // zamanlar / tek gün-saat planından geriye uyumlu migrate et.
-        const tp = j.plan.turlar_plan && typeof j.plan.turlar_plan === 'object' ? j.plan.turlar_plan : null
-        const eskiTurlar = Array.isArray(j.plan.turlar) ? j.plan.turlar : ['pos']
-        const ortakZamanlar = Array.isArray(j.plan.zamanlar) ? j.plan.zamanlar : []
-        const eskiGun = Array.isArray(j.plan.gun_ay) ? [Number(j.plan.gun_ay) || 0].filter(n => n >= 1 && n <= 31) : []
-        const eskiSaat = /^\d{1,2}:\d{2}$/.test(String(j.plan.saat || '')) ? j.plan.saat : '05:00'
-        setDvsCronTurlarPlan(Object.fromEntries(DVS_CRON_TURLAR.map(t => {
-          const p = tp?.[t.v]
-          let liste = Array.isArray(p?.zamanlar) ? p.zamanlar : []
-          if (!liste.length && eskiTurlar.includes(t.v)) {
-            if (ortakZamanlar.length) liste = ortakZamanlar
-            else if (p) liste = [{ gunler_ay: Number(p.gun_ay) >= 1 ? [Number(p.gun_ay)] : [], saat: p.saat || '05:00' }]
-            else liste = [{ gunler_ay: eskiGun, saat: eskiSaat }]
-          }
-          return [t.v, {
-            aktif: liste.length > 0,
-            zamanlar: (() => {
-              const bolunmus = dilimleriGunlereBol(liste, '05:00')
-              return bolunmus.length ? bolunmus : [{ gunler_ay: [], saat: '05:00' }]
-            })()
-          }]
-        })))
-      } else setDvsCronPlan(null)
-    } catch { /* yoksay */ }
+      // 2.8.355: okuma başarısızsa EKRANDAKİ SEÇİMLER KORUNUR (varsayılana dönmez).
+      if (j.ok && j.plan) dvsPlanDurumaUygula(j.plan)
+      else if (j.ok) setDvsCronPlan(null)
+    } catch { /* yoksay — mevcut seçimler korunur */ }
     finally { setDvsCronYukleniyor(false) }
   }
 
@@ -1126,8 +1132,10 @@ export default function Settings() {
       })
       const j = await r.json()
       if (j.ok) {
-        setDvsCronPlan(j.plan)
-        await dvsCronYukle()
+        // 2.8.355: POST yanıtındaki planı doğrudan uygula. Ardından gelen
+        // okuma başarısız olsa bile seçimler ekranda KALIR.
+        if (j.plan) dvsPlanDurumaUygula(j.plan)
+        else await dvsCronYukle()
         setDvsCronMesaj({ ok: true, t: 'Otomatik POS/KDV döküm planı kaydedildi. İstanbul sunucusu her sorgu türü için belirlediğiniz gün ve saatte tüm aktif müşterilerin Dijitaş DVS sorgusunu yapıp sonuçları sisteme kaydeder.' })
       } else setDvsCronMesaj({ ok: false, t: j.error === 'yetkisiz' ? 'Yönetici yetkisi gerekir.' : (j.error || 'Kaydedilemedi.') })
     } catch { setDvsCronMesaj({ ok: false, t: 'Bağlantı hatası.' }) }

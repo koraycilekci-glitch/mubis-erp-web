@@ -1,17 +1,53 @@
-// MUBiS - Yonetici paneli GA4 rapor ucu (hazir altyapi)
+// MUBiS - Yonetici paneli GA4 rapor ucu
 //
-// GA4 Data API yalnizca sunucu tarafinda cagrilabilir (OAuth2 servis hesabi).
-// Bu uç, ortam degiskenleri tanimliysa gercek raporu doner; tanimli degilse
-// panelde "yapilandirilmadi" bilgisinin gosterilmesi icin 501 benzeri yanit verir.
+// Yetki iki yoldan biriyle saglanir (hangisi varsa):
+//   1) OAuth (onerilen, tek tik): /api/drive-auth?action=analytics-start ile
+//      analytics.readonly izni alinir; refresh token app_settings
+//      'ga4_refresh_token', mulk numarasi 'ga4_property_id' anahtarinda tutulur.
+//   2) Servis hesabi (opsiyonel): GA4_SERVICE_ACCOUNT_JSON ortam degiskeni.
 //
-// Cloudflare Pages > Settings > Environment variables:
-//   GA4_PROPERTY_ID           = 123456789
-//   GA4_SERVICE_ACCOUNT_JSON  = { "client_email": "...", "private_key": "...", ... }
-//
-// Not: Servis hesabinin GA4 mulkunde "Viewer" yetkisi olmalidir.
+// Mulk numarasi: env.GA4_PROPERTY_ID > app_settings.ga4_property_id
+import { supabaseAdmin } from './_lib'
 
 const TOKEN_UCLARI = 'https://oauth2.googleapis.com/token'
 const RAPOR_UCU = 'https://analyticsdata.googleapis.com/v1beta'
+
+const json = (govde, durum = 200) => new Response(JSON.stringify(govde), {
+  status: durum,
+  headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }
+})
+
+async function ayarOku(admin, anahtar) {
+  try {
+    const { data } = await admin.from('app_settings').select('value').eq('office_id', 1).eq('key', anahtar).maybeSingle()
+    return data?.value || ''
+  } catch {
+    return ''
+  }
+}
+
+async function oauthTokeni(env, admin) {
+  const clientId = env?.GOOGLE_CLIENT_ID
+  const clientSecret = env?.GOOGLE_CLIENT_SECRET
+  if (!clientId || !clientSecret) return { ok: false, hata: 'GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET tanimli degil' }
+  const refresh = env?.GA4_REFRESH_TOKEN || await ayarOku(admin, 'ga4_refresh_token')
+  if (!refresh) return { ok: false, hata: 'Analytics baglantisi kurulmamis' }
+  const yanit = await fetch(TOKEN_UCLARI, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refresh,
+      grant_type: 'refresh_token'
+    }).toString()
+  })
+  const j = await yanit.json().catch(() => ({}))
+  if (!yanit.ok || !j.access_token) {
+    return { ok: false, hata: 'Google token yenilenemedi: ' + (j.error_description || j.error || `HTTP ${yanit.status}`) }
+  }
+  return { ok: true, token: j.access_token }
+}
 
 function b64url(input) {
   const buf = typeof input === 'string'
@@ -66,28 +102,21 @@ async function servisHesabiTokeni(hesap) {
   return veri.access_token
 }
 
-const json = (govde, durum = 200) => new Response(JSON.stringify(govde), {
-  status: durum,
-  headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }
-})
-
 export async function onRequestPost({ request, env }) {
   let istek = {}
   try { istek = await request.json() } catch { /* yoksay */ }
 
-  const mulk = String(env.GA4_PROPERTY_ID || '').trim()
-  const hesapHam = String(env.GA4_SERVICE_ACCOUNT_JSON || '').trim()
-  if (!mulk || !hesapHam) {
+  let admin = null
+  try { admin = supabaseAdmin(env) } catch { admin = null }
+
+  const mulk = String(env.GA4_PROPERTY_ID || '').trim() ||
+    (admin ? String(await ayarOku(admin, 'ga4_property_id')).trim() : '')
+  if (!mulk) {
     return json({
       ok: false,
       reason: 'yapilandirilmadi',
-      error: 'GA4 rapor ucu hazır; GA4_PROPERTY_ID ve GA4_SERVICE_ACCOUNT_JSON ortam değişkenlerini tanımlayın.'
+      error: 'Analytics bağlantısı kurulmamış. Yönetici panelinden "Analytics Bağla" düğmesine basın.'
     }, 200)
-  }
-
-  let hesap
-  try { hesap = JSON.parse(hesapHam) } catch {
-    return json({ ok: false, reason: 'yapilandirma-hatasi', error: 'GA4_SERVICE_ACCOUNT_JSON geçerli JSON değil.' }, 200)
   }
 
   const metrikler = (Array.isArray(istek.metrikler) ? istek.metrikler : ['activeUsers', 'sessions', 'screenPageViews'])
@@ -103,7 +132,27 @@ export async function onRequestPost({ request, env }) {
   const limit = Math.min(Math.max(Number(istek.limit) || 100, 1), 1000)
 
   try {
-    const token = await servisHesabiTokeni(hesap)
+    // 1) OAuth (tek tikla baglanti) — 2) servis hesabi yedegi
+    let token = ''
+    let oauthHata = ''
+    if (admin) {
+      const o = await oauthTokeni(env, admin)
+      if (o.ok) token = o.token
+      else oauthHata = o.hata || ''
+    }
+    if (!token) {
+      const hesapHam = String(env.GA4_SERVICE_ACCOUNT_JSON || '').trim()
+      if (hesapHam) {
+        try { token = await servisHesabiTokeni(JSON.parse(hesapHam)) } catch (e) { oauthHata = e?.message || oauthHata }
+      }
+    }
+    if (!token) {
+      return json({
+        ok: false,
+        reason: 'yetki-yok',
+        error: oauthHata || 'Analytics yetkisi yok. Yönetici panelinden "Analytics Bağla" düğmesine basın.'
+      }, 200)
+    }
     const yanit = await fetch(`${RAPOR_UCU}/properties/${encodeURIComponent(mulk)}:runReport`, {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },

@@ -7,8 +7,9 @@
 // Veri /api/analytics ucundan gelir. Uc yapilandirilmadiysa kart bunu
 // kullaniciyi rahatsiz etmeyen bir bilgilendirme olarak gosterir.
 import { useCallback, useEffect, useState } from 'react'
-import { BarChart3, Loader2, RefreshCw, Info } from 'lucide-react'
+import { BarChart3, Loader2, RefreshCw, Info, Link2 } from 'lucide-react'
 import { analyticsRaporu, ANALYTICS_HAZIR } from '../services/analyticsService'
+import { supabase } from '../lib/supabase'
 
 const GUN_ETIKETI = { 7: 'Son 7 gün', 30: 'Son 30 gün', 90: 'Son 90 gün' }
 
@@ -23,6 +24,26 @@ export default function AnalyticsOzet({ gun = 30 }) {
   const [durum, setDurum] = useState('bekliyor')
   const [veri, setVeri] = useState(null)
   const [hata, setHata] = useState('')
+  const [baglaniyor, setBaglaniyor] = useState(false)
+  const [baglantiHata, setBaglantiHata] = useState('')
+
+  const baglantiBaslat = async () => {
+    setBaglaniyor(true)
+    setBaglantiHata('')
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) throw new Error('Oturum bulunamadı; yeniden giriş yapın.')
+      const r = await fetch('/api/drive-auth?action=analytics-start', {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!j.ok || !j.url) throw new Error(j.error || 'Bağlantı başlatılamadı.')
+      window.location.href = j.url
+    } catch (e) {
+      setBaglantiHata(e?.message || String(e))
+      setBaglaniyor(false)
+    }
+  }
 
   const yukle = useCallback(async () => {
     setDurum('yukleniyor')
@@ -36,7 +57,7 @@ export default function AnalyticsOzet({ gun = 30 }) {
     })
     if (!sonuc.ok) {
       setVeri(null)
-      setDurum(sonuc.reason === 'yapilandirilmadi' ? 'yapilandirilmadi' : 'hata')
+      setDurum(sonuc.reason === 'yapilandirilmadi' || sonuc.reason === 'yetki-yok' ? 'yapilandirilmadi' : 'hata')
       setHata(sonuc.error || '')
       return
     }
@@ -45,6 +66,20 @@ export default function AnalyticsOzet({ gun = 30 }) {
   }, [gun])
 
   useEffect(() => { void yukle() }, [yukle])
+
+  // Google izin akisindan donuste (?ga4=ok) raporu yeniden dene.
+  useEffect(() => {
+    try {
+      const p = new URLSearchParams(window.location.search)
+      if (p.get('ga4')) {
+        const yeni = new URLSearchParams(p)
+        yeni.delete('ga4'); yeni.delete('mulk')
+        const temiz = window.location.pathname + (yeni.toString() ? '?' + yeni.toString() : '')
+        window.history.replaceState({}, '', temiz)
+        void yukle()
+      }
+    } catch { /* yoksay */ }
+  }, [yukle])
 
   const toplam = veri?.toplamlar || {}
 
@@ -72,13 +107,24 @@ export default function AnalyticsOzet({ gun = 30 }) {
       )}
 
       {durum === 'yapilandirilmadi' && (
-        <div className="text-xs text-blue-200 flex gap-2">
-          <Info className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>
-            {ANALYTICS_HAZIR
-              ? 'GA4 ölçümü etkin. Raporlar için sunucu tarafında GA4_PROPERTY_ID ve GA4_SERVICE_ACCOUNT_JSON ortam değişkenlerini tanımlayın.'
-              : 'Analitik ölçüm kimliği tanımlı değil (NEXT_PUBLIC_GA_ID).'}
-          </span>
+        <div className="text-xs text-blue-200 flex flex-col gap-3">
+          <div className="flex gap-2">
+            <Info className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>
+              {ANALYTICS_HAZIR
+                ? 'Analytics ölçümü etkin. Raporları görmek için Google hesabınızla bir kez bağlantı kurun (salt okunur izin).'
+                : 'Analitik ölçüm kimliği tanımlı değil (NEXT_PUBLIC_GA_ID).'}
+            </span>
+          </div>
+          {baglantiHata && <div className="text-amber-200">{baglantiHata}</div>}
+          <button
+            onClick={baglantiBaslat}
+            disabled={baglaniyor}
+            className="self-start inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-3 py-2 text-xs font-medium text-white hover:bg-cyan-500 disabled:opacity-50"
+          >
+            {baglaniyor ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
+            Analytics Bağla
+          </button>
         </div>
       )}
 

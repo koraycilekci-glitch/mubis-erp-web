@@ -5,10 +5,11 @@ import { useClients } from '../hooks/useClients'
 import {
   Loader2, Play, Eye, CheckCircle2, XCircle, AlertTriangle, Search,
   Users, User, ChevronDown, ChevronRight, Info, RefreshCw, ScanLine,
-  FileCheck
+  Scissors
 } from 'lucide-react'
 import { topluBelgeDuzenle, HATA_TURLERI } from '../services/topluBelgeService'
 import { fisTara, FIS_TURLERI, AYLAR } from '../services/fisTaramaService'
+import { fisBol } from '../services/fisBolService'
 
 const yilSecenekleri = () => {
   const bu = new Date().getFullYear()
@@ -48,6 +49,12 @@ export default function TopluBelgeIslemleri() {
   const [taramaSonuclar, setTaramaSonuclar] = useState([])
   const [taramaAcik, setTaramaAcik] = useState(null)
 
+  // Toplu fis bol durumu (KAYIT DEGISTIRIR)
+  const [bolCalisiyor, setBolCalisiyor] = useState(false)
+  const [bolAdim, setBolAdim] = useState('')
+  const [bolSonuclar, setBolSonuclar] = useState([])
+  const [bolHata, setBolHata] = useState('')
+
   const sirali = useMemo(() => {
     const norm = (s) => String(s || '').toLocaleLowerCase('tr')
     return (clients || []).slice().sort((a, b) => norm(musteriAdi(a)).localeCompare(norm(musteriAdi(b)), 'tr'))
@@ -70,7 +77,7 @@ export default function TopluBelgeIslemleri() {
     return sirali.filter((c) => secililer.has(c.id))
   }, [secimModu, tekMusteri, sirali, secililer])
 
-  const calisiyor = belgeCalisiyor || tarmaCalisiyor
+  const calisiyor = belgeCalisiyor || tarmaCalisiyor || bolCalisiyor
 
   const secimDegistir = (id) => {
     setSecililer((onceki) => {
@@ -189,6 +196,60 @@ export default function TopluBelgeIslemleri() {
     setTaramaCalisiyor(false)
   }
 
+  // ---- Toplu fis bol (KAYIT DEGISTIRIR) ----
+  const bolCalistir = async () => {
+    if (bolCalisiyor || calisiyor) return
+    if (!hedefMusteriler.length) {
+      alert(secimModu === 'tek' ? 'Lütfen önce bir müşteri seçin.' : 'Lütfen en az bir müşteri seçin.')
+      return
+    }
+    const donemMetni = ay === '' ? `${yil} yılı tamamı` : `${yil} ${AYLAR[Number(ay) - 1]}`
+    if (!confirm(
+      `${hedefMusteriler.length} müşteride ${donemMetni} dönemindeki TÜM FİŞLER Luca'da BÖLÜNECEK.\n\n` +
+      'Bu işlem Luca muhasebe kayıtlarını DEĞİŞTİRİR ve geri alınamaz.\n' +
+      'Devam etmek istiyor musunuz?'
+    )) return
+    // Ikinci, daha net onay
+    const yazili = prompt(
+      'Onaylamak için BOL yazın:\n' +
+      `(${hedefMusteriler.length} müşteri · ${donemMetni})`
+    )
+    if (String(yazili || '').trim().toLocaleUpperCase('tr') !== 'BOL') {
+      alert('İşlem iptal edildi.')
+      return
+    }
+
+    setBolHata('')
+    setBolCalisiyor(true)
+    setBolSonuclar(hedefMusteriler.map((c) => ({
+      clientId: c.id, musteri: musteriAdi(c), durum: 'bekliyor', mesaj: '',
+      secilen: 0, bolunen: 0
+    })))
+    const guncelle = (id, yama) => {
+      setBolSonuclar((liste) => liste.map((s) => (s.clientId === id ? { ...s, ...yama } : s)))
+    }
+    for (const c of hedefMusteriler) {
+      guncelle(c.id, { durum: 'calisiyor', mesaj: 'Başlatılıyor...' })
+      setBolAdim(musteriAdi(c))
+      try {
+        const r = await fisBol({
+          client: c, yil, ay,
+          onDurum: (m) => guncelle(c.id, { mesaj: m })
+        })
+        guncelle(c.id, {
+          durum: 'tamam',
+          mesaj: `${r.secilen ?? 0} fiş seçildi, ${r.bolunen ?? '?'} fiş bölündü`,
+          secilen: r.secilen || 0,
+          bolunen: r.bolunen || 0
+        })
+      } catch (e) {
+        guncelle(c.id, { durum: 'hata', mesaj: e?.message || String(e) })
+      }
+    }
+    setBolAdim('')
+    setBolCalisiyor(false)
+  }
+
   // ---- Ozetler ----
   const belgeToplam = belgeSonuclar.reduce(
     (t, s) => t + (s.kodlar?.['20041']?.degisecek || 0) + (s.kodlar?.['20042']?.degisecek || 0), 0
@@ -202,14 +263,18 @@ export default function TopluBelgeIslemleri() {
   const taramaTamam = taramaSonuclar.filter((s) => s.durum === 'tamam').length
   const taramaHataSayisi = taramaSonuclar.filter((s) => s.durum === 'hata').length
 
+  const bolTamam = bolSonuclar.filter((s) => s.durum === 'tamam').length
+  const bolHataSayisi = bolSonuclar.filter((s) => s.durum === 'hata').length
+  const bolToplam = bolSonuclar.reduce((t, s) => t + (s.bolunen || 0), 0)
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6 text-white">
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold">Toplu Belge Türü ve Ödeme Yöntemi Düzenleme</h1>
         <p className="mt-2 text-blue-100/70 text-sm">
-          Luca'daki E-Defter uyumsuzluklarını (belge türü boş / diğer) toplu düzeltir ve seçilen dönemde
-          boş / dengesiz / pasif fişleri tarar. Dolu belge numaralarına ve fatura fişlerine dokunulmaz;
-          fiş taraması salt okunurdur.
+          Luca'daki E-Defter uyumsuzluklarını (belge türü boş / diğer) toplu düzeltir, seçilen dönemde
+          boş / dengesiz / pasif fişleri tarar ve dilerseniz dönemdeki fişleri Luca'da toplu olarak böler
+          (Toplu Fiş Böl). Dolu belge numaralarına ve fatura fişlerine dokunulmaz; fiş taraması salt okunurdur.
         </p>
       </div>
 
@@ -228,7 +293,7 @@ export default function TopluBelgeIslemleri() {
           </div>
 
           <div>
-            <label className="text-sm text-blue-300 block mb-1">Dönem (ay) — fiş taraması için</label>
+            <label className="text-sm text-blue-300 block mb-1">Dönem (ay) — fiş taraması / toplu fiş böl için</label>
             <select
               value={ay}
               onChange={(e) => setAy(e.target.value)}
@@ -374,11 +439,26 @@ export default function TopluBelgeIslemleri() {
             {tarmaCalisiyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanLine className="w-4 h-4" />}
             Fiş tara (salt okunur)
           </button>
+          <button
+            onClick={bolCalistir}
+            disabled={calisiyor}
+            className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium hover:bg-rose-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Seçili dönemdeki tüm fişleri Luca'da böler (kayıtları değiştirir)"
+          >
+            {bolCalisiyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Scissors className="w-4 h-4" />}
+            Toplu Fiş Böl
+          </button>
 
           {calisiyor && (belgeAdim || taramaAdim) && (
             <span className="text-sm text-blue-200 inline-flex items-center gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" />
               {(belgeCalisiyor ? belgeAdim : taramaAdim)} {belgeCalisiyor ? 'işleniyor' : 'taranıyor'}...
+            </span>
+          )}
+          {bolCalisiyor && (
+            <span className="text-sm text-rose-200 inline-flex items-center gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" />
+              {bolAdim} bölünüyor...
             </span>
           )}
           {!hedefMusteriler.length && (
@@ -399,7 +479,9 @@ export default function TopluBelgeIslemleri() {
           <span>
             E-Defter hata türleri: {HATA_TURLERI.map((h) => `${h.kod} (${h.ad})`).join(' · ')}.
             Yalnız <b>20041</b> ve <b>20042</b> düzeltilir; diğerleri bilgi amaçlı okunur.
-            Fiş taraması (boş/dengesiz/pasif) salt okunurdur; hiçbir kayıt değiştirilmez.
+            Fiş taraması (boş/dengesiz/pasif) salt okunurdur.
+            <b> Toplu Fiş Böl</b> ise seçilen dönemdeki fişleri Luca'da böler ve kayıtları değiştirir;
+            yalnızca onay verdiğinizde çalışır.
           </span>
         </div>
       </div>
@@ -523,6 +605,76 @@ export default function TopluBelgeIslemleri() {
             Bazı müşterilerde işlem tamamlanamadı. Satır açıklamalarına bakın.
             Olası nedenler: Luca oturumu düşmüş, firma/dönem Luca'da bulunamadı,
             müşteri bilanço defter türünde değil veya yardımcı program güncel değil.
+          </div>
+        </div>
+      )}
+
+      {/* === TOPLU FIS BOL SONUCLARI === */}
+      {bolSonuclar.length > 0 && (
+        <div className="rounded-xl border border-rose-400/30 bg-rose-950/30 overflow-hidden">
+          <div className="flex flex-wrap items-center gap-4 px-4 py-3 border-b border-rose-400/10 text-sm">
+            <span className="font-semibold inline-flex items-center gap-2">
+              <Scissors className="w-4 h-4 text-rose-300" /> Toplu Fiş Böl — Sonuçlar
+            </span>
+            <span className="text-rose-100/80">Tamam: {bolTamam}</span>
+            {bolHataSayisi > 0 && <span className="text-red-300">Hata: {bolHataSayisi}</span>}
+            <span className="text-rose-100/80">Bölünen fiş: {bolToplam}</span>
+          </div>
+          <table className="w-full text-sm">
+            <thead className="bg-rose-900/30 text-rose-200 text-xs">
+              <tr>
+                <th className="text-left px-4 py-3">Müşteri</th>
+                <th className="text-left px-4 py-3">Durum</th>
+                <th className="text-left px-4 py-3">Seçilen</th>
+                <th className="text-left px-4 py-3">Bölünen</th>
+                <th className="text-left px-4 py-3">Açıklama</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bolSonuclar.map((s) => (
+                <tr key={s.clientId} className="border-t border-rose-400/10 hover:bg-rose-800/20">
+                  <td className="px-4 py-3 font-medium">{s.musteri}</td>
+                  <td className="px-4 py-3">
+                    {s.durum === 'bekliyor' && <span className="text-rose-200 text-xs">Bekliyor</span>}
+                    {s.durum === 'calisiyor' && (
+                      <span className="text-amber-300 text-xs inline-flex items-center gap-1.5">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" /> İşleniyor
+                      </span>
+                    )}
+                    {s.durum === 'tamam' && (
+                      <span className="text-emerald-300 text-xs inline-flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Tamam
+                      </span>
+                    )}
+                    {s.durum === 'hata' && (
+                      <span className="text-red-300 text-xs inline-flex items-center gap-1.5">
+                        <XCircle className="w-3.5 h-3.5" /> Hata
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-xs">{s.secilen || 0}</td>
+                  <td className="px-4 py-3 text-xs">{s.bolunen || 0}</td>
+                  <td className="px-4 py-3 text-xs text-rose-100/80 max-w-[360px]">
+                    <div className="whitespace-normal break-words" title={s.mesaj}>{s.mesaj}</div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {bolHata && (
+        <div className="rounded-lg bg-red-500/10 border border-red-400/30 px-3 py-2 text-sm text-red-200">{bolHata}</div>
+      )}
+
+      {bolHataSayisi > 0 && (
+        <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm text-amber-100 flex gap-2">
+          <AlertTriangle className="w-5 h-5 shrink-0" />
+          <div>
+            Bazı müşterilerde fiş bölme tamamlanamadı. Satır açıklamalarına bakın.
+            Olası nedenler: Luca oturumu düşmüş, firma/dönem bulunamadı veya
+            «Toplu Fiş Böl» ekranı beklenenden farklı.
           </div>
         </div>
       )}

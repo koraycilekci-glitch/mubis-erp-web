@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  // Google Analytics olcum kimligi hem VITE_GA_ID hem NEXT_PUBLIC_GA_ID
+  // ortam degiskeninden okunabilsin (istek: NEXT_PUBLIC_GA_ID).
+  envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
   build: {
     target: 'es2020',
     cssCodeSplit: true,

@@ -71,6 +71,7 @@ const KrediKartiHasilat = lazy(() => import('./pages/KrediKartiHasilat'))
 const MusteriBorcDokumu = lazy(() => import('./pages/MusteriBorcDokumu'))
 import { KVCCAydinlatma, GizlilikPolitikasi, CerezPolitikasi, KullanimKosullari } from './pages/Yasal'
 import CerezBanneri from './components/CerezBanneri'
+import Analytics from './components/Analytics'
 const BeyannameGonderim = lazy(() => import('./pages/BeyannameGonderim'))
 const BeyanHazirlama = lazy(() => import('./pages/BeyanHazirlama'))
 const EFaturaKesim = lazy(() => import('./pages/EFaturaKesim'))
@@ -316,6 +317,7 @@ function AppContent() {
 function App() {
   return (
     <Router>
+      <Analytics />
       <OturumRotaGeriYukle />
       <AppContent />
     </Router>

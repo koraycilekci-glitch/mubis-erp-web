@@ -7475,7 +7475,7 @@ function topluBelgeBekle(ms) {
 
 // Menu etiketini gercek fare ile tiklar (Luca animasyonlu alt menuleri
 // yalniz gercek fare olaylariyla acar).
-async function topluBelgeMenuAdimi(page, etiket, ad) {
+async function topluBelgeMenuAdimi(page, etiket, ad, sadeceHover = false) {
   const son = Date.now() + 20000
   while (Date.now() < son) {
     for (const f of page.frames()) {
@@ -7509,9 +7509,15 @@ async function topluBelgeMenuAdimi(page, etiket, ad) {
       if (!k) continue
       try {
         await page.mouse.move(k.x, k.y)
-        await topluBelgeBekle(450)
-        await page.mouse.click(k.x, k.y)
-        console.log(`[${etiket}] menu adimi tiklandi: ${ad} -> "${k.metin}"`)
+        await topluBelgeBekle(sadeceHover ? 600 : 450)
+        if (sadeceHover) {
+          // Alt menuyu acmak icin yalniz uzerine gelinir; TIKLANMAZ.
+          await page.mouse.move(k.x + 1, k.y + 1)
+          console.log(`[${etiket}] menu adimi HOVER: ${ad} -> "${k.metin}"`)
+        } else {
+          await page.mouse.click(k.x, k.y)
+          console.log(`[${etiket}] menu adimi TIKLANDI: ${ad} -> "${k.metin}"`)
+        }
         return true
       } catch { /* sonraki cerceve */ }
     }
@@ -7528,9 +7534,24 @@ async function topluBelgeMenuAc(page, etiket) {
 // menulerin acilmasini bekler.
 async function lucaMenuYoluAc(page, etiket, adimlar) {
   for (let i = 0; i < adimlar.length; i++) {
-    const ok = await topluBelgeMenuAdimi(page, etiket, adimlar[i])
-    if (!ok) throw new Error("Luca menusu acilmadi: " + adimlar[i])
-    await topluBelgeBekle(i === 0 ? 1200 : 900)
+    const sadeceHover = i < adimlar.length - 1
+    console.log(`[${etiket}] menu adimi ${i + 1}/${adimlar.length}: "${adimlar[i]}" (hover=${sadeceHover})`)
+    const ok = await topluBelgeMenuAdimi(page, etiket, adimlar[i], sadeceHover)
+    if (!ok) {
+      try {
+        for (const f of page.frames()) {
+          const t = await f.evaluate(() => [...document.querySelectorAll("a,li,span,div,td,button")]
+            .filter((e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== "hidden")
+            .map((e) => String(e.textContent || "").replace(/\s+/g, " ").trim())
+            .filter((x) => x.length > 0 && x.length < 60)
+            .slice(0, 60))
+          if (t && t.length) console.log(`[${etiket}] gorunur metinler (frame ${String(f.url() || "").slice(-40)}):`, JSON.stringify(t.slice(0, 50)))
+        }
+      } catch (e) { console.log(`[${etiket}] teshis hatasi:`, e && e.message) }
+      throw new Error("Luca menusu acilmadi: " + adimlar[i])
+    }
+    console.log(`[${etiket}] menu adimi OK: ${adimlar[i]}`)
+    await topluBelgeBekle(i === 0 ? 1800 : (i === adimlar.length - 1 ? 1200 : 1400))
   }
 }
 
@@ -7538,9 +7559,14 @@ async function lucaMenuYoluAc(page, etiket, adimlar) {
 async function topluBelgePenceresiBekle(b, ms) {
   const son = Date.now() + ms
   while (Date.now() < son) {
-    for (const pg of await b.pages().catch(() => [])) {
-      if (TOPLU_BELGE_PENCERE_RE.test(pg.url() || "")) {
+    let sayfalar = []
+    try { sayfalar = await b.pages() } catch { sayfalar = [] }
+    for (const pg of sayfalar) {
+      let url = ""
+      try { url = pg.url() || "" } catch { url = "" }
+      if (TOPLU_BELGE_PENCERE_RE.test(url)) {
         try { await pg.bringToFront() } catch { /* yoksay */ }
+        await topluBelgeBekle(2000) // sayfanin yuklenmesini bekle
         return pg
       }
     }
@@ -7573,6 +7599,7 @@ const ISLER = {
     const ana = (await b.pages()).find((s) => /luca\.do|auygs/i.test(s.url() || ""))
     if (!ana) throw new Error("Luca ana sayfa bulunamadi.")
 
+    await lucaAnaSayfayaDon(ana, etiket)
     const secildi = await lucaMusteriSec(ana, etiket, {
       shortName: p.shortName || p.musteriAd || "",
       fullName: p.fullName || "",
@@ -7589,7 +7616,17 @@ const ISLER = {
     const calistir = async (action, data = {}) => {
       const istek = { action, expectedCode: beklenenKod, ...data }
       const kaynak = "(" + bulkBelgeSayfa.toString() + ")(" + JSON.stringify(istek) + ")"
-      return await pencere.evaluate(kaynak)
+      for (let deneme = 0; deneme < 8; deneme++) {
+        try {
+          return await pencere.evaluate(kaynak)
+        } catch (e) {
+          const msg = String(e && e.message || e)
+          if (!/Execution context|detached frame|navigating/i.test(msg)) throw e
+          console.log(`[toplu-belge] calistir("${action}") context destroyed — bekleniyor (${deneme + 1}/8)`)
+          await topluBelgeBekle(1500)
+        }
+      }
+      throw new Error("Luca toplu belge ekrani yanit vermedi: " + action)
     }
     const durumBekle = async (tur, ms) => {
       const son = Date.now() + ms
@@ -7724,6 +7761,7 @@ const ISLER = {
     const b = await tarayiciAl()
     const ana = (await b.pages()).find((s) => /luca\.do|auygs/i.test(s.url() || ""))
     if (!ana) throw new Error("Luca ana sayfa bulunamadi.")
+    await lucaAnaSayfayaDon(ana, etiket)
     const secildi = await lucaMusteriSec(ana, etiket, {
       shortName: p.shortName || p.musteriAd || "",
       fullName: p.fullName || "",
@@ -7844,6 +7882,210 @@ const ISLER = {
 
     console.log(`[${etiket}] bitti: ${musteriAd}`)
     return sonuc
+  },
+
+  // Toplu Fis Bol: secilen donemdeki TUM fisleri Luca'da boler.
+  // Kayit DEGISTIRIR; web tarafinda acik onay alinmadan cagrilmaz.
+  "fis-bol": async (p) => {
+    const { fisBolFiltresi, fisBolSayfa } = require("./fis-bol")
+    const etiket = "fis-bol"
+    const yil = String(p.yil || (/* @__PURE__ */ new Date()).getFullYear())
+    const ay = p.ay === '' || p.ay == null ? null : Number(p.ay)
+    const musteriAd = String(p.fullName || p.shortName || p.vkn || "").trim()
+    if (!musteriAd) throw new Error("Musteri bilgisi eksik (shortName/fullName/vkn).")
+    console.log(`[${etiket}] basladi: ${musteriAd} [${yil}/${ay == null ? 'yil' : ay}]`)
+
+    const ilerle = (adim) => { try { p._ilerleme?.(adim) } catch { /* yoksay */ } }
+
+    ilerle("luca-girisi")
+    const g = await ISLER["luca-giris"]({
+      lucaMember: p.lucaMember,
+      lucaUsername: p.lucaUsername,
+      lucaPassword: p.lucaPassword
+    })
+    if (!g.ok) throw new Error(g.not || "Luca girisi basarisiz")
+
+    ilerle("firma-secimi")
+    const b = await tarayiciAl()
+    const ana = (await b.pages()).find((s) => /luca\.do|auygs/i.test(s.url() || ""))
+    if (!ana) throw new Error("Luca ana sayfa bulunamadi.")
+    await lucaAnaSayfayaDon(ana, etiket)
+    const secildi = await lucaMusteriSec(ana, etiket, {
+      shortName: p.shortName || p.musteriAd || "",
+      fullName: p.fullName || "",
+      vkn: p.vkn || "",
+      yil
+    })
+    if (!secildi) throw new Error("Luca firma/donem secilemedi: " + musteriAd + " [" + yil + "]")
+
+    ilerle("menu")
+    await lucaMenuYoluAc(ana, etiket, ["Muhasebe", "Fiş İşlemleri", "Fiş Listesi"])
+    await topluBelgeBekle(1500)
+
+    const cerceveBul = () => {
+      for (const f of ana.frames()) {
+        const u = String(f.url() || "")
+        if (/getFisParametreJSPAction\.do|listFisParametreAction\.do/.test(u)) return f
+      }
+      return null
+    }
+    const cerceveBekle = async (ms) => {
+      const son = Date.now() + ms
+      while (Date.now() < son) {
+        const f = cerceveBul()
+        if (f) return f
+        await topluBelgeBekle(500)
+      }
+      return null
+    }
+    let cerceve = await cerceveBekle(20000)
+    if (!cerceve) throw new Error("Fis Listesi ekrani acilmadi (menu yolu degismis olabilir).")
+
+    const kaynak = (action, data) =>
+      "(" + fisBolSayfa.toString() + ")(" + JSON.stringify({ action, ...data }) + ")"
+
+    const cerceveCagir = async (action, data = {}) => {
+      const hedef = cerceveBul()
+      if (!hedef) throw new Error("Fis listesi cercevesi kayboldu.")
+      cerceve = hedef
+      return await hedef.evaluate(kaynak(action, data))
+    }
+    const anaCagir = async (action, data = {}) => await ana.evaluate(kaynak(action, data))
+
+    // Diyalog pencereleri (Fis Bolme / onay / Islem Takip) kimi zaman fis
+    // listesi cercevesinde, kimi zaman ana pencerede acilir. Iki baglami da dene.
+    const cagir = async (action, data = {}) => {
+      let sonHata = null
+      for (const fn of [cerceveCagir, anaCagir]) {
+        try {
+          const r = await fn(action, data)
+          if (action === "ilerleme" && !(r && r.acik)) continue
+          if (action === "kapat" && r && r.yok) continue
+          return r
+        } catch (e) {
+          const msg = String(e && e.message || e)
+          if (/Execution context|detached frame|navigating/i.test(msg)) {
+            await topluBelgeBekle(1200)
+            try { return await fn(action, data) } catch (e2) { sonHata = e2; continue }
+          }
+          sonHata = e
+        }
+      }
+      if (action === "ilerleme") return { acik: false }
+      throw sonHata || new Error("Islem yapilamadi: " + action)
+    }
+
+    const bekleKosul = async (fn, ms, ad) => {
+      const son = Date.now() + ms
+      let sonDeger = null
+      while (Date.now() < son) {
+        sonDeger = await fn().catch(() => null)
+        if (sonDeger) return sonDeger
+        await topluBelgeBekle(400)
+      }
+      throw new Error("Zaman asimi: " + ad)
+    }
+    const durumBekle = async (tur, ms) => await bekleKosul(async () => {
+      const st = await cerceveCagir("state").catch(() => null)
+      return st && st[tur] && st.ready ? st : null
+    }, ms, "fis ekrani (" + tur + ")")
+
+    await durumBekle("filter", 30000)
+
+    ilerle("filtre")
+    const filtre = fisBolFiltresi({ yil, ay })
+    const st0 = await cerceveCagir("state").catch(() => null)
+    if (st0 && st0.list) {
+      await cerceveCagir("back").catch(() => {})
+      await durumBekle("filter", 20000)
+    }
+    await cerceveCagir("filter", { filter: filtre })
+    await cerceveCagir("submit", { filter: filtre })
+    await durumBekle("list", 120000)
+
+    ilerle("secim-modu")
+    await cerceveCagir("secim-modu")
+    const secim = await bekleKosul(async () => {
+      const st = await cerceveCagir("state").catch(() => null)
+      return st && st.secimModu ? st : null
+    }, 20000, "secim modu")
+
+    ilerle("tumunu-sec")
+    const sec = await cerceveCagir("tumunu-sec")
+    console.log(`[${etiket}] ${sec.toplam} fis secildi`)
+
+    // Deneme modu: yalniz secim yapilir, bolme calistirilmaz.
+    if (p.deneme === true) {
+      await cerceveCagir("vazgec").catch(() => {})
+      console.log(`[${etiket}] deneme: ${sec.toplam} fis secilebildi, bolme YAPILMADI`)
+      return { ok: true, musteri: musteriAd, yil, ay, secilen: sec.toplam, bolunen: 0, deneme: true }
+    }
+
+    ilerle("fis-bolme-penceresi")
+    const bolTiklama = await cerceveCagir("bol")
+
+    // Fis Bolme penceresi
+    const dlg = await bekleKosul(async () => {
+      const d = await cerceveCagir("dialog-durum").catch(() => null)
+      if (d && d.acik) return d
+      const d2 = await anaCagir("dialog-durum").catch(() => null)
+      return d2 && d2.acik ? d2 : null
+    }, 25000, "fis bolme penceresi")
+    console.log(`[${etiket}] fis bolme penceresi:`, JSON.stringify(dlg.secenekler || {}))
+
+    ilerle("fis-bolme-onay")
+    await cagir("tamam", { secenekler: p.secenekler || undefined })
+
+    // "N adet fis bolunecektir. Emin misiniz?"
+    const onay = await bekleKosul(async () => {
+      const o = await cerceveCagir("onay-durum").catch(() => null)
+      if (o && o.acik) return o
+      const o2 = await anaCagir("onay-durum").catch(() => null)
+      return o2 && o2.acik ? o2 : null
+    }, 25000, "bolme onay penceresi")
+    console.log(`[${etiket}] onay: ${onay.adet} adet fis bolunecektir`)
+
+    // Onaya-kadar deneme: onay penceresi IPTAL edilir, kayit degismez.
+    if (p.deneme === "onay") {
+      await cagir("onay-iptal").catch(() => {})
+      await topluBelgeBekle(900)
+      await cagir("kapat").catch(() => {})
+      await cerceveCagir("vazgec").catch(() => {})
+      console.log(`[${etiket}] deneme(onay): ${sec.toplam} secili, ${onay.adet} bolunecekti — IPTAL edildi`)
+      return {
+        ok: true, musteri: musteriAd, yil, ay,
+        secilen: sec.toplam, bolunen: 0, bolunecekti: onay.adet,
+        secenekler: dlg.secenekler || {}, deneme: "onay"
+      }
+    }
+
+    ilerle("bolunuyor")
+    await cagir("onayla")
+
+    // Islem Takip: bolme bitene kadar bekle
+    const sonuc = await bekleKosul(async () => {
+      const it = await cagir("ilerleme")
+      if (!it || !it.acik) return null
+      if (it.hata) throw new Error("Luca fis bolme hatasi: " + (it.ozet || ""))
+      if (it.bitti || !it.devam) return it
+      return null
+    }, 20 * 60 * 1000, "fis bolme islemi")
+
+    await topluBelgeBekle(1200)
+    const kapat = await cagir("kapat").catch(() => ({ kapandi: false }))
+
+    console.log(`[${etiket}] bitti: ${musteriAd} — ${sec.toplam} fis secildi, ${onay.adet ?? '?'} bolundu`)
+    return {
+      ok: true,
+      musteri: musteriAd,
+      yil,
+      ay,
+      secilen: sec.toplam,
+      bolunen: onay.adet,
+      secenekler: dlg.secenekler || {},
+      kapatildi: !!(kapat && kapat.kapandi),
+      ozet: sonuc && sonuc.ozet ? sonuc.ozet : ""
+    }
   },
 
   // 2.7.543: e-Beyan token durum ozeti â€” token icerigi ASLA donmez
@@ -20189,19 +20431,23 @@ var lucaSsoTakilmaSayac = 0;
 // Dogrulama basarisizsa hicbir sey onaylanmaz (yanlis firmaya gecilmez).
 async function lucaFirmaSecCombo(page, etiket, p = {}) {
   const log = (m, ek) => console.log(`[${etiket}] ${m}`, ek === void 0 ? "" : ek);
-  const _ad = String(p.shortName || "").trim();
-  const _tamAd = String(p.fullName || "").trim();
-  // Kisa ad (AK, EDA vb.) cok kisa ise tam adin ilk kelimesini kullan —
-  // Luca'da firma listesi kisa adla degil tam adla gosterilebilir.
-  const aranan = (_ad.length < 4 && _tamAd) ? _tamAd.split(/\s+/)[0] : _ad;
+  // 2.8.351: Luca'nin firma listesi ekrana gore KISA AD ("AK") ya da TAM
+  // UNVAN ("ELEKTRO-AK BOBINAJ ...") tasir. Tek bir ada gore aramak yerine
+  // iki aday da denenir; VKN eslesmesi her zaman en yuksek puandir.
+  const adaylar = [...new Set([p.shortName, p.fullName, p.musteriAd]
+    .map((x) => String(x || "").trim()).filter(Boolean))];
+  const aranan = adaylar[adaylar.length - 1] || "";
   const vkn = String(p.vkn || "").trim();
   const yil = String(p.yil || "").trim();
-  if (!aranan && !vkn) return false;
+  if (!adaylar.length && !vkn) return false;
 
   const hedefBulFn = ({ ad, vk }) => {
     const norm = (s) => String(s || "").toLocaleLowerCase("tr")
       .replace(/[^a-z0-9]/g, ""); // noktalama/bosluk yok sayilir
-    const adN = norm(ad);
+    const adayAdlar = (Array.isArray(ad) ? ad : [ad]).map((x) => String(x || "").trim()).filter(Boolean);
+    const adayNorm = adayAdlar.map(norm).filter(Boolean);
+    const adayKelimeler = adayAdlar.map((x) => String(x).toLocaleLowerCase("tr")
+      .split(/[^a-z0-9]+/).map(norm).filter(Boolean));
     const kutular = [...document.querySelectorAll("select#SirketCombo,select[name=SirketCombo],select")]
       .filter((s) => s.options.length > 1 && s.getClientRects().length > 0);
     if (!kutular.length) return { ok: false, neden: "select-yok" };
@@ -20220,12 +20466,20 @@ async function lucaFirmaSecCombo(page, etiket, p = {}) {
         if (!t) return 0;
         const ham = String(o.textContent || "").trim();
         if (vk && (ham.includes(vk) || String(o.value || "").includes(vk))) return 100;
-        if (!adN) return 0;
-        if (t === adN) return 95;                                   // "AK" == "AK"
-        if (ham.trim().toLocaleUpperCase("tr") === String(ad || "").trim().toLocaleUpperCase("tr")) return 95;
-        if (adN.length >= 4 && t.startsWith(adN)) return 70;
-        if (adN.length >= 6 && t.includes(adN)) return 50;
-        return 0;
+        if (!adayNorm.length) return 0;
+        let en = 0;
+        for (let i = 0; i < adayNorm.length; i++) {
+          const adN = adayNorm[i];
+          const hamAday = adayAdlar[i];
+          let p = 0;
+          if (t === adN) p = 95;
+          else if (ham.toLocaleUpperCase("tr") === hamAday.toLocaleUpperCase("tr")) p = 95;
+          else if (t.startsWith(adN)) p = 70;
+          else if (adN.length >= 6 && t.includes(adN)) p = 50;
+          else if (adN.length >= 2 && adayKelimeler[i].includes(adN)) p = 60;
+          if (p > en) en = p;
+        }
+        return en;
       };
       let enIyi = null;
       let enIyiPuan = 0;
@@ -20254,7 +20508,7 @@ async function lucaFirmaSecCombo(page, etiket, p = {}) {
   const bitis = Date.now() + 20000;
   while (Date.now() < bitis) {
     for (const f of page.frames()) {
-      const r = await f.evaluate(hedefBulFn, { ad: aranan, vk: vkn }).catch(() => null);
+      const r = await f.evaluate(hedefBulFn, { ad: adaylar, vk: vkn }).catch(() => null);
       if (r?.ok) { secim = r; break; }
     }
     if (secim) break;
@@ -20290,12 +20544,13 @@ async function lucaFirmaSecCombo(page, etiket, p = {}) {
   if (/^\d{4}$/.test(yil)) {
     const donemFn = ({ ad, vk, yil: y }) => {
       const norm = (s) => String(s || "").toLocaleLowerCase("tr").replace(/[^a-z0-9]/g, "");
+      const adayNorm = (Array.isArray(ad) ? ad : [ad]).map(norm).filter(Boolean);
       const kutular = [...document.querySelectorAll("select")].filter((s) => s.options.length > 1 && s.getClientRects().length > 0);
       for (const kutu of kutular) {
         const opt = [...kutu.options].find((o) => String(o.textContent || "").includes(y));
         if (!opt) continue;
         // firma kutusu olmamali
-        if ([...kutu.options].some((o) => norm(o.textContent) === norm(ad))) continue;
+        if ([...kutu.options].some((o) => adayNorm.includes(norm(o.textContent)))) continue;
         const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
         if (setter) setter.call(kutu, opt.value); else kutu.value = opt.value;
         kutu.dispatchEvent(new Event("input", { bubbles: true }));
@@ -20307,7 +20562,7 @@ async function lucaFirmaSecCombo(page, etiket, p = {}) {
     for (let d = 0; d < 10; d++) {
       let sonuc = null;
       for (const f of page.frames()) {
-        const r = await f.evaluate(donemFn, { ad: aranan, vk: vkn, yil }).catch(() => null);
+        const r = await f.evaluate(donemFn, { ad: adaylar, vk: vkn, yil }).catch(() => null);
         if (r?.ok) { sonuc = r; break; }
       }
       if (sonuc) { log("DonemCombo secildi:", JSON.stringify(sonuc)); break; }
@@ -20318,32 +20573,45 @@ async function lucaFirmaSecCombo(page, etiket, p = {}) {
   // Onayla: firma + donem gercekten secili mi?
   const onayFn = ({ ad, vk, yil: y }) => {
     const norm = (s) => String(s || "").toLocaleLowerCase("tr").replace(/[^a-z0-9]/g, "");
-    const adN = norm(ad);
+    const adayNorm = (Array.isArray(ad) ? ad : [ad]).map(norm).filter(Boolean);
     let firmaOk = false, donemOk = !y;
     for (const kutu of document.querySelectorAll("select")) {
       const sec = kutu.options[kutu.selectedIndex];
       if (!sec) continue;
       const t = norm(sec.textContent);
-      if (!firmaOk && adN && (t.includes(adN) || t === adN)) firmaOk = true;
+      if (!firmaOk && t && adayNorm.some((n) => t === n || (n.length >= 4 && (t.includes(n) || n.includes(t))))) firmaOk = true;
       if (y && String(sec.textContent || "").includes(y)) donemOk = true;
+    }
+    // 2.8.351: Ana ekranda (oturum zaten acik) firma degisimi combo'da ANINDA
+    // uygulanir ve "Tamam" dugmesi YOKTUR. Musteri bilgileri basligi dogrular.
+    const metin = document.body ? document.body.innerText : "";
+    const m = /Şu an (.+?) şirketinin/i.exec(metin);
+    if (m) {
+      const aktif = norm(m[1]);
+      if (aktif && adayNorm.some((n) => aktif === n || (n.length >= 4 && (aktif.includes(n) || n.includes(aktif))) || (aktif.length >= 4 && n.includes(aktif)))) firmaOk = true;
     }
     if (!firmaOk) return { ok: false, neden: "firma-dogrulanamadi" };
     if (!donemOk) return { ok: false, neden: "donem-dogrulanamadi" };
     const btn = [...document.querySelectorAll("button, input[type=submit], input[type=button], a")]
       .filter((b) => b.getClientRects().length > 0)
       .find((b) => /^(tamam|tamamla|onayla)$/i.test(String(b.textContent || b.value || "").trim()));
-    if (!btn) return { ok: false, neden: "tamam-yok" };
+    // Ana ekranda Tamam yoksa secim zaten uygulanmistir.
+    if (!btn) return { ok: true, tamamYok: true };
     btn.click();
     return { ok: true };
   };
   for (let d = 0; d < 8; d++) {
     let sonuc = null;
     for (const f of page.frames()) {
-      const r = await f.evaluate(onayFn, { ad: aranan, vk: vkn, yil }).catch(() => null);
+      const r = await f.evaluate(onayFn, { ad: adaylar, vk: vkn, yil }).catch(() => null);
       if (r?.ok) { sonuc = r; break; }
       if (r && r.neden) sonuc = r;
     }
-    if (sonuc?.ok) { log("firma/donem onaylandi (Tamam)"); await new Promise((r) => setTimeout(r, 2500)); return true; }
+    if (sonuc?.ok) {
+      log(sonuc.tamamYok ? "firma/donem ana ekranda uygulandi (Tamam yok)" : "firma/donem onaylandi (Tamam)");
+      await new Promise((r) => setTimeout(r, 2500));
+      return true;
+    }
     await new Promise((r) => setTimeout(r, 600));
   }
   return false;
@@ -20480,6 +20748,26 @@ async function lucaFirmaSecArama(page, etiket, p = {}) {
   }
   log("firma arama sonucu bulunamadi:", aranan || vkn);
   return false;
+}
+
+// 2.8.350: Onceki islerden kalan alt ekranlar (mal/hizmet listesi, fis
+// listesi vb.) yuzunden SirketCombo bulunamayip "firma/donem secilemedi"
+// hatasi aliniyordu. Musteri seciminden once ana Luca ekranina donulur.
+async function lucaAnaSayfayaDon(page, etiket) {
+  try {
+    const url = String(page.url() || "");
+    if (/\/Luca\/luca\.do/i.test(url)) return true;
+    console.log(`[${etiket}] alt ekrandan ana sayfaya donuluyor: ${url.slice(0, 90)}`);
+    await page.goto("https://auygs.luca.com.tr/Luca/luca.do", { waitUntil: "domcontentloaded", timeout: 60000 });
+    await topluBelgeBekle(4500);
+    const yeni = String(page.url() || "");
+    const ok = /\/Luca\/luca\.do/i.test(yeni);
+    console.log(`[${etiket}] ana sayfa: ${ok ? "OK" : "ACILAMADI"} ${yeni.slice(0, 90)}`);
+    return ok;
+  } catch (e) {
+    console.log(`[${etiket}] ana sayfaya donulemedi:`, e && e.message);
+    return false;
+  }
 }
 
 async function lucaMusteriSec(page, etiket, p = {}) {
@@ -33628,7 +33916,7 @@ document.getElementById('gir').addEventListener('click', async () => {
           }, 60 * 60 * 1000);
           const isParams = Object.assign({}, p);
           delete isParams.asenkron;
-          if (p.is === "efatura-sorgula" || p.is === "toplu-belge-duzenle" || p.is === "fis-tarama") {
+          if (p.is === "efatura-sorgula" || p.is === "toplu-belge-duzenle" || p.is === "fis-tarama" || p.is === "fis-bol") {
             isParams._ilerleme = (adim) => {
               const kayit = IS_SONUCLARI.get(isId);
               if (kayit?.durum === "calisiyor") kayit.adim = adim;
@@ -33683,7 +33971,7 @@ document.getElementById('gir').addEventListener('click', async () => {
             console.log("[ayar] Luca bilgisi kaydedilemedi:", e.message);
           }
         }
-        if ((["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle", "fis-tarama"].includes(p.is) || p.is === "eb-beyan-otomatik-indir" && p.kaynak === "luca") && !CONFIG.adminMod) {
+        if ((["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle", "fis-tarama", "fis-bol"].includes(p.is) || p.is === "eb-beyan-otomatik-indir" && p.kaynak === "luca") && !CONFIG.adminMod) {
           console.log("[is]", p.is, "| reddedildi: adminMod kapali (musteri kurulumu)");
           res.writeHead(403, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ success: false, error: 'Luca entegrasyonu yalnizca muhasebe ofisi (admin) kurulumunda etkindir. Ayarlar > Luca Baglanti bolumunden bilgileri kaydedip "Luca entegrasyonunu bu bilgisayarda ac" butonuna basin veya yardimci http://127.0.0.1:8765/admin-mod adresini ziyaret edin.' }));
@@ -33882,7 +34170,7 @@ async function protokolIsle(gelenUrl) {
       const captchaSonuc = await guvenlikKoduDoldur(page, "gib-odeme-protokol", { buton: "sorgula" }).catch((e) => ({ ok: false, neden: "hata: " + (e?.message || e) }));
       console.log("[protokol] captcha sonucu:", JSON.stringify(captchaSonuc));
     } else if (ISLER[isAdi]) {
-      if (["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle", "fis-tarama"].includes(isAdi) && !CONFIG.adminMod) {
+      if (["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle", "fis-tarama", "fis-bol"].includes(isAdi) && !CONFIG.adminMod) {
         console.log("[protokol]", isAdi, "| reddedildi: adminMod kapali");
         const page = await sayfaAc("about:blank");
         await page.setContent('<h3 style="font-family:sans-serif">Luca entegrasyonu yalnizca muhasebe ofisi (admin) kurulumunda etkindir.</h3>');

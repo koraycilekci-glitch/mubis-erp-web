@@ -164,8 +164,18 @@ export function CerezPolitikasi() {
         <ul className="list-disc pl-5 space-y-1">
           <li><strong className="text-white">Zorunlu çerezler:</strong> Oturum güvenliği, kullanıcı girişi ve site işleyişi için gereklidir; onay gerektirmez, devre dışı bırakılamaz.</li>
           <li><strong className="text-white">Tercih çerezleri:</strong> Tema, dil gibi tercihlerinizi hatırlar (tarayıcı yerel depolaması kullanılır).</li>
-          <li><strong className="text-white">Pazarlama/analitik çerezler:</strong> MUBiS ERP'de <strong className="text-white">kullanılmamaktadır</strong>. Gelecekte bu tür çerezler kullanılacaksa yalnızca açık rızanız alındıktan sonra devreye alınacaktır.</li>
+          <li><strong className="text-white">Analitik çerezler (isteğe bağlı):</strong> Yalnızca çerez banner'ında <strong className="text-white">onay verdiğinizde</strong> devreye girer. Google Analytics 4 aracılığıyla sayfa görüntüleme sayısı, oturum süresi, cihaz tipi (mobil/masaüstü) ve ziyaret edilen sayfalar gibi <strong className="text-white">anonim</strong> istatistikler toplanır. Bu kapsamda ad-soyad, T.C. kimlik numarası, vergi numarası, e-posta, telefon veya müşteri bilgisi gönderilmez. Onay vermezseniz analitik betiği hiç yüklenmez.</li>
+          <li><strong className="text-white">Pazarlama/reklam çerezleri:</strong> MUBiS ERP'de kullanılmamaktadır.</li>
         </ul>
+      </div>
+      <div>
+        <h2 className="text-white font-semibold mb-1">2.1. Yurt Dışına Aktarım</h2>
+        <p>
+          Analitik çerezleri onaylamanız hâlinde toplanan anonim kullanım verileri, hizmet sağlayıcı Google LLC
+          (Google Analytics 4) altyapısında işlenir ve yurt dışında sunucularda saklanabilir. KVKK md. 9 kapsamında
+          bu aktarım yalnızca açık rızanıza dayanılarak yapılır; onay vermemeniz hâlinde aktarım gerçekleşmez.
+          Google'ın IP anonimleştirme ve reklam kişiselleştirme ayarları devre dışı bırakılmış şekilde yapılandırılmıştır.
+        </p>
       </div>
       <div>
         <h2 className="text-white font-semibold mb-1">3. Onay Yönetimi</h2>

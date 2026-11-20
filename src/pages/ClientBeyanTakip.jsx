@@ -23,6 +23,7 @@ const BEYAN_TYPES = [
 const STATUS_MAP = {
   yapilamadi: { label: 'Yapilmadi', cls: 'bg-red-500/20 text-red-400' },
   evrak_alindi: { label: 'Evrak Alindi', cls: 'bg-sky-500/20 text-sky-400' },
+  dilekce: { label: 'Dilekçe', cls: 'bg-teal-500/20 text-teal-400' },
   hazir: { label: 'Hazir', cls: 'bg-blue-500/20 text-blue-400' },
   onaylandi: { label: 'Onaylandi', cls: 'bg-green-500/20 text-green-400' },
   tahakkuk_gonderildi: { label: 'Tahakkuk', cls: 'bg-purple-500/20 text-purple-400' },
@@ -238,6 +239,7 @@ export default function ClientBeyanTakip() {
                             >
                               <option value="yapilamadi">Yapilmadi</option>
                               <option value="evrak_alindi">Evrak Alindi</option>
+                              <option value="dilekce">Dilekçe</option>
                               <option value="hazir">Hazir</option>
                               <option value="onaylandi">Onaylandi</option>
                               <option value="tahakkuk_gonderildi">Tahakkuk</option>

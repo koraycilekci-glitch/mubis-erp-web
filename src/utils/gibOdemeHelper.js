@@ -363,7 +363,9 @@ async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 100
         sonAdim = j1.adim
         adimBaslangici = Date.now()
       }
-      try { onDurum?.(j1.adim) } catch {}
+      // 2.8.352: sunucu yuzde veriyorsa ikinci parametre olarak iletilir.
+      const yuzde = Number.isFinite(Number(j1.yuzde)) ? Number(j1.yuzde) : undefined
+      try { onDurum?.(j1.adim, yuzde) } catch {}
     }
     if (j1.durum === 'bitti') return { ok: true, ...j1 }
     if (j1.durum === 'hata') {

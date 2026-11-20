@@ -18,6 +18,22 @@ const yilSecenekleri = () => {
 
 const musteriAdi = (c) => c?.name || c?.company || c?.shortName || `Müşteri #${c?.id}`
 
+// Sunucudan gelen teknik adim kodlarini okunur etiketlere cevirir.
+const ADIM_ETIKETLERI = {
+  'luca-girisi': 'Luca girişi (CAPTCHA çözülüyor)',
+  'firma-secimi': 'Firma ve dönem seçiliyor',
+  'menu': 'Muhasebe → Fiş İşlemleri → Fiş Listesi',
+  'filtre': 'Dönem filtresi uygulanıyor',
+  'secim-modu': 'Fiş seçim modu açılıyor',
+  'tumunu-sec': 'Tüm fişler seçiliyor',
+  'fis-bolme-penceresi': 'Fiş Bölme penceresi bekleniyor',
+  'fis-bolme-onay': 'Bölme seçenekleri onaylanıyor',
+  'bolunuyor': 'Fişler bölünüyor',
+  'kapatiliyor': 'İşlem penceresi kapatılıyor'
+}
+
+const adimEtiketi = (kod) => ADIM_ETIKETLERI[kod] || kod || 'Hazırlanıyor'
+
 export default function TopluBelgeIslemleri() {
   const { user } = useAuth()
   if (!user) return <Navigate to="/giris" replace />
@@ -52,6 +68,7 @@ export default function TopluBelgeIslemleri() {
   // Toplu fis bol durumu (KAYIT DEGISTIRIR)
   const [bolCalisiyor, setBolCalisiyor] = useState(false)
   const [bolAdim, setBolAdim] = useState('')
+  const [bolYuzde, setBolYuzde] = useState(0)
   const [bolSonuclar, setBolSonuclar] = useState([])
   const [bolHata, setBolHata] = useState('')
 
@@ -221,6 +238,7 @@ export default function TopluBelgeIslemleri() {
 
     setBolHata('')
     setBolCalisiyor(true)
+    setBolYuzde(1)
     setBolSonuclar(hedefMusteriler.map((c) => ({
       clientId: c.id, musteri: musteriAdi(c), durum: 'bekliyor', mesaj: '',
       secilen: 0, bolunen: 0
@@ -234,14 +252,23 @@ export default function TopluBelgeIslemleri() {
       try {
         const r = await fisBol({
           client: c, yil, ay,
-          onDurum: (m) => guncelle(c.id, { mesaj: m })
+          onDurum: (m, yuzde) => {
+            const yama = { mesaj: m }
+            if (Number.isFinite(Number(yuzde))) {
+              yama.yuzde = Math.min(100, Math.max(0, Math.round(Number(yuzde))))
+              setBolYuzde(yama.yuzde)
+            }
+            guncelle(c.id, yama)
+          }
         })
         guncelle(c.id, {
           durum: 'tamam',
+          yuzde: 100,
           mesaj: `${r.secilen ?? 0} fiş seçildi, ${r.bolunen ?? '?'} fiş bölündü`,
           secilen: r.secilen || 0,
           bolunen: r.bolunen || 0
         })
+        setBolYuzde(100)
       } catch (e) {
         guncelle(c.id, { durum: 'hata', mesaj: e?.message || String(e) })
       }
@@ -456,12 +483,30 @@ export default function TopluBelgeIslemleri() {
             </span>
           )}
           {bolCalisiyor && (
-            <span className="text-sm text-rose-200 inline-flex items-center gap-2">
-              <RefreshCw className="w-4 h-4 animate-spin" />
-              {bolAdim} bölünüyor...
-            </span>
-          )}
-          {!hedefMusteriler.length && (
+            <div className="w-full rounded-xl border border-rose-400/30 bg-rose-950/40 p-4 space-y-2">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-rose-100 inline-flex items-center gap-2 min-w-0">
+                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                  <span className="truncate" title={bolAdim}>{bolAdim}</span>
+                  <span className="text-rose-300/80 truncate">
+                    — {adimEtiketi(bolSonuclar.find((s) => s.durum === 'calisiyor')?.mesaj)}
+                  </span>
+                </span>
+                <span className="font-semibold text-white shrink-0">%{bolYuzde}</span>
+              </div>
+              <div className="h-2.5 w-full rounded-full bg-rose-900/60 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-rose-500 to-amber-400 transition-all duration-500"
+                  style={{ width: `${Math.max(2, bolYuzde)}%` }}
+                />
+              </div>
+              <div className="text-xs text-rose-200/80">
+                {bolYuzde < 100
+                  ? 'Luca\'da işlem sürüyor. Bu pencereyi kapatmayın; bitince sonuç tablosu güncellenecek.'
+                  : 'Tamamlandı.'}
+              </div>
+            </div>
+          )}          {!hedefMusteriler.length && (
             <span className="text-sm text-amber-300 inline-flex items-center gap-2">
               <AlertTriangle className="w-4 h-4" />
               Önce müşteri seçin (tek müşteri veya toplu seçim).

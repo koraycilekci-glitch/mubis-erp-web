@@ -7884,19 +7884,10 @@ const ISLER = {
     return sonuc
   },
 
-  // Toplu Fis Bol: secilen donemdeki TUM fisleri Luca'da boler.
-  // Kayit DEGISTIRIR; web tarafinda acik onay alinmadan cagrilmaz.
-  "fis-bol": async (p) => {
-    const { fisBolFiltresi, fisBolSayfa } = require("./fis-bol")
-    const etiket = "fis-bol"
-    const yil = String(p.yil || (/* @__PURE__ */ new Date()).getFullYear())
-    const ay = p.ay === '' || p.ay == null ? null : Number(p.ay)
-    const musteriAd = String(p.fullName || p.shortName || p.vkn || "").trim()
-    if (!musteriAd) throw new Error("Musteri bilgisi eksik (shortName/fullName/vkn).")
-    console.log(`[${etiket}] basladi: ${musteriAd} [${yil}/${ay == null ? 'yil' : ay}]`)
-
+  // Luca'daki firma (SirketCombo) listesini dondurur — yalnizca okuma.
+  "luca-firma-listesi": async (p) => {
+    const etiket = "luca-firma"
     const ilerle = (adim) => { try { p._ilerleme?.(adim) } catch { /* yoksay */ } }
-
     ilerle("luca-girisi")
     const g = await ISLER["luca-giris"]({
       lucaMember: p.lucaMember,
@@ -7905,7 +7896,63 @@ const ISLER = {
     })
     if (!g.ok) throw new Error(g.not || "Luca girisi basarisiz")
 
-    ilerle("firma-secimi")
+    ilerle("firma-listesi")
+    const b = await tarayiciAl()
+    const ana = (await b.pages()).find((s) => /luca\.do|auygs/i.test(s.url() || ""))
+    if (!ana) throw new Error("Luca ana sayfa bulunamadi.")
+    await lucaAnaSayfayaDon(ana, etiket)
+
+    const okuFn = () => {
+      const sonuc = []
+      for (const kutu of document.querySelectorAll("select#SirketCombo,select[name=SirketCombo],select")) {
+        if (kutu.options.length < 3) continue;
+        const secenekler = [...kutu.options];
+        const tarih = secenekler.filter((o) => /^\d{2}\/\d{2}\/\d{4}\s*-\s*\d{2}\/\d{2}\/\d{4}$/.test(String(o.textContent || "").trim())).length;
+        if (tarih > secenekler.length / 2) continue;
+        for (const o of secenekler) {
+          const ad = String(o.textContent || "").replace(/\s+/g, " ").trim();
+          if (!ad || /^(-|seçiniz|seciniz|tümü|tumu)$/i.test(ad)) continue;
+          sonuc.push({ ad, deger: String(o.value || "").trim() });
+        }
+        if (sonuc.length) return { ok: true, kaynak: kutu.id || kutu.name || "select", firmalar: sonuc };
+      }
+      return { ok: false, firmalar: [] };
+    }
+
+    let bulunan = null;
+    for (let deneme = 0; deneme < 20; deneme++) {
+      for (const f of ana.frames()) {
+        const r = await f.evaluate(okuFn).catch(() => null);
+        if (r && r.ok && r.firmalar.length) { bulunan = r; break; }
+      }
+      if (bulunan) break;
+      await topluBelgeBekle(700);
+    }
+    if (!bulunan) throw new Error("Luca firma listesi okunamadi (SirketCombo bulunamadi).");
+    console.log(`[${etiket}] ${bulunan.firmalar.length} firma okundu (${bulunan.kaynak})`);
+    return { ok: true, sayi: bulunan.firmalar.length, firmalar: bulunan.firmalar };
+  },
+
+  // Secilen donemdeki fis SAYISINI okur (SALT OKUNUR) — bolme dogrulamasi icin.
+  "fis-sayisi": async (p) => {
+    const { fisFiltresi, fisTaramaSayfa } = require("./fis-tarama")
+    const { fisBolFiltresi, fisBolSayfa } = require("./fis-bol")
+    const etiket = "fis-sayisi"
+    const yil = String(p.yil || (/* @__PURE__ */ new Date()).getFullYear())
+    const ay = p.ay === '' || p.ay == null ? null : Number(p.ay)
+    const musteriAd = String(p.fullName || p.shortName || p.vkn || "").trim()
+    if (!musteriAd) throw new Error("Musteri bilgisi eksik (shortName/fullName/vkn).")
+    const ilerle = (adim, yuzde) => { try { p._ilerleme?.(adim, yuzde) } catch { /* yoksay */ } }
+
+    ilerle("luca-girisi", 5)
+    const g = await ISLER["luca-giris"]({
+      lucaMember: p.lucaMember,
+      lucaUsername: p.lucaUsername,
+      lucaPassword: p.lucaPassword
+    })
+    if (!g.ok) throw new Error(g.not || "Luca girisi basarisiz")
+
+    ilerle("firma-secimi", 20)
     const b = await tarayiciAl()
     const ana = (await b.pages()).find((s) => /luca\.do|auygs/i.test(s.url() || ""))
     if (!ana) throw new Error("Luca ana sayfa bulunamadi.")
@@ -7918,7 +7965,139 @@ const ISLER = {
     })
     if (!secildi) throw new Error("Luca firma/donem secilemedi: " + musteriAd + " [" + yil + "]")
 
-    ilerle("menu")
+    ilerle("menu", 35)
+    await lucaMenuYoluAc(ana, etiket, ["Muhasebe", "Fiş İşlemleri", "Fiş Listesi"])
+    await topluBelgeBekle(1500)
+
+    const cerceveBul = () => {
+      for (const f of ana.frames()) {
+        const u = String(f.url() || "")
+        if (/getFisParametreJSPAction\.do|listFisParametreAction\.do/.test(u)) return f
+      }
+      return null
+    }
+    const bekle = async (fn, ms, ad) => {
+      const son = Date.now() + ms
+      while (Date.now() < son) {
+        const r = await fn().catch(() => null)
+        if (r) return r
+        await topluBelgeBekle(400)
+      }
+      throw new Error("Zaman asimi: " + ad)
+    }
+    const cerceve = await bekle(async () => cerceveBul(), 20000, "fis listesi")
+    const sayfa = async (action, data = {}) => {
+      const hedef = cerceveBul() || cerceve
+      const kaynak = "(" + fisTaramaSayfa.toString() + ")(" + JSON.stringify({ action, ...data }) + ")"
+      try {
+        return await hedef.evaluate(kaynak)
+      } catch (e) {
+        const msg = String(e && e.message || e)
+        if (/Execution context|detached frame|navigating/i.test(msg)) {
+          await topluBelgeBekle(1200)
+          const h2 = cerceveBul()
+          if (h2) return await h2.evaluate(kaynak)
+        }
+        throw e
+      }
+    }
+
+    ilerle("filtre", 50)
+    await bekle(async () => { const s = await sayfa("state"); return s && s.filter && s.ready ? s : null }, 30000, "fis filtresi")
+    const filtre = fisFiltresi("unbalanced", { yil, ay })
+    filtre.fields = fisBolFiltresi({ yil, ay }).fields
+    await sayfa("filter", { filter: filtre })
+    await sayfa("submit", { filter: filtre })
+    await bekle(async () => { const s = await sayfa("state"); return s && s.list && s.ready ? s : null }, 180000, "fis listesi")
+
+    ilerle("sayiliyor", 70)
+    let toplam = 0
+    let sayfaNo = 0
+    const kimlikler = new Set()
+    while (sayfaNo < 300) {
+      sayfaNo++
+      const v = await sayfa("read")
+      for (const r of (v.rows || [])) if (r && r.id && !kimlikler.has(r.id)) { kimlikler.add(r.id); toplam++ }
+      if (v.end) break
+      try { await sayfa("next", { token: "s" + Date.now() + "_" + sayfaNo }) } catch { break }
+      await topluBelgeBekle(700)
+      await bekle(async () => { const s = await sayfa("state"); return s && s.list && s.ready ? s : null }, 30000, "sayfa gecisi")
+      const sonraki = await sayfa("read").catch(() => null)
+      if (!sonraki || JSON.stringify(sonraki.rows) === JSON.stringify(v.rows)) break
+    }
+    console.log(`[${etiket}] ${musteriAd} [${yil}/${ay}] toplam ${toplam} fis (${sayfaNo} sayfa)`)
+    return { ok: true, musteri: musteriAd, yil, ay, toplam, sayfa: sayfaNo }
+  },
+
+  // Teshis: acik Luca sekmelerindeki gorunur metinleri (ozellikle diyaloglar)
+  // dondurur. Hicbir seye tiklamaz, kayit degistirmez.
+  "luca-ekran-dok": async () => {
+    const b = await tarayiciAl()
+    const sayfalar = await b.pages()
+    const sonuc = []
+    for (const pg of sayfalar) {
+      let url = ""
+      try { url = pg.url() || "" } catch { url = "" }
+      if (!/luca|auygs/i.test(url)) continue
+      const cerceveler = []
+      for (const f of pg.frames()) {
+        const d = await f.evaluate(() => {
+          const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+          const metin = norm(document.body ? document.body.innerText : "");
+          // Diyalog benzeri kutulari ayrica topla
+          const diyaloglar = [];
+          for (const e of document.querySelectorAll('[role=dialog],.ui-dialog,.modal,.window,[id*=dialog],[class*=dialog],[id*=Dlg],[class*=Dlg]')) {
+            if (!e.getClientRects().length) continue;
+            const t = norm(e.textContent);
+            if (t) diyaloglar.push(t.slice(0, 300));
+          }
+          return { metin: metin.slice(0, 800), diyaloglar: [...new Set(diyaloglar)].slice(0, 5) };
+        }).catch(() => null);
+        if (d && (d.metin || d.diyaloglar.length)) {
+          cerceveler.push({ url: String(f.url() || "").split("?")[0].slice(-45), ...d });
+        }
+      }
+      sonuc.push({ url: url.split("?")[0].slice(-60), cerceveler });
+    }
+    console.log("[luca-ekran-dok]", JSON.stringify(sonuc).slice(0, 3000));
+    return { ok: true, sayfalar: sonuc };
+  },
+
+  // Toplu Fis Bol: secilen donemdeki TUM fisleri Luca'da boler.
+  // Kayit DEGISTIRIR; web tarafinda acik onay alinmadan cagrilmaz.
+  "fis-bol": async (p) => {
+    const { fisBolFiltresi, fisBolSayfa } = require("./fis-bol")
+    const etiket = "fis-bol"
+    const yil = String(p.yil || (/* @__PURE__ */ new Date()).getFullYear())
+    const ay = p.ay === '' || p.ay == null ? null : Number(p.ay)
+    const musteriAd = String(p.fullName || p.shortName || p.vkn || "").trim()
+    if (!musteriAd) throw new Error("Musteri bilgisi eksik (shortName/fullName/vkn).")
+    console.log(`[${etiket}] basladi: ${musteriAd} [${yil}/${ay == null ? 'yil' : ay}]`)
+
+    const ilerle = (adim, yuzde) => { try { p._ilerleme?.(adim, yuzde) } catch { /* yoksay */ } }
+
+    ilerle("luca-girisi", 3)
+    const g = await ISLER["luca-giris"]({
+      lucaMember: p.lucaMember,
+      lucaUsername: p.lucaUsername,
+      lucaPassword: p.lucaPassword
+    })
+    if (!g.ok) throw new Error(g.not || "Luca girisi basarisiz")
+
+    ilerle("firma-secimi", 10)
+    const b = await tarayiciAl()
+    const ana = (await b.pages()).find((s) => /luca\.do|auygs/i.test(s.url() || ""))
+    if (!ana) throw new Error("Luca ana sayfa bulunamadi.")
+    await lucaAnaSayfayaDon(ana, etiket)
+    const secildi = await lucaMusteriSec(ana, etiket, {
+      shortName: p.shortName || p.musteriAd || "",
+      fullName: p.fullName || "",
+      vkn: p.vkn || "",
+      yil
+    })
+    if (!secildi) throw new Error("Luca firma/donem secilemedi: " + musteriAd + " [" + yil + "]")
+
+    ilerle("menu", 15)
     await lucaMenuYoluAc(ana, etiket, ["Muhasebe", "Fiş İşlemleri", "Fiş Listesi"])
     await topluBelgeBekle(1500)
 
@@ -7975,6 +8154,53 @@ const ISLER = {
       throw sonHata || new Error("Islem yapilamadi: " + action)
     }
 
+    // 2.8.353: Diyalog pencereleri AYRI BIR PENCEREDE acilabiliyor ve
+    // detached/gecis halindeki cercevelerde evaluate cagrisi 30 sn asili
+    // kalabiliyordu (yoklama turu dakikalarca suruyordu). Her cagriya kisa
+    // zaman asimi konur ve donmus cerceveler atlanir.
+    const hizliEval = async (frame, kod, ms = 2500) => {
+      let zamanlayici = null
+      try {
+        return await Promise.race([
+          frame.evaluate(kod),
+          new Promise((_, reddet) => { zamanlayici = setTimeout(() => reddet(new Error("eval-timeout")), ms) })
+        ])
+      } catch {
+        return null
+      } finally {
+        if (zamanlayici) clearTimeout(zamanlayici)
+      }
+    }
+    const tumCerceveler = async () => {
+      const liste = []
+      let sayfalar = []
+      try { sayfalar = await b.pages() } catch { sayfalar = [] }
+      for (const pg of sayfalar) {
+        try {
+          for (const f of pg.frames()) {
+            try { if (f.detached) continue } catch { /* yoksay */ }
+            liste.push(f)
+          }
+        } catch { /* yoksay */ }
+      }
+      return liste
+    }
+    const dokCagir = async (action) => {
+      const kod = kaynak(action, {})
+      const cerceveler = await tumCerceveler()
+      let yedek = null
+      for (const f of cerceveler) {
+        const r = await hizliEval(f, kod)
+        if (!r) continue
+        if (r.acik || r.hata) return r
+        if (!yedek) yedek = r
+      }
+      return yedek || { acik: false }
+    }
+    const ilerlemeDok = async () => await dokCagir("ilerleme")
+    const onayDok = async () => await dokCagir("onay-durum")
+    const dialogDok = async () => await dokCagir("dialog-durum")
+
     const bekleKosul = async (fn, ms, ad) => {
       const son = Date.now() + ms
       let sonDeger = null
@@ -7992,7 +8218,7 @@ const ISLER = {
 
     await durumBekle("filter", 30000)
 
-    ilerle("filtre")
+    ilerle("filtre", 20)
     const filtre = fisBolFiltresi({ yil, ay })
     const st0 = await cerceveCagir("state").catch(() => null)
     if (st0 && st0.list) {
@@ -8003,14 +8229,14 @@ const ISLER = {
     await cerceveCagir("submit", { filter: filtre })
     await durumBekle("list", 120000)
 
-    ilerle("secim-modu")
+    ilerle("secim-modu", 30)
     await cerceveCagir("secim-modu")
     const secim = await bekleKosul(async () => {
       const st = await cerceveCagir("state").catch(() => null)
       return st && st.secimModu ? st : null
     }, 20000, "secim modu")
 
-    ilerle("tumunu-sec")
+    ilerle("tumunu-sec", 40)
     const sec = await cerceveCagir("tumunu-sec")
     console.log(`[${etiket}] ${sec.toplam} fis secildi`)
 
@@ -8021,27 +8247,29 @@ const ISLER = {
       return { ok: true, musteri: musteriAd, yil, ay, secilen: sec.toplam, bolunen: 0, deneme: true }
     }
 
-    ilerle("fis-bolme-penceresi")
+    ilerle("fis-bolme-penceresi", 50)
     const bolTiklama = await cerceveCagir("bol")
 
     // Fis Bolme penceresi
     const dlg = await bekleKosul(async () => {
-      const d = await cerceveCagir("dialog-durum").catch(() => null)
-      if (d && d.acik) return d
-      const d2 = await anaCagir("dialog-durum").catch(() => null)
-      return d2 && d2.acik ? d2 : null
+      const d = await dialogDok()
+      return d && d.acik ? d : null
     }, 25000, "fis bolme penceresi")
     console.log(`[${etiket}] fis bolme penceresi:`, JSON.stringify(dlg.secenekler || {}))
 
-    ilerle("fis-bolme-onay")
-    await cagir("tamam", { secenekler: p.secenekler || undefined })
+    ilerle("fis-bolme-onay", 60)
+    const tamamSonuc = await cagir("tamam", { secenekler: p.secenekler || undefined })
+    console.log(`[${etiket}] fis bolme Tamam: ${JSON.stringify(tamamSonuc)}`)
+    await topluBelgeBekle(1800)
+    try {
+      const ekran = await dokCagir("ekran")
+      console.log(`[${etiket}] onay sonrasi ekran: ${JSON.stringify(ekran).slice(0, 900)}`)
+    } catch { /* yoksay */ }
 
     // "N adet fis bolunecektir. Emin misiniz?"
     const onay = await bekleKosul(async () => {
-      const o = await cerceveCagir("onay-durum").catch(() => null)
-      if (o && o.acik) return o
-      const o2 = await anaCagir("onay-durum").catch(() => null)
-      return o2 && o2.acik ? o2 : null
+      const o = await onayDok()
+      return o && o.acik ? o : null
     }, 25000, "bolme onay penceresi")
     console.log(`[${etiket}] onay: ${onay.adet} adet fis bolunecektir`)
 
@@ -8059,17 +8287,77 @@ const ISLER = {
       }
     }
 
-    ilerle("bolunuyor")
-    await cagir("onayla")
+    // Native (window.confirm) onaylari otomatik kabul edilir; Luca bazi
+    // ekranlarda "Emin misiniz?" sorusunu tarayici diyalogu olarak gosterir.
+    try {
+      for (const pg of await b.pages()) {
+        if (pg.__mubisDialogBagli) continue
+        pg.__mubisDialogBagli = true
+        pg.on("dialog", (d) => {
+          console.log(`[${etiket}] tarayici diyalogu: ${d.type()} — ${String(d.message()).slice(0, 120)} -> kabul`)
+          d.accept().catch(() => {})
+        })
+      }
+    } catch { /* yoksay */ }
 
-    // Islem Takip: bolme bitene kadar bekle
+    ilerle("bolunuyor", 65)
+    const onaylaSonuc = await cagir("onayla")
+    console.log(`[${etiket}] onayla: ${JSON.stringify(onaylaSonuc)}`)
+    await topluBelgeBekle(2000)
+    try {
+      const ekran2 = await dokCagir("ekran")
+      console.log(`[${etiket}] onayla sonrasi ekran: ${JSON.stringify(ekran2).slice(0, 900)}`)
+    } catch { /* yoksay */ }
+
+    // Islem Takip: bolme bitene kadar bekle.
+    // 2.8.352: Luca islem bitince bu pencereyi KENDILIGINDEN kapatabiliyor;
+    // bu yuzden "bitti" yazisi beklenmez — pencere bir kez goruldukten sonra
+    // KAYBOLMASI da tamamlanma sayilir.
+    // Luca gercek yuzde veriyorsa o kullanilir; vermiyorsa gecen sureye gore
+    // %65 -> %97 arasinda yumusak ilerleme gosterilir (asla 100'e varmaz).
+    const bolBaslangic = Date.now()
+    const tahminiMs = Math.max(180000, (onay.adet || sec.toplam || 100) * 3000)
+    let takipGorundu = false
+    let kaybolmaSayaci = 0
+    let sonLog = 0
     const sonuc = await bekleKosul(async () => {
-      const it = await cagir("ilerleme")
-      if (!it || !it.acik) return null
+      const it = await ilerlemeDok()
+      const acik = !!(it && it.acik)
+      if (acik && Date.now() - sonLog > 20000) {
+        sonLog = Date.now()
+        console.log(`[${etiket}] islem takip: ${String(it.ozet || "").slice(0, 220)} | yuzde=${it.yuzde}`)
+      }
+      if (!acik) {
+        if (!takipGorundu) {
+          // Islem Takip hic acilmadiysa (bolme cok hizli bittiyse) 90 sn sonra
+          // islemi tamamlanmis say — sonsuza kadar beklemeyiz.
+          if (Date.now() - bolBaslangic > 90000) {
+            console.log(`[${etiket}] islem takip penceresi gorulmedi; tamamlandi sayiliyor`)
+            return { acik: false, bitti: true, ozet: "İşlem Takip penceresi görülmedi (işlem hızlı tamamlandı)." }
+          }
+          return null // henuz acilmadi; bekle
+        }
+        kaybolmaSayaci++
+        // Ardisik 3 yoklamada (~10 sn) pencere yoksa islem bitmis sayilir.
+        return kaybolmaSayaci >= 3 ? { acik: false, bitti: true, ozet: "İşlem Takip penceresi kapandı (işlem tamamlandı)." } : null
+      }
+      kaybolmaSayaci = 0
+      takipGorundu = true
       if (it.hata) throw new Error("Luca fis bolme hatasi: " + (it.ozet || ""))
       if (it.bitti || !it.devam) return it
+      let y = 65
+      {
+        const oran = (Date.now() - bolBaslangic) / tahminiMs
+        const zamanY = 65 + 32 * (1 - Math.exp(-2.2 * oran))
+        const lucaY = Number.isFinite(it.yuzde) ? 65 + it.yuzde * 0.32 : 0
+        // Hangisi buyukse o kullanilir; boylece yanlis/eski bir DOM yuzdesi
+        // ilerlemeyi kilitlemez.
+        y = Math.round(Math.max(zamanY, lucaY))
+      }
+      ilerle("bolunuyor", Math.min(97, Math.max(65, y)))
       return null
-    }, 20 * 60 * 1000, "fis bolme islemi")
+    }, 60 * 60 * 1000, "fis bolme islemi")
+    ilerle("kapatiliyor", 98)
 
     await topluBelgeBekle(1200)
     const kapat = await cagir("kapat").catch(() => ({ kapandi: false }))
@@ -33884,7 +34172,7 @@ document.getElementById('gir').addEventListener('click', async () => {
       return;
     }
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ success: true, isId: id, durum: kayit.durum, ...(kayit.durum === "calisiyor" && kayit.adim ? { adim: kayit.adim } : {}), ...(kayit.durum === "bitti" ? kayit.sonuc : {}), ...(kayit.durum === "hata" ? { error: kayit.error } : {}) }));
+    res.end(JSON.stringify({ success: true, isId: id, durum: kayit.durum, ...(kayit.durum === "calisiyor" && kayit.adim ? { adim: kayit.adim } : {}), ...(kayit.durum === "calisiyor" && Number.isFinite(kayit.yuzde) ? { yuzde: kayit.yuzde } : {}), ...(kayit.durum === "bitti" ? kayit.sonuc : {}), ...(kayit.durum === "hata" ? { error: kayit.error } : {}) }));
     return;
   }
   if (req.method === "POST" && req.url === "/is") {
@@ -33917,11 +34205,17 @@ document.getElementById('gir').addEventListener('click', async () => {
           const isParams = Object.assign({}, p);
           delete isParams.asenkron;
           if (p.is === "efatura-sorgula" || p.is === "toplu-belge-duzenle" || p.is === "fis-tarama" || p.is === "fis-bol") {
-            isParams._ilerleme = (adim) => {
+            isParams._ilerleme = (adim, yuzde) => {
               const kayit = IS_SONUCLARI.get(isId);
-              if (kayit?.durum === "calisiyor") kayit.adim = adim;
+              if (kayit?.durum !== "calisiyor") return;
+              kayit.adim = adim;
+              const y = Number(yuzde);
+              if (Number.isFinite(y)) {
+                kayit.yuzde = Math.min(100, Math.max(0, Math.round(y)));
+                kayit.adimZamani = Date.now();
+              }
             };
-            isParams._ilerleme("luca-girisi");
+            isParams._ilerleme("luca-girisi", 3);
           }
           (async () => {
             try {

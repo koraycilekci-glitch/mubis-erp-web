@@ -115,6 +115,8 @@ export default function AllBeyanReport() {
 
   const getStatusBadge = (status) => {
     switch(status) {
+      case 'evrak_alindi': return { label: 'Evrak Alindi', cls: 'bg-sky-500/20 text-sky-400' }
+      case 'dilekce': return { label: 'Dilekçe', cls: 'bg-teal-500/20 text-teal-400' }
       case 'hazir': return { label: 'Hazir', cls: 'bg-blue-500/20 text-blue-400' }
       case 'onaylandi':
       case 'yapildi': return { label: 'Onaylandi', cls: 'bg-green-500/20 text-green-400' }
@@ -284,6 +286,8 @@ export default function AllBeyanReport() {
                                   className="bg-blue-900/30 border border-blue-700/50 rounded-lg py-1 px-2 text-white text-xs focus:outline-none focus:border-yellow-400"
                                 >
                                   <option value="yapilmadi">Yapilmadi</option>
+                                  <option value="evrak_alindi">Evrak Alindi</option>
+                                  <option value="dilekce">Dilekçe</option>
                                   <option value="hazir">Hazir</option>
                                   <option value="onaylandi">Onaylandi</option>
                                   <option value="tahakkuk_gonderildi">Tahakkuk Gonderildi</option>

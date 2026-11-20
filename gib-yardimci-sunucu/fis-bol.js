@@ -118,13 +118,53 @@ function fisBolSayfa(request) {
     const t = govde()
     return /Fiş Bölme/.test(t) && /(Aynı türdeki belgeleri böl|Fiş Açıklama|Yeni fişlerde)/.test(t)
   }
+  // Islem Takip diyalogunun metnini bulur (fis listesi metniyle karismaz).
+  const islemTakipMetni = () => {
+    const kutular = diyalogKutulari()
+    for (let i = kutular.length - 1; i >= 0; i--) {
+      const t = kutular[i].metin
+      if (/İşlem Takip|Islem Takip/i.test(t) || /\[\d+\s*\/\s*\d+\]/.test(t)) return t
+    }
+    return ''
+  }
   const islemTakip = () => {
-    const t = govde()
-    if (!/İşlem Takip|Islem Takip/.test(t)) return { acik: false }
-    const devam = /Seçili fişler bölünüyor/i.test(t)
-    const bitti = /bölündü|tamamlandı|işlem tamamlandı/i.test(t)
-    const hata = /(hata oluştu|başarısız|bölünemedi)/i.test(t)
-    return { acik: true, devam, bitti, hata, ozet: t.replace(/\s+/g, ' ').slice(0, 400) }
+    const metin = islemTakipMetni()
+    if (!metin) return { acik: false }
+    // Gercek ilerleme: "[x/N]" satirlari
+    const adimlar = [...metin.matchAll(/\[(\d+)\s*\/\s*(\d+)\]/g)]
+    let yuzde = null
+    let toplamAdet = null
+    if (adimlar.length) {
+      const son = adimlar[adimlar.length - 1]
+      const x = Number(son[1])
+      const n = Number(son[2])
+      toplamAdet = n
+      if (n > 0) yuzde = Math.min(100, Math.round((x / n) * 100))
+    }
+    // Bitti mi? Son adim N/N ise veya sonuc satiri gorulduyse.
+    const bittiMi =
+      (adimlar.length > 0 && Number(adimlar[adimlar.length - 1][1]) >= Number(adimlar[adimlar.length - 1][2])) ||
+      /(fişler bölündü|bölme işlemi tamamlandı|işlem tamamlandı)/i.test(metin)
+
+    // Bölünemeyen fişler (Luca is kurali) — hata degil, raporlanir.
+    const basarisiz = []
+    for (const parca of metin.split(/\s*\[\d+\s*\/\s*\d+\]\s*/).filter(Boolean)) {
+      if (/bölünemedi|bölünemez|değiştirilemez|degistirilemez/i.test(parca)) {
+        const temiz = norm(parca)
+        if (temiz && !basarisiz.includes(temiz)) basarisiz.push(temiz.slice(0, 200))
+      }
+    }
+    const devam = !bittiMi && /Seçili fişler bölünüyor/i.test(metin)
+    return {
+      acik: true,
+      devam,
+      bitti: bittiMi,
+      hata: /(sistem hatası|beklenmeyen hata|bağlantı hatası)/i.test(metin),
+      yuzde,
+      toplamAdet,
+      basarisiz,
+      ozet: metin.replace(/\s+/g, ' ').slice(0, 600)
+    }
   }
   const kutuBul = (parca) => {
     for (const e of document.querySelectorAll('input[type=checkbox]')) {
@@ -134,6 +174,45 @@ function fisBolSayfa(request) {
       if (metin.includes(parca)) return e
     }
     return null
+  }
+
+  // Gorunur diyalog kutularini (en ustteki en sonda olacak sekilde) dondurur.
+  const diyalogKutulari = () => {
+    const adaylar = []
+    for (const e of document.querySelectorAll('[role=dialog],.ui-dialog,.modal,.window,[id*=dialog],[id*=Dlg],[class*=dialog],[class*=Dlg]')) {
+      if (!gorunur(e)) continue
+      const t = norm(e.textContent)
+      if (!t) continue
+      // Fiş listesi gibi dev tablolari disla
+      if (e.querySelectorAll('tr').length > 30) continue
+      adaylar.push({ el: e, metin: t })
+    }
+    return adaylar
+  }
+  const diyalogDugmesi = (yazi) => {
+    const kutular = diyalogKutulari()
+    // En son (en ustte) diyalogdan basla
+    for (let i = kutular.length - 1; i >= 0; i--) {
+      for (const e of kutular[i].el.querySelectorAll('button,input[type=button],input[type=submit],a')) {
+        if (!gorunur(e) || e.disabled) continue
+        if ([e.textContent, e.value].some((t) => norm(t) === yazi)) return e
+      }
+    }
+    return null
+  }
+
+  if (request.action === 'ekran') {
+    const kutular = diyalogKutulari().map((k) => ({
+      metin: k.metin.slice(0, 200),
+      dugmeler: [...k.el.querySelectorAll('button,input[type=button],a')]
+        .filter(gorunur).map((b) => norm(b.textContent || b.value)).filter(Boolean).slice(0, 10),
+      kutular: [...k.el.querySelectorAll('input[type=checkbox]')]
+        .filter(gorunur).map((c) => {
+          const kap = (c.closest && c.closest('label')) || c.parentElement
+          return { metin: norm(kap ? kap.textContent : '').slice(0, 60), secili: !!c.checked }
+        }).slice(0, 8)
+    }))
+    return { acik: kutular.length > 0, diyaloglar: kutular }
   }
 
   if (request.action === 'state') {
@@ -253,8 +332,12 @@ function fisBolSayfa(request) {
       uygula('Aynı türdeki belgeleri böl', request.secenekler.ayniTur)
       uygula('Fiş Tarihi, Evrak Tarihi olarak atansın', request.secenekler.fisTarihiAta)
     }
+    // 2.8.354: Diyalog icindeki "Tamam" tercih edilir (sayfadaki baska bir
+    // Tamam'a basmak islemi baslatmiyordu).
+    const hedef = diyalogDugmesi('Tamam')
+    if (hedef) { hedef.click(); return { tamam: 'diyalog' } }
     tikla('Tamam', 'son')
-    return true
+    return { tamam: 'sayfa' }
   }
 
   // ---- Onay penceresi ----

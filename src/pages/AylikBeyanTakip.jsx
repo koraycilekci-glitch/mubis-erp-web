@@ -141,6 +141,7 @@ export default function AylikBeyanTakip() {
     { id: 'all', label: 'Tüm Durumlar', color: 'gray' },
     { id: 'yapilamadi', label: 'Yapılmadı', color: 'red' },
     { id: 'evrak_alindi', label: 'Evrak Alındı', color: 'sky' },
+    { id: 'dilekce', label: 'Dilekçe', color: 'teal' },
     { id: 'hazir', label: 'Hazır', color: 'yellow' },
     { id: 'onaylandi', label: 'Onaylandı', color: 'green' },
     { id: 'gonderildi', label: 'Gönderildi', color: 'purple' },
@@ -1482,6 +1483,7 @@ export default function AylikBeyanTakip() {
     const colors = {
       'yapildi': 'bg-green-500/20 text-green-400 border-green-500/30',
       'evrak_alindi': 'bg-sky-500/20 text-sky-400 border-sky-500/30',
+      'dilekce': 'bg-teal-500/20 text-teal-400 border-teal-500/30',
       'hazir': 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
       'yapilamadi': 'bg-red-500/20 text-red-400 border-red-500/30',
       'onaylandi': 'bg-green-500/20 text-green-400 border-green-500/30',
@@ -1496,6 +1498,7 @@ export default function AylikBeyanTakip() {
     const icons = {
       'yapildi': <CheckCircle className="w-4 h-4" />,
       'evrak_alindi': <FileCheck className="w-4 h-4" />,
+      'dilekce': <FileText className="w-4 h-4" />,
       'hazir': <Clock className="w-4 h-4" />,
       'yapilamadi': <AlertTriangle className="w-4 h-4" />,
       'onaylandi': <CheckCircle className="w-4 h-4" />,
@@ -1510,6 +1513,7 @@ export default function AylikBeyanTakip() {
     const labels = {
       'yapildi': 'Yapıldı',
       'evrak_alindi': 'Evrak Alındı',
+      'dilekce': 'Dilekçe',
       'hazir': 'Hazır',
       'yapilamadi': 'Yapılmadı',
       'onaylandi': 'Onaylandı',
@@ -1910,11 +1914,12 @@ export default function AylikBeyanTakip() {
           })
           return { tur, yapilan, hazir, gonderilen, kalan }
         }).filter(t => (t.yapilan + t.hazir + t.gonderilen + t.kalan) > 0) : []
-        const durumKisa = { yapildi: 'Verildi', evrak_alindi: 'Evrak A.', hazir: 'Hazır', onaylandi: 'Onaylandı', tahakkuk_gonderildi: 'Gönderildi', onaylanmadi: 'Onaylanmadı', yapilamadi: 'Yapılmadı' }
+        const durumKisa = { yapildi: 'Verildi', evrak_alindi: 'Evrak A.', dilekce: 'Dilekçe', hazir: 'Hazır', onaylandi: 'Onaylandı', tahakkuk_gonderildi: 'Gönderildi', onaylanmadi: 'Onaylanmadı', yapilamadi: 'Yapılmadı' }
         // 3B hucre stilleri: degrade + kabartma kenar + golge
         const durumRenk = {
           yapildi: 'bg-gradient-to-b from-green-400 to-green-600 text-white border-green-700 shadow-[0_2px_0_#166534,0_4px_8px_rgba(34,197,94,0.35)]',
           evrak_alindi: 'bg-gradient-to-b from-sky-400 to-sky-600 text-white border-sky-700 shadow-[0_2px_0_#075985,0_4px_8px_rgba(14,165,233,0.35)]',
+          dilekce: 'bg-gradient-to-b from-teal-400 to-teal-600 text-white border-teal-700 shadow-[0_2px_0_#115e59,0_4px_8px_rgba(20,184,166,0.35)]',
           hazir: 'bg-gradient-to-b from-amber-300 to-yellow-500 text-white border-yellow-700 shadow-[0_2px_0_#92400e,0_4px_8px_rgba(250,204,21,0.35)]',
           onaylandi: 'bg-gradient-to-b from-green-400 to-green-600 text-white border-green-700 shadow-[0_2px_0_#14532d,0_4px_8px_rgba(34,197,94,0.35)]',
           tahakkuk_gonderildi: 'bg-gradient-to-b from-purple-400 to-purple-600 text-white border-purple-700 shadow-[0_2px_0_#581c87,0_4px_8px_rgba(168,85,247,0.35)]',
@@ -2085,10 +2090,11 @@ export default function AylikBeyanTakip() {
                         return (
                           <div key={tur} className="bg-blue-800/20 rounded-xl p-3 border border-blue-700/30">
                             <p className="text-white text-sm font-bold mb-2.5">{turLabel(tur)}</p>
-                            <div className="grid grid-cols-5 gap-1.5">
+                            <div className="grid grid-cols-3 gap-1.5">
                               {[
                                 { s: 'yapilamadi', label: 'Yapılmadı', icon: <AlertTriangle className="w-3.5 h-3.5" />, cls: 'bg-gradient-to-b from-red-400 to-red-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_3px_0_#7f1d1d,0_6px_12px_rgba(239,68,68,0.35)]' },
                                 { s: 'evrak_alindi', label: 'Evrak Alındı', icon: <FileCheck className="w-3.5 h-3.5" />, cls: 'bg-gradient-to-b from-sky-400 to-sky-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_3px_0_#075985,0_6px_12px_rgba(14,165,233,0.35)]' },
+                                { s: 'dilekce', label: 'Dilekçe', icon: <FileText className="w-3.5 h-3.5" />, cls: 'bg-gradient-to-b from-teal-400 to-teal-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_3px_0_#115e59,0_6px_12px_rgba(20,184,166,0.35)]' },
                                 { s: 'hazir', label: 'Hazır', icon: <Clock className="w-3.5 h-3.5" />, cls: 'bg-gradient-to-b from-amber-300 to-yellow-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_3px_0_#92400e,0_6px_12px_rgba(250,204,21,0.35)]' },
                                 { s: 'onaylandi', label: 'Onaylandı', icon: <CheckCircle className="w-3.5 h-3.5" />, cls: 'bg-gradient-to-b from-green-400 to-green-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_3px_0_#14532d,0_6px_12px_rgba(34,197,94,0.35)]' },
                                 { s: 'tahakkuk_gonderildi', label: 'Gönderildi', icon: <Send className="w-3.5 h-3.5" />, cls: 'bg-gradient-to-b from-purple-400 to-purple-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_3px_0_#581c87,0_6px_12px_rgba(168,85,247,0.35)]' },
@@ -2142,6 +2148,7 @@ export default function AylikBeyanTakip() {
                           {[
                             { s: 'yapilamadi', label: 'Yapılmadı', icon: <AlertTriangle className="w-4 h-4" />, cls: 'bg-gradient-to-b from-red-400 to-red-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_4px_0_#7f1d1d,0_8px_16px_rgba(239,68,68,0.35)]' },
                             { s: 'evrak_alindi', label: 'Evrak Alındı', icon: <FileCheck className="w-4 h-4" />, cls: 'bg-gradient-to-b from-sky-400 to-sky-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_4px_0_#075985,0_8px_16px_rgba(14,165,233,0.35)]' },
+                            { s: 'dilekce', label: 'Dilekçe', icon: <FileText className="w-4 h-4" />, cls: 'bg-gradient-to-b from-teal-400 to-teal-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_4px_0_#115e59,0_8px_16px_rgba(20,184,166,0.35)]' },
                             { s: 'hazir', label: 'Hazır', icon: <Clock className="w-4 h-4" />, cls: 'bg-gradient-to-b from-amber-300 to-yellow-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_4px_0_#92400e,0_8px_16px_rgba(250,204,21,0.35)]' },
                             { s: 'onaylandi', label: 'Onaylandı', icon: <CheckCircle className="w-4 h-4" />, cls: 'bg-gradient-to-b from-green-400 to-green-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_4px_0_#14532d,0_8px_16px_rgba(34,197,94,0.35)]' },
                             { s: 'tahakkuk_gonderildi', label: 'Gönderildi', icon: <Send className="w-4 h-4" />, cls: 'bg-gradient-to-b from-purple-400 to-purple-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_4px_0_#581c87,0_8px_16px_rgba(168,85,247,0.35)]' },
@@ -2751,6 +2758,9 @@ export default function AylikBeyanTakip() {
                               </button>
                               <button onClick={() => updateBeyanStatus(selectedClient.id, beyan, 'hazir')} className={`p-1 rounded-lg transition-colors ${beyan.status === 'hazir' ? 'bg-yellow-500/20 text-yellow-400' : 'text-gray-500 hover:text-yellow-400'}`} title="Hazir">
                                 <Clock className="w-4 h-4" />
+                              </button>
+                              <button onClick={() => updateBeyanStatus(selectedClient.id, beyan, 'dilekce')} className={`p-1 rounded-lg transition-colors ${beyan.status === 'dilekce' ? 'bg-teal-500/20 text-teal-400' : 'text-gray-500 hover:text-teal-400'}`} title="Dilekçe">
+                                <FileText className="w-4 h-4" />
                               </button>
                               <button onClick={() => updateBeyanStatus(selectedClient.id, beyan, 'onaylandi')} className={`p-1 rounded-lg transition-colors ${beyan.status === 'onaylandi' ? 'bg-green-500/20 text-green-400' : 'text-gray-500 hover:text-green-400'}`} title="Onaylandi">
                                 <FileCheck className="w-4 h-4" />

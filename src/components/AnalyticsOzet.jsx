@@ -70,11 +70,13 @@ export default function AnalyticsOzet({ gun = 30 }) {
       setVeri(null)
       setDurum(sonuc.reason === 'yapilandirilmadi' || sonuc.reason === 'yetki-yok' ? 'yapilandirilmadi' : 'hata')
       setHata(sonuc.error || '')
+      setApiKapali(sonuc.reason === 'api-kapali' ? { link: sonuc.link, api: sonuc.api } : null)
       // Rapor alinamadiysa baglanti durumunu tazele (mulk secimi gerekiyor olabilir)
       if (sonuc.reason === 'yapilandirilmadi' || sonuc.reason === 'yetki-yok') await baglantiSor()
       return
     }
     setVeri(sonuc)
+    setApiKapali(null)
     setDurum('hazir')
   }, [gun, baglantiSor])
 

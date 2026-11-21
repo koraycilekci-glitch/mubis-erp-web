@@ -166,7 +166,22 @@ export async function onRequestPost({ request, env }) {
     })
     const veri = await yanit.json()
     if (!yanit.ok) {
-      return json({ ok: false, reason: 'ga4-hatasi', error: veri?.error?.message || `HTTP ${yanit.status}` }, 200)
+      const ham = String(veri?.error?.message || `HTTP ${yanit.status}`)
+      // 2.8.357: API etkinlestirilmemis hatasini anlasilir Turkce mesaja cevir.
+      const apiKapali = /has not been used in project|it is disabled|accessNotConfigured|SERVICE_DISABLED/i.test(ham)
+      if (apiKapali) {
+        const proje = /project\s+(\d+)/i.exec(ham)?.[1] || ''
+        const apiAdi = /(analyticsdata|analyticsadmin)\.googleapis\.com/i.exec(ham)?.[0] || 'analyticsdata.googleapis.com'
+        return json({
+          ok: false,
+          reason: 'api-kapali',
+          api: apiAdi,
+          proje,
+          link: `https://console.developers.google.com/apis/api/${apiAdi}/overview${proje ? `?project=${proje}` : ''}`,
+          error: `Google Cloud projesinde ${apiAdi} kapalı. Aşağıdaki bağlantıdan "Etkinleştir" deyip 1-2 dakika sonra Yenile'ye basın.`
+        }, 200)
+      }
+      return json({ ok: false, reason: 'ga4-hatasi', error: ham }, 200)
     }
 
     const boyutAdlari = (veri.dimensionHeaders || []).map((h) => h.name)
@@ -179,7 +194,18 @@ export async function onRequestPost({ request, env }) {
     })
     const toplamlar = {}
     metrikAdlari.forEach((ad, i) => { toplamlar[ad] = Number(veri.totals?.[0]?.metricValues?.[i]?.value ?? 0) })
-
+    // 2.8.358: GA4, boyut (orn. date) verildiginde `totals` DONDURMEZ. Bu
+    // yuzden kartta hep 0 gorunuyordu. Toplam yoksa satirlardan hesaplanir.
+    // Not: activeUsers gunluk toplandiginda tekilleşmez (ust sinir) — bu
+    // yuzden "Aktif kullanıcı" icin max gunluk deger kullanilir.
+    if (!veri.totals?.length) {
+      for (const ad of metrikAdlari) {
+        const degerler = satirlar.map((s) => Number(s[ad]) || 0)
+        toplamlar[ad] = ad === 'activeUsers' && degerler.length
+          ? Math.max(...degerler)
+          : degerler.reduce((t, x) => t + x, 0)
+      }
+    }
     return json({ ok: true, boyutlar: boyutAdlari, metrikler: metrikAdlari, satirlar, toplamlar })
   } catch (e) {
     return json({ ok: false, reason: 'sunucu-hatasi', error: e?.message || String(e) }, 200)

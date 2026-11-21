@@ -1212,9 +1212,7 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* ═══════════════════════════════════════════ */}
-      {/* SITE İSTATİSTİKLERİ (Google Analytics 4) */}
-      {/* ═══════════════════════════════════════════ */}
+      {/* SITE İSTATİSTİKLERİ (Google Analytics 4) — ana ekranın en altında */}
       {['admin', 'super_admin'].includes(user?.role) && (
         <div className="mt-6">
           <AnalyticsOzet gun={30} />

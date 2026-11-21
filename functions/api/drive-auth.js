@@ -13,6 +13,23 @@ const STATE_KEY = 'google_drive_oauth_state'
 const TOKEN_KEY = 'google_drive_refresh_token'
 const SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive'
 
+// app_settings yardimcilari (GA4 anahtarlari)
+async function ayarGetir(admin, anahtar) {
+  try {
+    const { data } = await admin.from('app_settings').select('value').eq('office_id', 1).eq('key', anahtar).maybeSingle()
+    return data?.value || ''
+  } catch { return '' }
+}
+async function ayarYaz(admin, anahtar, deger) {
+  try {
+    await admin.from('app_settings').upsert(
+      { key: anahtar, value: String(deger ?? ''), updated_at: new Date().toISOString(), office_id: 1 },
+      { onConflict: 'office_id,key' }
+    )
+    return true
+  } catch { return false }
+}
+
 export async function onRequestOptions() {
   return new Response(null, { status: 204, headers: CORS })
 }
@@ -44,6 +61,72 @@ export async function onRequestGet({ request, env }) {
         kaynak: env?.GOOGLE_REFRESH_TOKEN ? 'env' : (data?.value ? 'app_settings' : 'yok'),
         hata: kadro.ok ? '' : kadro.hata,
       })
+    }
+
+    // ---------------- GA4 DURUM + MULK LISTESI ----------------
+    // Baglanti kurulmus mu, mulk secilmis mi? Secilmemisse erisilebilen
+    // mulkleri (olcum kimlikleriyle) listeler — kullanici listeden secer.
+    if (action === 'analytics-status') {
+      const kontrol = await dogrulaKullanici(request, env)
+      if (!kontrol.ok) return json({ ok: false, error: kontrol.hata }, kontrol.kod)
+      if (!['super_admin', 'admin'].includes(String(kontrol.profil?.role || ''))) {
+        return json({ ok: false, error: 'Bu islem icin yonetici yetkisi gerekir' }, 403)
+      }
+      const token = await ayarGetir(admin, 'ga4_refresh_token')
+      const mulk = await ayarGetir(admin, 'ga4_property_id')
+      const mulkAd = await ayarGetir(admin, 'ga4_property_name')
+      if (!token) return json({ ok: true, bagli: false, mulk: '', mulkAd: '', adaylar: [] })
+
+      // Token'i tazele
+      let access = ''
+      try {
+        const yanit = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: clientId || '',
+            client_secret: clientSecret || '',
+            refresh_token: token,
+            grant_type: 'refresh_token'
+          }).toString()
+        })
+        const j = await yanit.json().catch(() => ({}))
+        access = j.access_token || ''
+        if (!access) {
+          return json({
+            ok: true, bagli: false, mulk: '', mulkAd: '', adaylar: [],
+            hata: 'Analytics yetkisi gecersiz veya iptal edilmis: ' + (j.error_description || j.error || 'token alinamadi')
+          })
+        }
+      } catch { /* yoksay */ }
+
+      const hedefKimlik = String(env?.GA_MEASUREMENT_ID || 'G-JQY5VG50Z0').trim()
+      const adaylar = []
+      try {
+        const hdr = { Authorization: 'Bearer ' + access }
+        const ozet = await (await fetch('https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=200', { headers: hdr })).json().catch(() => ({}))
+        for (const hesap of (ozet.accountSummaries || [])) {
+          for (const p of (hesap.propertySummaries || [])) {
+            if (!p.property) continue
+            const id = p.property.replace('properties/', '')
+            const akislar = await (await fetch(`https://analyticsadmin.googleapis.com/v1beta/properties/${id}/dataStreams?pageSize=200`, { headers: hdr })).json().catch(() => ({}))
+            const kimlikler = (akislar.dataStreams || []).map(s => String(s.webStreamData?.measurementId || '')).filter(Boolean)
+            adaylar.push({ id, ad: p.displayName || '', hesap: hesap.displayName || '', kimlikler, eslesir: kimlikler.includes(hedefKimlik) })
+          }
+        }
+      } catch (e) {
+        return json({ ok: true, bagli: true, mulk, mulkAd, adaylar: [], hata: e?.message || 'Mulkler okunamadi' })
+      }
+      // Otomatik secim: olcum kimligi eslesen mulk
+      if (!mulk) {
+        const eslesen = adaylar.find(a => a.eslesir)
+        if (eslesen) {
+          await ayarYaz(admin, 'ga4_property_id', eslesen.id)
+          await ayarYaz(admin, 'ga4_property_name', eslesen.ad)
+          return json({ ok: true, bagli: true, mulk: eslesen.id, mulkAd: eslesen.ad, adaylar, otomatik: true })
+        }
+      }
+      return json({ ok: true, bagli: true, mulk, mulkAd, adaylar })
     }
 
     // ---------------- OAUTH BASLAT ----------------
@@ -85,7 +168,10 @@ export async function onRequestGet({ request, env }) {
     if (action === 'analytics-start') {
       const kontrol = await dogrulaKullanici(request, env)
       if (!kontrol.ok) return json({ ok: false, error: kontrol.hata }, kontrol.kod)
-      if (kontrol.profil?.role !== 'super_admin') return json({ ok: false, error: 'Bu islem icin sistem yoneticisi yetkisi gerekir' }, 403)
+      // Ofis yoneticisi de baglayabilir (salt okunur izin).
+      if (!['super_admin', 'admin'].includes(String(kontrol.profil?.role || ''))) {
+        return json({ ok: false, error: 'Bu islem icin yonetici yetkisi gerekir' }, 403)
+      }
       if (!clientId || !clientSecret || !redirectUri) {
         return json({ ok: false, error: 'GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET ve GOOGLE_REDIRECT_URI tanimli olmali.' }, 500)
       }
@@ -222,12 +308,30 @@ export async function onRequestPost({ request, env }) {
 
   const kontrol = await dogrulaKullanici(request, env)
   if (!kontrol.ok) return json({ ok: false, error: kontrol.hata }, kontrol.kod)
-  if (kontrol.profil?.role !== 'super_admin') {
-    return json({ ok: false, error: 'Bu islem icin sistem yoneticisi yetkisi gerekir' }, 403)
-  }
+  const yonetici = ['super_admin', 'admin'].includes(String(kontrol.profil?.role || ''))
 
   try {
     const body = await request.json().catch(() => ({}))
+
+    // GA4: mulk secimi / baglantiyi kaldirma (yonetici)
+    if (body?.action === 'analytics-property') {
+      if (!yonetici) return json({ ok: false, error: 'Bu islem icin yonetici yetkisi gerekir' }, 403)
+      const id = String(body.mulk || '').replace(/^properties\//, '').trim()
+      if (!/^\d{4,20}$/.test(id)) return json({ ok: false, error: 'Gecersiz mulk numarasi' }, 400)
+      const ok1 = await ayarYaz(admin, 'ga4_property_id', id)
+      const ok2 = await ayarYaz(admin, 'ga4_property_name', String(body.ad || '').slice(0, 200))
+      if (!ok1) return json({ ok: false, error: 'Mulk numarasi kaydedilemedi' }, 503)
+      return json({ ok: true, mulk: id })
+    }
+    if (body?.action === 'analytics-disconnect') {
+      if (!yonetici) return json({ ok: false, error: 'Bu islem icin yonetici yetkisi gerekir' }, 403)
+      await admin.from('app_settings').delete().eq('office_id', 1).in('key', ['ga4_refresh_token', 'ga4_property_id', 'ga4_property_name'])
+      return json({ ok: true, mesaj: 'Analytics baglantisi kaldirildi.' })
+    }
+
+    if (kontrol.profil?.role !== 'super_admin') {
+      return json({ ok: false, error: 'Bu islem icin sistem yoneticisi yetkisi gerekir' }, 403)
+    }
     if (body?.action !== 'disconnect') {
       return json({ ok: false, error: "action 'disconnect' bekleniyor" }, 400)
     }

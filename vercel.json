@@ -1,5 +1,8 @@
 {
   "rewrites": [
+    { "source": "/api/paytr-iframe", "destination": "/api/payment?provider=paytr-iframe" },
+    { "source": "/api/paytr-payment", "destination": "/api/payment?provider=paytr-payment" },
+    { "source": "/api/odeal-payment", "destination": "/api/payment?provider=odeal-payment" },
     { "source": "/api/tuik-kira", "destination": "/api/external-proxy?route=tuik-kira" },
     { "source": "/api/guncel-parametreler", "destination": "/api/external-proxy?route=guncel-parametreler" },
     { "source": "/api/odeme-hatirlatma", "destination": "/api/external-proxy?route=odeme-hatirlatma" },
@@ -38,6 +41,9 @@
       "maxDuration": 30
     },
     "api/external-proxy.js": {
+      "maxDuration": 30
+    },
+    "api/payment.js": {
       "maxDuration": 30
     }
   }

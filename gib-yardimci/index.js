@@ -34637,7 +34637,17 @@ if (protokolUrl) {
       }
       if (err.code === "EADDRINUSE") process.exit(0);
     });
-    server.listen(PORT, "127.0.0.1", () => {
+    // Uzun suren islerde (Luca girisi, CAPTCHA, fatura sorgusu) baglanti
+  // kopmasin: Node varsayilan keepAliveTimeout 5 sn'dir ve uzun isteklerde
+  // "bosta tutulacagi beklenen baglanti kapatildi" hatasi olusur.
+  try {
+    server.keepAliveTimeout = 65 * 60 * 1000;
+    server.headersTimeout = 66 * 60 * 1000;
+    server.requestTimeout = 0;
+    server.timeout = 65 * 60 * 1000;
+  } catch (e) {
+  }
+  server.listen(PORT, "127.0.0.1", () => {
       console.log("==========================================");
       console.log("MUBiS GIB Yardimci SUNUCU MODU");
       console.log("Port: " + PORT + " (127.0.0.1)");
@@ -34758,6 +34768,14 @@ if (protokolUrl) {
       }
       if (err.code === "EADDRINUSE") process.exit(0);
     });
+    // Uzun suren islerde baglanti kopmasin (Node varsayilan keepAliveTimeout 5 sn).
+    try {
+      server.keepAliveTimeout = 65 * 60 * 1000;
+      server.headersTimeout = 66 * 60 * 1000;
+      server.requestTimeout = 0;
+      server.timeout = 65 * 60 * 1000;
+    } catch (e) {
+    }
     server.listen(PORT, "127.0.0.1", () => {
       try {
         console.log("==========================================");

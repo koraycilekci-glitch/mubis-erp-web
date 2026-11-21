@@ -24,11 +24,15 @@
       <button class="menu-oge" data-sayfa="mukellef"><span class="ikon">☰</span> Mükellef Bilgileri</button>
       <button class="menu-oge" data-sayfa="luca"><span class="ikon">◈</span> Luca</button>
       <button class="menu-oge" data-sayfa="fatura"><span class="ikon">▦</span> Fatura Sorgulama</button>
+      <button class="menu-oge" data-sayfa="efatura"><span class="ikon">✎</span> Fatura Doldurma</button>
       <button class="menu-oge" data-sayfa="beyan"><span class="ikon">▧</span> Beyanname İndirme</button>
+      <button class="menu-oge" data-sayfa="defterbeyan"><span class="ikon">▤</span> Defter Beyan</button>
       <button class="menu-oge" data-sayfa="borc"><span class="ikon">₺</span> Borç Sorgulama</button>
+      <button class="menu-oge" data-sayfa="odeme"><span class="ikon">₺</span> Ödeme</button>
       <button class="menu-oge" data-sayfa="dvs"><span class="ikon">▩</span> POS / KDV</button>
       <button class="menu-oge" data-sayfa="tebligat"><span class="ikon">✉</span> e-Tebligat</button>
       <button class="menu-oge" data-sayfa="fis"><span class="ikon">✂</span> Fiş İşlemleri</button>
+      <button class="menu-oge" data-sayfa="gonderim"><span class="ikon">➤</span> Gönderim</button>
       <button class="menu-oge" data-sayfa="ayarlar"><span class="ikon">⚙</span> Ayarlar</button>
       <button class="menu-oge" data-sayfa="log"><span class="ikon">≡</span> Log</button>
     </nav>
@@ -148,6 +152,222 @@
         </div>
         <p class="ipucu" id="mukOzet"></p>
       </div>
+    </section>
+
+    <!-- --------------------------- E-FATURA DOLDURMA -------------------- -->
+    <section class="sayfa" id="sayfa-efatura">
+      <h1>Fatura Doldurma</h1>
+
+      <div class="kart">
+        <h2>Kaynak</h2>
+        <div class="form">
+          <label><span>İşlem</span>
+            <select id="efIs">
+              <option value="efatura-fatura-doldur">e-Fatura doldur</option>
+              <option value="earsiv-fatura-doldur">e-Arşiv fatura doldur</option>
+              <option value="esmm-makbuz-doldur">e-SMM makbuz doldur</option>
+              <option value="eb-arsiv-listele">e-Arşiv belgelerini listele</option>
+            </select>
+          </label>
+          <label><span>GİB kullanıcı kodu</span><input id="efKullanici" type="text" autocomplete="off" /></label>
+          <label><span>GİB parola</span><input id="efParola" type="password" autocomplete="off" /></label>
+          <label><span>Tarih (gg/aa/yyyy)</span><input id="efTarih" type="text" placeholder="boş = bugün" autocomplete="off" /></label>
+        </div>
+      </div>
+
+      <div class="kart">
+        <h2>Fatura bilgileri</h2>
+        <p class="ipucu ust-bosluk">Boş bıraktığınız alanlar Luca/GİB ekranından okunur. Doldurulan alanlar forma yazılır.</p>
+        <div class="form">
+          <label><span>Alıcı VKN / TCKN</span><input id="efVkn" type="text" autocomplete="off" /></label>
+          <label><span>Alıcı unvanı</span><input id="efUnvan" type="text" autocomplete="off" /></label>
+          <label><span>Fatura tarihi (gg/aa/yyyy)</span><input id="efFTarih" type="text" autocomplete="off" /></label>
+          <label><span>Fatura no</span><input id="efFno" type="text" autocomplete="off" /></label>
+          <label><span>Mal / hizmet</span><input id="efMal" type="text" placeholder="açıklama" autocomplete="off" /></label>
+          <label><span>Miktar</span><input id="efMiktar" type="text" placeholder="1" autocomplete="off" /></label>
+          <label><span>Birim fiyat</span><input id="efFiyat" type="text" autocomplete="off" /></label>
+          <label><span>KDV oranı (%)</span>
+            <select id="efKdv">
+              <option value="">Seçiniz</option>
+              <option value="0">0</option><option value="1">1</option><option value="8">8</option>
+              <option value="10">10</option><option value="18">18</option><option value="20">20</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="kart">
+        <h2>e-İmza / mali mühür</h2>
+        <div class="form">
+          <label><span>Kart tipi</span>
+            <select id="efKartTipi">
+              <option value="">Seçiniz</option>
+              <option value="AKIS">AKİS</option>
+              <option value="AKS">AKS</option>
+              <option value="EID">e-ID</option>
+              <option value="SAFESIGN">SafeSign</option>
+            </select>
+          </label>
+          <label><span>PIN</span><input id="efPin" type="password" autocomplete="off" /></label>
+        </div>
+        <div class="dugme-grubu ust-bosluk">
+          <button id="efBtn" class="dugme dugme-ana">Doldur</button>
+          <span id="efMesaj" class="mesaj"></span>
+        </div>
+        <p class="ipucu">Doldurma sonrası GİB ekranı açık kalır; <strong>Oluştur</strong> düğmesine siz basarsınız. Hiçbir fatura otomatik onaylanmaz.</p>
+      </div>
+
+      <div class="kart"><h2>Sonuç</h2><div id="efSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
+    </section>
+
+    <!-- --------------------------- DEFTER BEYAN ------------------------ -->
+    <section class="sayfa" id="sayfa-defterbeyan">
+      <h1>Defter Beyan</h1>
+
+      <div class="kart">
+        <h2>Giriş</h2>
+        <div class="form">
+          <label><span>Kullanıcı kodu</span><input id="dbKullanici" type="text" autocomplete="off" /></label>
+          <label><span>Parola</span><input id="dbParola" type="password" autocomplete="off" /></label>
+          <label><span>VKN / TCKN (mükellef)</span><input id="dbVkn" type="text" autocomplete="off" /></label>
+        </div>
+        <div class="dugme-grubu ust-bosluk">
+          <button id="dbGirisBtn" class="dugme dugme-ana">Defter Beyan'a gir</button>
+          <span id="dbMesaj" class="mesaj"></span>
+        </div>
+      </div>
+
+      <div class="kart">
+        <h2>Hesap özeti</h2>
+        <div class="form">
+          <label><span>Başlangıç (gg/aa/yyyy)</span><input id="dbBas" type="text" autocomplete="off" /></label>
+          <label><span>Bitiş (gg/aa/yyyy)</span><input id="dbBit" type="text" autocomplete="off" /></label>
+        </div>
+        <div class="dugme-grubu ust-bosluk">
+          <button id="dbOzetBtn" class="dugme">Hesap özetini oku</button>
+          <button id="dbGeciciBtn" class="dugme">Geçici vergi oku</button>
+          <button id="dbOrtaklikBtn" class="dugme">Ortaklık beyanları</button>
+          <button id="dbDonemSonuBtn" class="dugme dugme-tehlike">Dönem sonu gönder</button>
+        </div>
+      </div>
+
+      <div class="kart">
+        <h2>Dönem</h2>
+        <div class="form">
+          <label><span>Yıl</span><input id="dbYil" type="text" inputmode="numeric" /></label>
+          <label><span>Dönem ayı</span>
+            <select id="dbAy">
+              <option value="1">Ocak</option><option value="2">Şubat</option><option value="3">Mart</option>
+              <option value="4">Nisan</option><option value="5">Mayıs</option><option value="6">Haziran</option>
+              <option value="7">Temmuz</option><option value="8">Ağustos</option><option value="9">Eylül</option>
+              <option value="10">Ekim</option><option value="11">Kasım</option><option value="12">Aralık</option>
+            </select>
+          </label>
+          <label><span>Ortaklık VKN'leri (virgülle)</span><input id="dbVknler" type="text" placeholder="1234567890, 9876543210" autocomplete="off" /></label>
+        </div>
+      </div>
+
+      <div class="kart"><h2>Sonuç</h2><div id="dbSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
+    </section>
+
+    <!-- ------------------------------ ÖDEME ---------------------------- -->
+    <section class="sayfa" id="sayfa-odeme">
+      <h1>Ödeme</h1>
+
+      <div class="kart">
+        <h2>GİB vergi ödemesi</h2>
+        <div class="form">
+          <label><span>Kullanıcı kodu</span><input id="odKullanici" type="text" autocomplete="off" /></label>
+          <label><span>Parola</span><input id="odParola" type="password" autocomplete="off" /></label>
+          <label><span>Yıl</span><input id="odYil" type="text" inputmode="numeric" /></label>
+          <label><span>Ay</span>
+            <select id="odAy">
+              <option value="1">Ocak</option><option value="2">Şubat</option><option value="3">Mart</option>
+              <option value="4">Nisan</option><option value="5">Mayıs</option><option value="6">Haziran</option>
+              <option value="7">Temmuz</option><option value="8">Ağustos</option><option value="9">Eylül</option>
+              <option value="10">Ekim</option><option value="11">Kasım</option><option value="12">Aralık</option>
+            </select>
+          </label>
+          <div class="form-alt">
+            <button id="gibOdemeBtn" class="dugme dugme-ana">Ödeme ekranını aç</button>
+            <span id="odMesaj" class="mesaj"></span>
+          </div>
+        </div>
+        <p class="ipucu">Ödeme ekranı açılır; kredi kartı/hesap bilgilerini siz girersiniz. Program ödeme yapmaz.</p>
+      </div>
+
+      <div class="kart">
+        <h2>Tecilli / belge numarası ile ödeme</h2>
+        <div class="form">
+          <label><span>VKN</span><input id="tecVkn" type="text" autocomplete="off" /></label>
+          <label><span>Belge no</span><input id="tecBelge" type="text" autocomplete="off" /></label>
+          <label><span>Tahakkuk no</span><input id="tecTahakkuk" type="text" autocomplete="off" /></label>
+          <label><span>İl</span><input id="tecIl" type="text" autocomplete="off" /></label>
+          <label><span>Vergi dairesi</span><input id="tecVd" type="text" autocomplete="off" /></label>
+          <div class="form-alt">
+            <button id="tecOdemeBtn" class="dugme">Ödeme ekranını aç</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="kart">
+        <h2>SGK ödemesi</h2>
+        <div class="form">
+          <label><span>SGK kullanıcı adı</span><input id="odSgkKullanici" type="text" autocomplete="off" /></label>
+          <label><span>İşyeri kodu</span><input id="odSgkIsyeri" type="text" autocomplete="off" /></label>
+          <label><span>Sistem şifresi</span><input id="odSgkSistem" type="password" autocomplete="off" /></label>
+          <label><span>İşyeri şifresi</span><input id="odSgkIsyeriSifre" type="password" autocomplete="off" /></label>
+        </div>
+        <div class="dugme-grubu ust-bosluk">
+          <button id="sgkOdemeBtn" class="dugme dugme-ana">SGK ödeme ekranını aç</button>
+        </div>
+      </div>
+
+      <div class="kart"><h2>Sonuç</h2><div id="odSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
+    </section>
+
+    <!-- ----------------------------- GÖNDERİM -------------------------- -->
+    <section class="sayfa" id="sayfa-gonderim">
+      <h1>Gönderim</h1>
+
+      <div class="kart">
+        <h2>WhatsApp</h2>
+        <div class="form">
+          <label><span>Telefon</span><input id="waTelefon" type="text" placeholder="05xxxxxxxxx" autocomplete="off" /></label>
+          <label><span>Yöntem</span>
+            <select id="waYontem">
+              <option value="whatsapp-web-gonder">WhatsApp Web (tarayıcı)</option>
+              <option value="whatsapp-desktop-gonder">WhatsApp Desktop</option>
+            </select>
+          </label>
+          <label class="genis"><span>Mesaj</span><textarea id="waMesaj" rows="5" placeholder="Gönderilecek mesaj..."></textarea></label>
+          <div class="form-alt">
+            <button id="waBtn" class="dugme dugme-ana">WhatsApp ile gönder</button>
+            <span id="waMesajDurum" class="mesaj"></span>
+          </div>
+        </div>
+        <p class="ipucu">WhatsApp Web için tarayıcıda oturum açık olmalıdır. Mesaj gönderilmeden önce ekranda kontrol edin.</p>
+      </div>
+
+      <div class="kart">
+        <h2>E-posta</h2>
+        <div class="form">
+          <label><span>SMTP sunucu</span><input id="mailHost" type="text" placeholder="smtp.gmail.com" autocomplete="off" /></label>
+          <label><span>Port</span><input id="mailPort" type="text" placeholder="465" autocomplete="off" /></label>
+          <label><span>Kullanıcı</span><input id="mailUser" type="text" autocomplete="off" /></label>
+          <label><span>Parola</span><input id="mailPass" type="password" autocomplete="off" /></label>
+          <label><span>Gönderen</span><input id="mailFrom" type="text" placeholder="adres@alan.com" autocomplete="off" /></label>
+          <label><span>Alıcı</span><input id="mailTo" type="text" placeholder="alici@alan.com" autocomplete="off" /></label>
+          <label class="genis"><span>Konu</span><input id="mailKonu" type="text" autocomplete="off" /></label>
+          <label class="genis"><span>Mesaj</span><textarea id="mailMesaj" rows="5" placeholder="E-posta içeriği..."></textarea></label>
+          <div class="form-alt">
+            <button id="mailBtn" class="dugme dugme-ana">E-posta gönder</button>
+            <span id="mailDurum" class="mesaj"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="kart"><h2>Sonuç</h2><div id="gonderimSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
     </section>
 
     <!-- ------------------------------ LUCA ----------------------------- -->

@@ -500,6 +500,147 @@ $('mukKopyaBtn').addEventListener('click', async () => {
   }
 })
 
+// ------------------------------------------------------- FATURA DOLDURMA
+
+function efFatura() {
+  const f = {}
+  const koy = (k, v) => { if (String(v || '').trim()) f[k] = String(v).trim() }
+  koy('vkn', $('efVkn').value)
+  koy('unvan', $('efUnvan').value)
+  koy('tarih', $('efFTarih').value)
+  koy('faturaNo', $('efFno').value)
+  koy('malHizmet', $('efMal').value)
+  koy('miktar', $('efMiktar').value)
+  koy('birimFiyat', $('efFiyat').value)
+  koy('kdvOrani', $('efKdv').value)
+  return f
+}
+
+$('efBtn').addEventListener('click', async () => {
+  const is = $('efIs').value
+  const p = {
+    kullaniciKodu: $('efKullanici').value.trim(),
+    parola: $('efParola').value.trim(),
+    tarih1: $('efTarih').value.trim() || null,
+    fatura: efFatura(),
+    kartTipi: $('efKartTipi').value || undefined,
+    pin: $('efPin').value || undefined
+  }
+  await isCalistir(is, p, {
+    btn: $('efBtn'), mesajId: 'efMesaj', sonucId: 'efSonuc', beklemeMetni: 'GİB ekranı hazırlanıyor…'
+  })
+})
+
+// ----------------------------------------------------------- DEFTER BEYAN
+
+function dbGirisParametreleri() {
+  return {
+    kullaniciKodu: $('dbKullanici').value.trim(),
+    kullanici: $('dbKullanici').value.trim(),
+    parola: $('dbParola').value.trim(),
+    vkn: $('dbVkn').value.trim(),
+    baslangic: $('dbBas').value.trim() || undefined,
+    bitis: $('dbBit').value.trim() || undefined
+  }
+}
+
+$('dbGirisBtn').addEventListener('click', async () => {
+  await isCalistir('defterbeyan-giris', dbGirisParametreleri(), {
+    btn: $('dbGirisBtn'), mesajId: 'dbMesaj', sonucId: 'dbSonuc', beklemeMetni: 'Defter Beyan açılıyor…'
+  })
+})
+
+$('dbOzetBtn').addEventListener('click', async () => {
+  await isCalistir('defterbeyan-hesap-ozeti', dbGirisParametreleri(), {
+    btn: $('dbOzetBtn'), mesajId: 'dbMesaj', sonucId: 'dbSonuc', beklemeMetni: 'Hesap özeti okunuyor…'
+  })
+})
+
+$('dbGeciciBtn').addEventListener('click', async () => {
+  await isCalistir('defterbeyan-gecici-vergi', {
+    yil: ($('dbYil').value || String(bugun.getFullYear())).trim(),
+    donemAy: Number($('dbAy').value)
+  }, { btn: $('dbGeciciBtn'), mesajId: 'dbMesaj', sonucId: 'dbSonuc', beklemeMetni: 'Geçici vergi okunuyor…' })
+})
+
+$('dbOrtaklikBtn').addEventListener('click', async () => {
+  const vknler = $('dbVknler').value.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean)
+  if (!vknler.length) { mesaj('dbMesaj', 'Ortaklık VKN listesi girin.', 'hatali'); return }
+  await isCalistir('defterbeyan-ortaklik-beyanlari', {
+    vknler,
+    yil: ($('dbYil').value || String(bugun.getFullYear())).trim(),
+    donemAy: Number($('dbAy').value)
+  }, { btn: $('dbOrtaklikBtn'), mesajId: 'dbMesaj', sonucId: 'dbSonuc', beklemeMetni: 'Ortaklık beyanları okunuyor…' })
+})
+
+$('dbDonemSonuBtn').addEventListener('click', async () => {
+  if (!confirm('Dönem sonu işlemi GÖNDERİLECEK. Bu işlem geri alınamaz.\n\nDevam edilsin mi?')) return
+  await isCalistir('defterbeyan-donem-sonu-gonder', {
+    donemSonu: { yil: ($('dbYil').value || String(bugun.getFullYear())).trim(), ay: Number($('dbAy').value) }
+  }, { btn: $('dbDonemSonuBtn'), mesajId: 'dbMesaj', sonucId: 'dbSonuc', beklemeMetni: 'Gönderiliyor…' })
+})
+
+// ------------------------------------------------------------------ ÖDEME
+
+$('gibOdemeBtn').addEventListener('click', async () => {
+  await isCalistir('gib-odeme', {
+    kullaniciKodu: $('odKullanici').value.trim(),
+    parola: $('odParola').value.trim(),
+    yil: ($('odYil').value || String(bugun.getFullYear())).trim(),
+    ay: Number($('odAy').value)
+  }, { btn: $('gibOdemeBtn'), mesajId: 'odMesaj', sonucId: 'odSonuc', beklemeMetni: 'Ödeme ekranı açılıyor…' })
+})
+
+$('tecOdemeBtn').addEventListener('click', async () => {
+  await isCalistir('tecilli-odeme', {
+    vkn: $('tecVkn').value.trim(),
+    belgeNo: $('tecBelge').value.trim(),
+    tahakkukNo: $('tecTahakkuk').value.trim(),
+    il: $('tecIl').value.trim(),
+    vergiDairesi: $('tecVd').value.trim()
+  }, { btn: $('tecOdemeBtn'), mesajId: 'odMesaj', sonucId: 'odSonuc', beklemeMetni: 'Ödeme ekranı açılıyor…' })
+})
+
+$('sgkOdemeBtn').addEventListener('click', async () => {
+  await isCalistir('sgk-odeme', {
+    kullaniciAdi: $('odSgkKullanici').value.trim(),
+    isyeriKodu: $('odSgkIsyeri').value.trim(),
+    sistemSifre: $('odSgkSistem').value,
+    isyeriSifre: $('odSgkIsyeriSifre').value
+  }, { btn: $('sgkOdemeBtn'), mesajId: 'odMesaj', sonucId: 'odSonuc', beklemeMetni: 'SGK ödeme ekranı açılıyor…' })
+})
+
+// -------------------------------------------------------------- GÖNDERİM
+
+$('waBtn').addEventListener('click', async () => {
+  const tel = $('waTelefon').value.trim()
+  const msg = $('waMesaj').value
+  if (!tel) { mesaj('waMesajDurum', 'Telefon numarası girin.', 'hatali'); return }
+  if (!msg.trim()) { mesaj('waMesajDurum', 'Mesaj boş.', 'hatali'); return }
+  if (!confirm('WhatsApp mesajı gönderilecek:\n\n' + tel + '\n\nDevam edilsin mi?')) return
+  await isCalistir($('waYontem').value, {
+    telefon: tel, phone: tel, mesaj: msg, message: msg
+  }, { btn: $('waBtn'), mesajId: 'waMesajDurum', sonucId: 'gonderimSonuc', beklemeMetni: 'Gönderiliyor…' })
+})
+
+$('mailBtn').addEventListener('click', async () => {
+  const p = {
+    host: $('mailHost').value.trim(),
+    port: Number($('mailPort').value) || 465,
+    user: $('mailUser').value.trim(),
+    pass: $('mailPass').value,
+    from: $('mailFrom').value.trim(),
+    to: $('mailTo').value.trim(),
+    subject: $('mailKonu').value.trim(),
+    mesaj: $('mailMesaj').value
+  }
+  if (!p.host || !p.user || !p.to) { mesaj('mailDurum', 'Sunucu, kullanıcı ve alıcı zorunludur.', 'hatali'); return }
+  if (!confirm('E-posta gönderilecek: ' + p.to + '\n\nDevam edilsin mi?')) return
+  await isCalistir('mail-gonder', p, {
+    btn: $('mailBtn'), mesajId: 'mailDurum', sonucId: 'gonderimSonuc', beklemeMetni: 'Gönderiliyor…'
+  })
+})
+
 // ---------------------------------------------------------------- AYARLAR
 
 async function ayarlariDoldur() {
@@ -537,11 +678,17 @@ $('ayarKaydetBtn').addEventListener('click', async () => {
 
 function varsayilanlariDoldur() {
   const yil = String(bugun.getFullYear())
-  for (const id of ['lucaYil', 'fatYil', 'fisYil', 'dvsYil', 'mukYil']) {
+  for (const id of ['lucaYil', 'fatYil', 'fisYil', 'dvsYil', 'mukYil', 'dbYil', 'odYil']) {
     if ($(id) && !$(id).value) $(id).value = yil
   }
   if ($('fatAy') && !$('fatAy').value) $('fatAy').value = String(bugun.getMonth() + 1)
   if ($('dvsAy')) $('dvsAy').value = String(bugun.getMonth() + 1)
+  if ($('dbAy')) $('dbAy').value = String(bugun.getMonth() + 1)
+  if ($('odAy')) $('odAy').value = String(bugun.getMonth() + 1)
+  // Donem baslangic/bitis varsayilanlari (yil basi / bugun)
+  const iki = (n) => String(n).padStart(2, '0')
+  if ($('dbBas') && !$('dbBas').value) $('dbBas').value = '01/01/' + yil
+  if ($('dbBit') && !$('dbBit').value) $('dbBit').value = iki(bugun.getDate()) + '/' + iki(bugun.getMonth() + 1) + '/' + yil
 }
 
 window.mubis.durumDinle((d) => ekranaYaz(d))

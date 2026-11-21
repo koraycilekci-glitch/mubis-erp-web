@@ -121,13 +121,21 @@ function motoruHazirla() {
 
 function httpIstek(yol, secenek = {}) {
   return new Promise((resolve) => {
+    // 2.8.360: KRITIK. Motorun HTTP sunucusu Node varsayilan
+    // keepAliveTimeout (5 sn) kullanir. Uzun suren islerde (Luca girisi,
+    // CAPTCHA, fatura sorgusu) baglanti 5 sn sonra SUNUCU tarafindan kapaniyor
+    // ve "bosta tutulacagi beklenen baglanti kapatildi" hatasi aliniyordu.
+    // agent:false + Connection:close ile her istek TEK kullanimlik baglanti
+    // acar; boylece islem kac dakika surerse sursun baglanti kopmaz.
+    const basliklar = Object.assign({ Connection: 'close' }, secenek.headers || {})
     const istek = http.request({
       hostname: '127.0.0.1',
       port: PORT,
       path: yol,
       method: secenek.method || 'GET',
       timeout: secenek.timeout || 2500,
-      headers: secenek.headers || {}
+      agent: false,
+      headers: basliklar
     }, (yanit) => {
       let govde = ''
       yanit.setEncoding('utf8')
@@ -455,12 +463,17 @@ ipcMain.handle('log-ac', async () => {
 // bu isleri tetikleyebilir).
 const IZINLI_ISLER = [
   'luca-giris', 'luca-oturumu-kapat', 'luca-firmalar-getir',
-  'efatura-sorgula', 'earsiv-fatura-sorgula', 'efatura-gib-sorgula',
+  'efatura-sorgula', 'earsiv-fatura-sorgula', 'efatura-gib-sorgula', 'eb-arsiv-listele',
   'beyanname-indir', 'tahakkuk-indir', 'makbuz-indir', 'eb-beyanname-indir', 'eb-tahakkuk-indir',
+  'beyanname-sorgula', 'beyanname-gecici-oku',
   'gib-borc-sorgula', 'sgk-borc-sorgula', 'sgk-vizite-sorgula', 'sgk-rapor-dokumu',
   'etebligat', 'etebligat-indir',
   'dvs-sorgula',
   'gib-odeme', 'tecilli-odeme', 'sgk-odeme',
+  'defterbeyan-giris', 'defterbeyan-hesap-ozeti', 'defterbeyan-donem-sonu-gonder',
+  'defterbeyan-gecici-vergi', 'defterbeyan-ortaklik-beyanlari',
+  'earsiv-fatura-doldur', 'efatura-fatura-doldur', 'esmm-makbuz-doldur',
+  'whatsapp-web-gonder', 'whatsapp-desktop-gonder', 'mail-gonder',
   'toplu-belge-duzenle', 'fis-tarama', 'fis-bol',
   'edefter-kopyala', 'luca-hesap-ekle'
 ]

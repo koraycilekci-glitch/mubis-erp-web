@@ -1,0 +1,56 @@
+MUBiS Masaüstü Otomasyon 1.0.0
+================================
+
+KURULUM
+-------
+1) "MUBiS Masaustu Otomasyon Setup 1.0.0.exe" dosyasını çalıştırın.
+2) Kurulum klasörünü değiştirebilirsiniz. Masaüstü ve Başlat menüsü kısayolları
+   otomatik oluşturulur.
+3) Kurulumdan sonra program açılır; yerel giriş şifresi İSTEMEZ, doğrudan ana
+   ekrana gelir.
+
+İLK AYARLAR
+-----------
+- "Luca bağlantısı" bölümüne kendi Luca Üye numaranızı, Kullanıcı Adınızı ve
+  Parolanızı girin ve Kaydet'e basın. Bu bilgiler yalnızca bu bilgisayarda
+  saklanır.
+- Otomasyon için bilgisayarda Google Chrome veya Microsoft Edge kurulu
+  olmalıdır. Ekranda "Tarayıcı: Bulundu" yazıyorsanız hazırsınız.
+- "Motor çalışıyor" yazması gerekir. Kapatırsanız MUBiS'teki otomasyon işlemleri
+  çalışmaz.
+
+KULLANIM
+--------
+- Program arka planda çalışır; saatin yanındaki MUBiS simgesinden açıp
+  kapatabilirsiniz. Pencereyi kapatmak programı kapatmaz, tepsiye küçültür.
+- "Windows açılışında başlat" seçeneği varsayılan olarak kapalıdır; isterseniz
+  açabilirsiniz.
+- Gelişmiş ayarlar (2Captcha anahtarı, Drive anahtarı, tanılama) MUBiS web
+  programının Ayarlar > Yardımcı bölümünden veya "Gelişmiş ayarlar"
+  düğmesinden yapılır.
+- Motor güncellemesi: Yeni sürüm kurulduğunda motor otomatik tazelenir;
+  kayıtlı Luca bilgileri ve ayarlar korunur.
+
+DOSYALAR
+--------
+- Program klasörü: %LOCALAPPDATA%\MUBiS\MasaustuOtomasyon
+  (motor, config.json, otomasyon.log)
+- Log dosyası: ana ekrandaki "Log dosyasını aç" düğmesi
+
+NOTLAR
+------
+- Bu sürümde lisans kodu doğrulaması YOKTUR.
+- Luca girişinde güvenlik kodu (CAPTCHA) çıkarsa 2Captcha anahtarı
+  tanımlanmamışsa kodu kullanıcı girer.
+- Otomatik işlemler Luca ve GİB kurallarına tabidir; bölünemeyen fişler gibi
+  durumlarda program nedenini ekranda gösterir.
+- Aynı bilgisayarda birden fazla kopya çalıştırılamaz (tek örnek kilidi).
+
+SÜRÜM NOTU (1.0.0)
+------------------
+- MUBiS Masaüstü Otomasyon ilk sürüm.
+- Otomasyon motoru: mevcut MUBiS yardımcı motoru (toplu belge düzenleme,
+  fiş tarama, toplu fiş böl, e-Fatura/e-Arşiv sorgulama, e-Beyanname, KDV
+  dökümleri, POS hasılatı, e-Tebligat).
+- Arayüz: motor durumu, Luca bağlantı bilgileri, hızlı erişim, canlı log,
+  sistem tepsisi, Windows açılışında başlatma.

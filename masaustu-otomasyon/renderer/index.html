@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>MUBiS Masaüstü Otomasyon</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="uygulama">
+
+  <!-- ============================ SOL MENÜ ============================ -->
+  <aside class="yan">
+    <div class="yan-marka">
+      <img src="../../assets/logo-icon.png" alt="" />
+      <div>
+        <strong>MUBiS</strong>
+        <span>Masaüstü Otomasyon</span>
+      </div>
+    </div>
+
+    <nav class="menu">
+      <button class="menu-oge aktif" data-sayfa="ana"><span class="ikon">▤</span> Ana Ekran</button>
+      <button class="menu-oge" data-sayfa="mukellef"><span class="ikon">☰</span> Mükellef Bilgileri</button>
+      <button class="menu-oge" data-sayfa="luca"><span class="ikon">◈</span> Luca</button>
+      <button class="menu-oge" data-sayfa="fatura"><span class="ikon">▦</span> Fatura Sorgulama</button>
+      <button class="menu-oge" data-sayfa="beyan"><span class="ikon">▧</span> Beyanname İndirme</button>
+      <button class="menu-oge" data-sayfa="borc"><span class="ikon">₺</span> Borç Sorgulama</button>
+      <button class="menu-oge" data-sayfa="dvs"><span class="ikon">▩</span> POS / KDV</button>
+      <button class="menu-oge" data-sayfa="tebligat"><span class="ikon">✉</span> e-Tebligat</button>
+      <button class="menu-oge" data-sayfa="fis"><span class="ikon">✂</span> Fiş İşlemleri</button>
+      <button class="menu-oge" data-sayfa="ayarlar"><span class="ikon">⚙</span> Ayarlar</button>
+      <button class="menu-oge" data-sayfa="log"><span class="ikon">≡</span> Log</button>
+    </nav>
+
+    <div class="yan-alt">
+      <span id="rozet" class="rozet rozet-kapali"><span class="nokta"></span> Motor kapalı</span>
+      <button id="gizleBtn" class="mini">Tepsiye küçült</button>
+    </div>
+  </aside>
+
+  <!-- ============================== İÇERİK ============================== -->
+  <main class="icerik">
+
+    <!-- ------------------------------ ANA ------------------------------ -->
+    <section class="sayfa aktif" id="sayfa-ana">
+      <h1>Ana Ekran</h1>
+      <div class="kart-satir">
+        <div class="kutu">
+          <span class="kutu-etiket">Otomasyon motoru</span>
+          <strong id="anaMotor" class="kutu-deger">—</strong>
+          <span id="anaMotorAlt" class="kutu-alt">—</span>
+        </div>
+        <div class="kutu">
+          <span class="kutu-etiket">Tarayıcı</span>
+          <strong id="anaChrome" class="kutu-deger">—</strong>
+          <span class="kutu-alt">Chrome / Edge</span>
+        </div>
+        <div class="kutu">
+          <span class="kutu-etiket">Luca bağlantısı</span>
+          <strong id="anaLuca" class="kutu-deger">—</strong>
+          <span class="kutu-alt">Kayıtlı giriş bilgisi</span>
+        </div>
+        <div class="kutu">
+          <span class="kutu-etiket">Sürüm</span>
+          <strong id="anaSurum" class="kutu-deger">—</strong>
+          <span class="kutu-alt">MUBiS Masaüstü Otomasyon</span>
+        </div>
+      </div>
+
+      <div class="kart">
+        <h2>Motor</h2>
+        <div class="satir">
+          <div class="bilgi"><span class="etiket">Durum</span><span id="motorMesaj" class="deger">—</span></div>
+          <div class="bilgi"><span class="etiket">Yerel port</span><span id="portDeger" class="deger">—</span></div>
+        </div>
+        <div class="dugme-grubu">
+          <button id="baslatBtn" class="dugme dugme-ana">Motoru başlat</button>
+          <button id="durdurBtn" class="dugme">Durdur</button>
+          <button id="yenidenBtn" class="dugme">Yeniden başlat</button>
+          <button id="ayarSayfasiBtn" class="dugme dugme-hayalet">Gelişmiş ayarlar</button>
+          <button id="indirmeBtn" class="dugme dugme-hayalet">İndirme klasörü</button>
+        </div>
+        <p class="ipucu">Motor, Luca ve GİB işlemlerini bu bilgisayarda çalıştırır. MUBiS yardımcısından bağımsızdır (ayrı port); kapatırsanız yalnız bu programın otomasyonu durur.</p>
+      </div>
+
+      <div class="kart">
+        <h2>Hızlı işlemler</h2>
+        <div class="dugme-grubu">
+          <button class="dugme" data-sayfa-git="luca">Luca'ya gir</button>
+          <button class="dugme" data-sayfa-git="fatura">Fatura sorgula</button>
+          <button class="dugme" data-sayfa-git="borc">Borç sorgula</button>
+          <button class="dugme" data-sayfa-git="dvs">POS / KDV dökümü</button>
+          <button class="dugme" data-sayfa-git="fis">Fiş işlemleri</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- --------------------------- MÜKELLEF ---------------------------- -->
+    <section class="sayfa" id="sayfa-mukellef">
+      <h1>Mükellef Bilgileri</h1>
+
+      <div class="kart">
+        <h2>Luca'dan mükellef listesi ve giriş bilgileri</h2>
+        <p class="ipucu ust-bosluk">
+          Luca'ya giriş yapılır; <strong>Müşteri Listesi</strong> ile birlikte
+          <strong>GİB ŞİRKET</strong> tablosundaki <em>kullanıcı adı / parola / şifre</em> ve
+          <strong>e-Bildirge (SGK)</strong> bilgileri okunur. Hiçbir kayıt değiştirilmez.
+        </p>
+        <div class="form">
+          <label><span>Defter yılı</span><input id="mukYil" type="text" inputmode="numeric" placeholder="2026" /></label>
+        </div>
+        <div class="dugme-grubu ust-bosluk">
+          <button id="mukGetirBtn" class="dugme dugme-ana">Luca'dan mükellefleri getir</button>
+          <button id="mukCsvBtn" class="dugme" disabled>Excel'e aktar (CSV)</button>
+          <button id="mukKopyaBtn" class="dugme" disabled>Tabloyu kopyala</button>
+          <button id="mukGizleBtn" class="dugme dugme-hayalet">Şifreleri gizle</button>
+          <span id="mukMesaj" class="mesaj"></span>
+        </div>
+      </div>
+
+      <div class="kart">
+        <div class="kart-baslik">
+          <h2>Sonuç</h2>
+          <input id="mukAra" type="search" placeholder="Firma / VKN / kullanıcı adı ara" class="ara" />
+        </div>
+        <div class="tablo-kap">
+          <table class="veri-tablo" id="mukTablo">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Kısa ad</th>
+                <th>Unvan</th>
+                <th>VKN / TCKN</th>
+                <th>GİB kullanıcı adı</th>
+                <th>GİB şifre</th>
+                <th>V.D. şifresi</th>
+                <th>SGK kullanıcı</th>
+                <th>SGK işyeri</th>
+                <th>SGK şifre</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="mukSatirlar">
+              <tr><td colspan="11" class="bos">Henüz liste getirilmedi.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="ipucu" id="mukOzet"></p>
+      </div>
+    </section>
+
+    <!-- ------------------------------ LUCA ----------------------------- -->
+    <section class="sayfa" id="sayfa-luca">
+      <h1>Luca</h1>
+      <div class="kart">
+        <h2>Giriş bilgileri</h2>
+        <p class="ipucu ust-bosluk">Bu bilgiler yalnızca bu bilgisayarda saklanır.</p>
+        <form id="lucaForm" class="form">
+          <label><span>Üye numarası</span><input id="uyeNo" type="text" inputmode="numeric" placeholder="örn. 1309879" autocomplete="off" /></label>
+          <label><span>Kullanıcı adı</span><input id="kullanici" type="text" placeholder="Luca kullanıcı adı" autocomplete="off" /></label>
+          <label><span>Parola</span><input id="parola" type="password" placeholder="Luca parolası" autocomplete="off" /></label>
+          <div class="form-alt">
+            <button type="submit" class="dugme dugme-ana">Kaydet</button>
+            <span id="lucaMesaj" class="mesaj"></span>
+          </div>
+        </form>
+      </div>
+
+      <div class="kart">
+        <h2>Oturum</h2>
+        <div class="form">
+          <label><span>Defter yılı</span><input id="lucaYil" type="text" inputmode="numeric" value="" placeholder="2026" /></label>
+          <div class="form-alt">
+            <button id="lucaGirBtn" class="dugme dugme-ana">Luca'ya gir</button>
+            <button id="lucaKapatBtn" class="dugme">Oturumu kapat</button>
+            <button id="firmaGetirBtn" class="dugme">Firmaları getir</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="kart">
+        <h2>Sonuç</h2>
+        <div id="lucaSonuc" class="sonuc">Henüz işlem yapılmadı.</div>
+      </div>
+    </section>
+
+    <!-- ----------------------------- FATURA ---------------------------- -->
+    <section class="sayfa" id="sayfa-fatura">
+      <h1>Fatura Sorgulama</h1>
+      <div class="kart">
+        <h2>Sorgu</h2>
+        <div class="form">
+          <label><span>Kaynak</span>
+            <select id="fatKaynak">
+              <option value="luca">Luca (e-Fatura / e-Arşiv)</option>
+              <option value="gib">GİB Dijital Vergi Dairesi (e-Arşiv)</option>
+            </select>
+          </label>
+          <label><span>Yıl</span><input id="fatYil" type="text" inputmode="numeric" /></label>
+          <label><span>Ay (boş = tüm yıl)</span>
+            <select id="fatAy">
+              <option value="">Tüm yıl</option>
+              <option value="1">Ocak</option><option value="2">Şubat</option><option value="3">Mart</option>
+              <option value="4">Nisan</option><option value="5">Mayıs</option><option value="6">Haziran</option>
+              <option value="7">Temmuz</option><option value="8">Ağustos</option><option value="9">Eylül</option>
+              <option value="10">Ekim</option><option value="11">Kasım</option><option value="12">Aralık</option>
+            </select>
+          </label>
+          <label class="gib-alan"><span>GİB kullanıcı kodu</span><input id="gibKullanici" type="text" autocomplete="off" /></label>
+          <label class="gib-alan"><span>GİB parola</span><input id="gibParola" type="password" autocomplete="off" /></label>
+          <div class="form-alt">
+            <button id="faturaBtn" class="dugme dugme-ana">Sorgula ve indir</button>
+            <span id="faturaMesaj" class="mesaj"></span>
+          </div>
+        </div>
+        <p class="ipucu">Luca kaynağı Luca oturumu açar; GİB kaynağı Dijital Vergi Dairesi'ne giriş yapar.</p>
+      </div>
+      <div class="kart"><h2>Sonuç</h2><div id="faturaSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
+    </section>
+
+    <!-- ------------------------------ BEYAN ---------------------------- -->
+    <section class="sayfa" id="sayfa-beyan">
+      <h1>Beyanname ve Tahakkuk İndirme</h1>
+      <div class="kart">
+        <h2>İndirme</h2>
+        <div class="form">
+          <label><span>İşlem</span>
+            <select id="beyanIs">
+              <option value="beyanname-indir">Beyanname indir</option>
+              <option value="tahakkuk-indir">Tahakkuk indir</option>
+              <option value="makbuz-indir">Ödeme makbuzu indir</option>
+              <option value="eb-beyanname-indir">e-Beyanname (yeni sistem)</option>
+              <option value="eb-tahakkuk-indir">e-Tahakkuk (yeni sistem)</option>
+            </select>
+          </label>
+          <label><span>GİB kullanıcı kodu</span><input id="beyanKullanici" type="text" autocomplete="off" /></label>
+          <label><span>GİB parola</span><input id="beyanParola" type="password" autocomplete="off" /></label>
+          <label><span>T.C. kimlik no (e-Devlet)</span><input id="beyanTc" type="text" autocomplete="off" /></label>
+          <label><span>e-Devlet şifresi</span><input id="beyanEdevlet" type="password" autocomplete="off" /></label>
+          <div class="form-alt">
+            <button id="beyanBtn" class="dugme dugme-ana">Çalıştır</button>
+            <span id="beyanMesaj" class="mesaj"></span>
+          </div>
+        </div>
+      </div>
+      <div class="kart"><h2>Sonuç</h2><div id="beyanSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
+    </section>
+
+    <!-- ------------------------------ BORÇ ----------------------------- -->
+    <section class="sayfa" id="sayfa-borc">
+      <h1>Borç Sorgulama</h1>
+      <div class="kart">
+        <h2>GİB vergi borcu</h2>
+        <div class="form">
+          <label><span>Kullanıcı kodu</span><input id="borcKullanici" type="text" autocomplete="off" /></label>
+          <label><span>Parola</span><input id="borcParola" type="password" autocomplete="off" /></label>
+          <div class="form-alt">
+            <button id="gibBorcBtn" class="dugme dugme-ana">GİB borcu sorgula</button>
+            <span id="borcMesaj" class="mesaj"></span>
+          </div>
+        </div>
+      </div>
+      <div class="kart">
+        <h2>SGK borcu</h2>
+        <div class="form">
+          <label><span>SGK kullanıcı adı</span><input id="sgkKullanici" type="text" autocomplete="off" /></label>
+          <label><span>İşyeri kodu</span><input id="sgkIsyeri" type="text" autocomplete="off" /></label>
+          <label><span>Sistem şifresi</span><input id="sgkSistemSifre" type="password" autocomplete="off" /></label>
+          <label><span>İşyeri şifresi</span><input id="sgkIsyeriSifre" type="password" autocomplete="off" /></label>
+          <div class="form-alt">
+            <button id="sgkBorcBtn" class="dugme dugme-ana">SGK borcu sorgula</button>
+          </div>
+        </div>
+      </div>
+      <div class="kart"><h2>Sonuç</h2><div id="borcSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
+    </section>
+
+    <!-- ------------------------------- DVS ----------------------------- -->
+    <section class="sayfa" id="sayfa-dvs">
+      <h1>POS / KDV Dökümü</h1>
+      <div class="kart">
+        <h2>Dijitaş DVS sorgusu</h2>
+        <div class="form">
+          <label><span>Kullanıcı kodu</span><input id="dvsKullanici" type="text" autocomplete="off" /></label>
+          <label><span>Parola</span><input id="dvsParola" type="password" autocomplete="off" /></label>
+          <label><span>Yıl</span><input id="dvsYil" type="text" inputmode="numeric" /></label>
+          <label><span>Ay</span>
+            <select id="dvsAy">
+              <option value="1">Ocak</option><option value="2">Şubat</option><option value="3">Mart</option>
+              <option value="4">Nisan</option><option value="5">Mayıs</option><option value="6">Haziran</option>
+              <option value="7">Temmuz</option><option value="8">Ağustos</option><option value="9">Eylül</option>
+              <option value="10">Ekim</option><option value="11">Kasım</option><option value="12">Aralık</option>
+            </select>
+          </label>
+          <label><span>Tür</span>
+            <select id="dvsTur">
+              <option value="pos">Kredi Kartı / POS hasılatı</option>
+              <option value="109">KDV 109 dökümü</option>
+              <option value="110">Gümrük İşlemleri KDV (110)</option>
+            </select>
+          </label>
+          <div class="form-alt">
+            <button id="dvsBtn" class="dugme dugme-ana">Sorgula</button>
+            <span id="dvsMesaj" class="mesaj"></span>
+          </div>
+        </div>
+      </div>
+      <div class="kart"><h2>Sonuç</h2><div id="dvsSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
+    </section>
+
+    <!-- ---------------------------- TEBLİGAT --------------------------- -->
+    <section class="sayfa" id="sayfa-tebligat">
+      <h1>e-Tebligat</h1>
+      <div class="kart">
+        <h2>Sorgulama</h2>
+        <div class="form">
+          <label><span>Kullanıcı kodu</span><input id="tebKullanici" type="text" autocomplete="off" /></label>
+          <label><span>Parola</span><input id="tebParola" type="password" autocomplete="off" /></label>
+          <div class="form-alt">
+            <button id="tebSorguBtn" class="dugme dugme-ana">Tebligatları sorgula</button>
+            <button id="tebIndirBtn" class="dugme">Belgeleri indir</button>
+            <span id="tebMesaj" class="mesaj"></span>
+          </div>
+        </div>
+      </div>
+      <div class="kart"><h2>Sonuç</h2><div id="tebSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
+    </section>
+
+    <!-- ------------------------------- FİŞ ----------------------------- -->
+    <section class="sayfa" id="sayfa-fis">
+      <h1>Fiş İşlemleri</h1>
+      <div class="kart">
+        <h2>Müşteri ve dönem</h2>
+        <div class="form">
+          <label><span>Müşteri kısa adı</span><input id="fisKisa" type="text" placeholder="örn. AK" autocomplete="off" /></label>
+          <label><span>Müşteri tam unvanı</span><input id="fisTam" type="text" placeholder="tam ünvan (isteğe bağlı)" autocomplete="off" /></label>
+          <label><span>VKN / TCKN</span><input id="fisVkn" type="text" autocomplete="off" /></label>
+          <label><span>Yıl</span><input id="fisYil" type="text" inputmode="numeric" /></label>
+          <label><span>Ay</span>
+            <select id="fisAy">
+              <option value="">Tüm yıl</option>
+              <option value="1">Ocak</option><option value="2">Şubat</option><option value="3">Mart</option>
+              <option value="4">Nisan</option><option value="5">Mayıs</option><option value="6">Haziran</option>
+              <option value="7">Temmuz</option><option value="8">Ağustos</option><option value="9">Eylül</option>
+              <option value="10">Ekim</option><option value="11">Kasım</option><option value="12">Aralık</option>
+            </select>
+          </label>
+        </div>
+        <div class="dugme-grubu ust-bosluk">
+          <button id="belgeOnizleBtn" class="dugme">Toplu belge — önizle</button>
+          <button id="belgeUygulaBtn" class="dugme dugme-ana">Toplu belge — uygula ve kaydet</button>
+          <button id="fisTaraBtn" class="dugme">Fiş tara (salt okunur)</button>
+          <button id="fisBolBtn" class="dugme dugme-tehlike">Toplu fiş böl</button>
+        </div>
+        <p class="ipucu">
+          Belge türü düzenleme yalnız 20041/20042 E-Defter uyumsuzluklarını düzeltir.
+          Fiş tarama salt okunurdur. <strong>Toplu fiş böl</strong> kayıtları değiştirir.
+        </p>
+      </div>
+      <div class="kart"><h2>Sonuç</h2><div id="fisSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
+    </section>
+
+    <!-- ----------------------------- AYARLAR --------------------------- -->
+    <section class="sayfa" id="sayfa-ayarlar">
+      <h1>Ayarlar</h1>
+      <div class="kart">
+        <h2>GİB / e-Tebligat varsayılanları</h2>
+        <p class="ipucu ust-bosluk">Sorgulama ekranlarında boş bıraktığınız alanlarda bu bilgiler kullanılır.</p>
+        <div class="form">
+          <label><span>GİB kullanıcı kodu</span><input id="ayGibKullanici" type="text" autocomplete="off" /></label>
+          <label><span>GİB parola</span><input id="ayGibParola" type="password" autocomplete="off" /></label>
+          <label><span>2Captcha anahtarı</span><input id="ayCaptcha" type="text" autocomplete="off" /></label>
+          <label><span>Drive / masaüstü anahtarı</span><input id="ayDesktop" type="text" autocomplete="off" /></label>
+        </div>
+      </div>
+      <div class="kart">
+        <h2>Sistem</h2>
+        <div class="dugme-grubu dikey">
+          <label class="anahtar"><input id="otomatikBaslat" type="checkbox" /><span>Windows açılışında başlat</span></label>
+          <button id="ayarKaydetBtn" class="dugme dugme-ana">Ayarları kaydet</button>
+          <button id="klasorBtn" class="dugme dugme-hayalet">Program klasörünü aç</button>
+          <button id="logBtn2" class="dugme dugme-hayalet">Log dosyasını aç</button>
+        </div>
+        <p id="ayarMesaj" class="mesaj"></p>
+      </div>
+    </section>
+
+    <!-- -------------------------------- LOG ---------------------------- -->
+    <section class="sayfa" id="sayfa-log">
+      <h1>Canlı Log</h1>
+      <div class="kart">
+        <div class="kart-baslik">
+          <h2>Motor günlüğü</h2>
+          <button id="temizleBtn" class="dugme dugme-hayalet kucuk">Temizle</button>
+        </div>
+        <pre id="logKutusu" class="log"></pre>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

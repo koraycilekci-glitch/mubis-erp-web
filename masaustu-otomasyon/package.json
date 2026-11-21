@@ -1,0 +1,57 @@
+{
+  "name": "mubis-masaustu-otomasyon",
+  "version": "1.0.0",
+  "description": "MUBiS Masaüstü Otomasyon",
+  "author": "MUBiS ERP",
+  "license": "UNLICENSED",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis portable"
+  },
+  "build": {
+    "appId": "com.mubis.masaustuotomasyon",
+    "productName": "MUBiS Masaüstü Otomasyon",
+    "copyright": "MUBiS ERP",
+    "electronVersion": "33.4.11",
+    "electronDist": "../mubis-asistan/node_modules/electron/dist",
+    "directories": {
+      "output": "cikti",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "assets/**"
+    ],
+    "extraResources": [
+      {
+        "from": "engine",
+        "to": "engine",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MUBiS Masaüstü Otomasyon",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "MUBiS Masaustu Otomasyon Setup ${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "MUBiS Masaustu Otomasyon ${version}.${ext}"
+    }
+  }
+}

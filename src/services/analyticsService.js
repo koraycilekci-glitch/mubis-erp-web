@@ -42,10 +42,15 @@ export async function analyticsRaporu(istek = {}) {
     limit: Math.min(Math.max(Number(istek.limit) || 100, 1), 1000)
   }
   try {
+    // 2.8.359: Istek takilirsa kart sonsuza kadar "Yükleniyor…" da kalmasin.
+    const sinyal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+      ? AbortSignal.timeout(25000)
+      : undefined
     const yanit = await fetch('/api/analytics', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(govde)
+      body: JSON.stringify(govde),
+      signal: sinyal
     })
     const veri = await yanit.json().catch(() => ({}))
     if (!yanit.ok || !veri?.ok) {
@@ -53,6 +58,13 @@ export async function analyticsRaporu(istek = {}) {
     }
     return veri
   } catch (e) {
-    return { ok: false, reason: 'ag-hatasi', error: e?.message || String(e) }
+    const zamanAsimi = e?.name === 'TimeoutError' || e?.name === 'AbortError'
+    return {
+      ok: false,
+      reason: zamanAsimi ? 'zaman-asimi' : 'ag-hatasi',
+      error: zamanAsimi
+        ? 'Sunucu 25 saniye içinde yanıt vermedi. Yenile\'ye basarak tekrar deneyin.'
+        : (e?.message || String(e))
+    }
   }
 }

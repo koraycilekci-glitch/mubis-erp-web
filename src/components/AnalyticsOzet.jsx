@@ -38,6 +38,7 @@ export default function AnalyticsOzet({ gun = 30 }) {
   const [baglantiHata, setBaglantiHata] = useState('')
   const [seciliyor, setSeciliyor] = useState(false)
   const [elleMulk, setElleMulk] = useState('')
+  const [apiKapali, setApiKapali] = useState(null)
 
   // 1) Baglanti durumunu sor (mulk otomatik secilebilir)
   const baglantiSor = useCallback(async () => {
@@ -59,13 +60,21 @@ export default function AnalyticsOzet({ gun = 30 }) {
   const yukle = useCallback(async () => {
     setDurum('yukleniyor')
     setHata('')
+    setApiKapali(null)
     const aralik = tarihAraligi(Number(gun) || 30)
-    const sonuc = await analyticsRaporu({
+    const istek = {
       ...aralik,
       metrikler: ['activeUsers', 'sessions', 'screenPageViews'],
       boyutlar: ['date'],
       limit: 400
-    })
+    }
+    // 2.8.359: ilk deneme basarisiz olursa bir kez daha dene (soguk baslangic /
+    // gecici ag hatasi kullanicinin Yenile'ye basmasini gerektirmesin).
+    let sonuc = await analyticsRaporu(istek)
+    if (!sonuc.ok && ['ag-hatasi', 'zaman-asimi', 'sunucu-hatasi'].includes(String(sonuc.reason))) {
+      await new Promise((r) => setTimeout(r, 1200))
+      sonuc = await analyticsRaporu(istek)
+    }
     if (!sonuc.ok) {
       setVeri(null)
       setDurum(sonuc.reason === 'yapilandirilmadi' || sonuc.reason === 'yetki-yok' ? 'yapilandirilmadi' : 'hata')
@@ -159,6 +168,7 @@ export default function AnalyticsOzet({ gun = 30 }) {
       {durum === 'yukleniyor' && (
         <div className="text-sm text-blue-200 inline-flex items-center gap-2">
           <Loader2 className="w-4 h-4 animate-spin" /> Yükleniyor…
+          <span className="text-xs text-blue-300/70">(Google Analytics verisi alınıyor)</span>
         </div>
       )}
 
@@ -247,9 +257,21 @@ export default function AnalyticsOzet({ gun = 30 }) {
       )}
 
       {durum === 'hata' && (
-        <div className="text-xs text-amber-200 flex gap-2">
-          <Info className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>Rapor alınamadı: {hata || 'bilinmeyen hata'}</span>
+        <div className="text-xs text-amber-200 flex flex-col gap-2">
+          <div className="flex gap-2">
+            <Info className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>Rapor alınamadı: {hata || 'bilinmeyen hata'}</span>
+          </div>
+          {apiKapali?.link && (
+            <a
+              href={apiKapali.link}
+              target="_blank"
+              rel="noreferrer"
+              className="self-start rounded-lg bg-amber-500/20 border border-amber-400/40 px-3 py-1.5 text-amber-100 hover:bg-amber-500/30"
+            >
+              {apiKapali.api} API'sini etkinleştir →
+            </a>
+          )}
         </div>
       )}
 

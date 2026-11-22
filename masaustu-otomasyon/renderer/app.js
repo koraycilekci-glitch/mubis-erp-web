@@ -674,6 +674,265 @@ document.querySelectorAll('#sayfa-edefter [data-ac]').forEach((btn) => {
   btn.addEventListener('click', () => window.mubis.disariAc(btn.getAttribute('data-ac')))
 })
 
+// --------------------------------------------------------- E-DEFTER İŞLEMLERİ
+
+let eiMusteriler = []
+let eiSecili = new Set()
+let eiAktif = false
+let eiIptal = false
+
+function eiCiz() {
+  const govde = $('eiSatirlar')
+  const ara = ($('eiAra')?.value || '').toLocaleLowerCase('tr').trim()
+  // arama kutusu henüz yok — filtre yok
+  const liste = eiMusteriler
+  if (!liste.length) {
+    govde.innerHTML = '<tr><td colspan="5" class="bos">Firma listesi henüz getirilmedi.</td></tr>'
+    return
+  }
+  govde.innerHTML = liste.map((m, i) => {
+    const sec = eiSecili.has(i)
+    return '<tr>' +
+      '<td><input type="checkbox" data-idx="' + i + '" ' + (sec ? 'checked' : '') + ' /></td>' +
+      '<td>' + kacis(m.kisaAd || '—') + '</td>' +
+      '<td>' + kacis(m.ad || '—') + '</td>' +
+      '<td>' + kacis(m.kimlik || '—') + '</td>' +
+      '<td>' + mukHucre(m.gibParola || m.gibSifre || '') + '</td>' +
+      '</tr>'
+  }).join('')
+
+  const seciliSayi = eiSecili.size
+  $('eiSecili').textContent = seciliSayi ? seciliSayi + ' seçili' : '—'
+  $('eiOzet').textContent = eiMusteriler.length
+    ? `${eiMusteriler.length} mükellef · ${seciliSayi} seçili`
+    : ''
+  $('eiBaslatBtn').disabled = !seciliSayi || eiAktif
+  $('eiDurdurBtn').disabled = !eiAktif
+}
+
+$('eiListeBtn').addEventListener('click', async () => {
+  const p = Object.assign(lucaParametreleri(), {
+    yil: ($('eiYil').value || String(bugun.getFullYear())).trim()
+  })
+  if (!p.lucaMember || !p.lucaUsername || !p.lucaPassword) {
+    mesaj('eiMesaj', 'Önce Luca giriş bilgilerini kaydedin (Luca ekranı).', 'hatali')
+    return
+  }
+  dugmeBeklet($('eiListeBtn'), true, 'Luca okunuyor…')
+  mesaj('eiMesaj', 'Luca açılıyor; firma listesi ve GİB bilgileri okunuyor. Birkaç dakika sürebilir…')
+  try {
+    const j = await window.mubis.isCalistir('luca-firmalar-getir', p)
+    if (!j || j.success === false) {
+      mesaj('eiMesaj', 'Hata: ' + ((j && (j.error || j.not)) || 'bilinmeyen'), 'hatali')
+      return
+    }
+    const liste = Array.isArray(j.firmalar) ? j.firmalar : []
+    eiMusteriler = liste.map((m, i) => Object.assign({}, m, { __idx: i }))
+    eiSecili = new Set()
+    eiCiz()
+    const gibVar = eiMusteriler.filter((m) => m.gibKullanici).length
+    mesaj('eiMesaj', `${eiMusteriler.length} mükellef getirildi (${gibVar} tanesinde GİB bilgisi var).`, 'basarili')
+  } catch (e) {
+    mesaj('eiMesaj', 'Hata: ' + (e && e.message), 'hatali')
+  } finally {
+    dugmeBeklet($('eiListeBtn'), false)
+  }
+})
+
+$('eiTumSecBtn').addEventListener('click', () => {
+  if (!eiMusteriler.length) return
+  if (eiSecili.size === eiMusteriler.length) eiSecili = new Set()
+  else eiSecili = new Set(eiMusteriler.map((_, i) => i))
+  eiCiz()
+})
+
+$('eiTemizleBtn').addEventListener('click', () => { eiSecili = new Set(); eiCiz() })
+
+$('eiSatirlar').addEventListener('change', (e) => {
+  const cb = e.target.closest('input[type="checkbox"]')
+  if (!cb) return
+  const idx = Number(cb.dataset.idx)
+  if (cb.checked) eiSecili.add(idx)
+  else eiSecili.delete(idx)
+  eiCiz()
+})
+
+$('eiBaslatBtn').addEventListener('click', async () => {
+  if (!eiSecili.size) { alert('En az bir müşteri seçin.'); return }
+  const secili = [...eiSecili].map((i) => eiMusteriler[i])
+  const yil = ($('eiYil').value || String(bugun.getFullYear())).trim()
+  const ay = Number($('eiAy').value)
+  const ayAd = $('eiAy').selectedOptions[0].textContent
+
+  if (!confirm(
+    `${secili.length} müşteri için ${yil} ${ayAd} döneminde e-Defter oluşturulacak.\n\n` +
+    'Luca E-Defter programı her müşteri için açılacak ve giriş bilgileri otomatik doldurulacak.\n' +
+    'Her müşteri arasında e-imza (mali mühür) değiştirmeyi unutmayın.\n\n' +
+    'Devam edilsin mi?'
+  )) return
+
+  eiAktif = true
+  eiIptal = false
+  eiCiz()
+  $('eiIlerleme').textContent = 'Başlıyor…'
+  $('eiSonuc').textContent = ''
+
+  for (let i = 0; i < secili.length; i++) {
+    if (eiIptal) { mesaj('eiMesaj', 'İşlem kullanıcı tarafından iptal edildi.', 'hatali'); break }
+    const m = secili[i]
+    const step = `[${i + 1}/${secili.length}] ${m.kisaAd || m.ad}`
+    $('eiIlerleme').textContent = step + ' — Luca E-Defter açılıyor…'
+    $('eiSecili').textContent = `${m.kisaAd || m.ad}`
+
+    // 1) Luca E-Defter'i ac
+    const durum = await window.mubis.edefterDurum()
+    if (!durum || !durum.ok) {
+      const r = await window.mubis.edefterKur()
+      mesaj('eiMesaj', (r && r.mesaj) || 'Kurulum başlatılamadı.', r && r.ok ? 'basarili' : 'hatali')
+      if (!(r && r.ok)) { eiAktif = false; eiCiz(); return }
+      await new Promise((r) => setTimeout(r, 4000))
+    }
+    const ac = await window.mubis.edefterAc()
+    mesaj('eiMesaj', (ac && ac.mesaj) || 'Luca E-Defter açılıyor…', ac && ac.ok ? 'basarili' : 'hatali')
+
+    // 2) Bilgileri panoya kopyala (kullanici Luca E-Defter'e yapistirabilsin)
+    try {
+      const satir = [m.kisaAd, m.ad, m.kimlik, m.gibKullanici, m.gibParola].join('\t')
+      await navigator.clipboard.writeText(satir)
+      mesaj('eiMesaj', `${step} — bilgiler panoya kopyalandı (Ctrl+V ile yapıştırın).`, 'basarili')
+    } catch { /* yoksay */ }
+
+    // 3) Kullaniciyi yonlendir
+    await new Promise((resolve) => {
+      const devam = confirm(
+        `${step}\n\n` +
+        'Luca E-Defter açıldı. Lütfen:\n' +
+        '1) Müşteri numarası / Kullanıcı adı / Parola alanlarını doldurun (Ctrl+V)\n' +
+        '2) Ay ve yıl seçin, Giriş\'e basın\n' +
+        '3) Müşteri seçiminde bu müşteriyi seçip Tamam\'a basın\n' +
+        '4) "Defteri Oluştur" → "Evet"\n' +
+        '5) Durum sorgulanıyor ekranında HATA varsa Hata kutusuna yapıştırın\n\n' +
+        'İşlem bittiğinde "Tamam" deyin.'
+      )
+      resolve(devam)
+    })
+
+    if (eiIptal) break
+  }
+
+  eiAktif = false
+  eiCiz()
+  mesaj('eiMesaj', 'e-Defter gönderme akışı tamamlandı. Luca E-Defter\'de e-Defter İşlemleri → Luca Giriş ile baştan başlayabilirsiniz.', 'basarili')
+  $('eiSonuc').textContent = 'İşlem tamamlandı. Hata ile karşılaşıldıysa 4. adımdaki fiş bölmeyi kullanın.'
+})
+
+$('eiDurdurBtn').addEventListener('click', () => {
+  if (confirm('e-Defter gönderme akışı iptal edilsin mi?')) eiIptal = true
+})
+
+$('eiEdKurBtn').addEventListener('click', async () => {
+  dugmeBeklet($('eiEdKurBtn'), true, 'Kurulum açılıyor…')
+  const r = await window.mubis.edefterKur()
+  mesaj('eiMesaj', (r && r.mesaj) || (r && r.ok ? 'Tamam.' : 'Başarısız.'), r && r.ok ? 'basarili' : 'hatali')
+  dugmeBeklet($('eiEdKurBtn'), false)
+  setTimeout(() => window.mubis.edefterDurum().then((d) => {
+    $('eiEdurum').textContent = d && d.ok ? 'Kurulu' : 'Kurulu değil'
+    $('eiEdurum').style.color = d && d.ok ? 'var(--yesil)' : 'var(--kirmizi)'
+  }), 1500)
+})
+
+$('eiEdAcBtn').addEventListener('click', async () => {
+  dugmeBeklet($('eiEdAcBtn'), true, 'Açılıyor…')
+  const r = await window.mubis.edefterAc()
+  mesaj('eiMesaj', (r && r.mesaj) || (r && r.ok ? 'Tamam.' : 'Başarısız.'), r && r.ok ? 'basarili' : 'hatali')
+  dugmeBeklet($('eiEdAcBtn'), false)
+})
+
+$('eiEdKopyalaBtn').addEventListener('click', async () => {
+  const secili = [...eiSecili].map((i) => eiMusteriler[i])
+  if (!secili.length) { mesaj('eiMesaj', 'Önce müşteri seçin.', 'hatali'); return }
+  const satirlar = secili.map((m) => [m.kisaAd, m.ad, m.kimlik, m.gibKullanici, m.gibParola].join('\t'))
+  try {
+    await navigator.clipboard.writeText(satirlar.join('\n'))
+    mesaj('eiMesaj', `${secili.length} müşterinin bilgileri panoya kopyalandı.`, 'basarili')
+  } catch {
+    mesaj('eiMesaj', 'Panoya kopyalanamadı.', 'hatali')
+  }
+})
+
+// Hata metninden fis numaralarini cikar (02695, 02713, 02736)
+function eiHataNumaralari(metin) {
+  const sonuc = new Set()
+  const m = String(metin || '').match(/HATA:\s*([\d,\s]+?)\s*nolu/i)
+  if (m) {
+    for (const n of m[1].split(/[,\s]+/)) {
+      const t = n.trim()
+      if (/^\d{3,8}$/.test(t)) sonuc.add(t)
+    }
+  }
+  // Fallback: "02695, 02713, 02736 nolu" olmadan da numaralari bul
+  if (!sonuc.size) {
+    for (const m2 of metin.matchAll(/(\d{3,8})\s*nolu\s*fiş/gi)) sonuc.add(m2[1])
+  }
+  // Son fallback: 4-5 haneli sayilar
+  if (!sonuc.size) {
+    for (const m3 of metin.matchAll(/\b(\d{4,5})\b/g)) sonuc.add(m3[1])
+  }
+  return [...sonuc]
+}
+
+$('eiHataBolBtn').addEventListener('click', async () => {
+  const metin = $('eiHata').value
+  const numaralar = eiHataNumaralari(metin)
+  if (!numaralar.length) {
+    mesaj('eiHataMesaj', 'Hata metninde fiş numarası bulunamadı. Lütfen "02695, 02713, 02736 nolu fiş..." biçiminde yapıştırın.', 'hatali')
+    return
+  }
+  const secili = [...eiSecili].map((i) => eiMusteriler[i])
+  if (!secili.length) {
+    mesaj('eiHataMesaj', 'Önce müşteri seçin (1. adımdan).', 'hatali')
+    return
+  }
+  if (!confirm(numaralar.length + ' fiş numarası bulundu: ' + numaralar.join(', ') + '\n\nLuca\'da bu fişler bölünsün mü?')) return
+
+  $('eiHataListesi').textContent = 'Bölme başlıyor…'
+  const sonuclar = []
+  for (let i = 0; i < numaralar.length; i++) {
+    if (eiIptal) { sonuclar.push('İptal edildi.'); break }
+    const vn = numaralar[i]
+    $('eiHataListesi').textContent = `[${i + 1}/${numaralar.length}] ${vn} bölünüyor…`
+    mesaj('eiHataMesaj', `[${i + 1}/${numaralar.length}] ${vn} bölünüyor…`)
+    for (const c of secili) {
+      try {
+        const r = await window.mubis.isCalistir('fis-bol', Object.assign(lucaParametreleri(), {
+          shortName: c.kisaAd || c.ad,
+          fullName: c.ad,
+          vkn: c.kimlik,
+          yil: ($('eiYil').value || String(bugun.getFullYear())).trim(),
+          ay: Number($('eiAy').value),
+          voucherNo: vn
+        }))
+        const msg = r && r.success !== false
+          ? `${vn}: ${r.secilen ?? 0} fiş seçildi, ${r.bolunen ?? '?'} bölündü`
+          : `${vn}: HATA — ${(r && (r.error || r.not)) || 'bilinmeyen'}`
+        sonuclar.push(msg)
+        $('eiHataListesi').textContent = sonuclar.join('\n')
+      } catch (e) {
+        sonuclar.push(`${vn}: HATA — ${e && e.message}`)
+        $('eiHataListesi').textContent = sonuclar.join('\n')
+      }
+    }
+  }
+  mesaj('eiHataMesaj', 'Fiş bölme tamamlandı. Luca E-Defter\'de "Durum sorgulanıyor" ekranından devam edin.', 'basarili')
+  $('eiSonuc').textContent = 'Fiş bölme sonuçları:\n' + sonuclar.join('\n')
+})
+
+$('eiHataTemizleBtn').addEventListener('click', () => {
+  $('eiHata').value = ''
+  $('eiHataListesi').textContent = ''
+  $('eiHataMesaj').textContent = ''
+})
+
 // ---------------------------------------------------------------- AYARLAR
 
 async function ayarlariDoldur() {

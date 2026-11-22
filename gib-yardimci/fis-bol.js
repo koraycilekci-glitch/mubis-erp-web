@@ -16,6 +16,7 @@ const gosterim = (y, m, d) => `${iki(d)}/${iki(m)}/${y}`
 /**
  * Secilen yil/ay icin tarih araligi (DD/MM/YYYY).
  * ay verilmezse yil tamami.
+ * voucherNo verilirse hem bas hem son filtrede kullanilir (tek fis hedefleme).
  */
 function donemAraligi({ yil, ay, simdi = new Date() } = {}) {
   const y = String(yil || '').trim()
@@ -35,16 +36,18 @@ function donemAraligi({ yil, ay, simdi = new Date() } = {}) {
 
 /**
  * Fis listesi filtre degerleri (tarama ile ayni alanlar; hepsi "Tumu").
+ * voucherNo verilirse sadece o fis numarasi hedeflenir (tek fis bolme).
  */
-function fisBolFiltresi({ yil, ay, simdi } = {}) {
+function fisBolFiltresi({ yil, ay, simdi, voucherNo } = {}) {
   const aralik = donemAraligi({ yil, ay, simdi })
+  const vn = String(voucherNo || '').trim()
   return {
     year: String(yil),
     start: aralik.start,
     end: aralik.end,
     fields: {
-      'İlk Fiş No': '',
-      'Son Fiş No': '',
+      'İlk Fiş No': vn,
+      'Son Fiş No': vn,
       'Fiş Tipi': 'Tümü',
       'Fiş Kategori': 'Tümü',
       'Fiş Denge': 'Tümü',

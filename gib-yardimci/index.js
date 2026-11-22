@@ -31,16 +31,7 @@ const { exec, execSync, execFileSync, spawn } = require('child_process')
 const puppeteer = require('puppeteer-core')
 const { createWorker } = require('tesseract.js')
 
-const PORT = (() => {
-  // Oncelik: --port=N argumani (MUBiS Masaustu Otomasyon kendi motorunu ayri
-  // portta calistirir) > MUBIS_PORT ortam degiskeni > 8765 varsayilan.
-  const arg = process.argv.find((a) => String(a).startsWith("--port="));
-  const argPort = arg ? Number(String(arg).slice(7)) : 0;
-  if (Number.isFinite(argPort) && argPort >= 1024 && argPort <= 65535) return argPort;
-  const envPort = Number(process.env.MUBIS_PORT || 0);
-  if (Number.isFinite(envPort) && envPort >= 1024 && envPort <= 65535) return envPort;
-  return 8765;
-})()
+const PORT = process.env.MUBIS_PORT || 8765
 
 // ------------------------------------------------------------
 // SUNUCU MODU (2.8.0): Windows disinda (Linux VPS) calisir.
@@ -8228,7 +8219,7 @@ const ISLER = {
     await durumBekle("filter", 30000)
 
     ilerle("filtre", 20)
-    const filtre = fisBolFiltresi({ yil, ay })
+    const filtre = fisBolFiltresi({ yil, ay, voucherNo: p.voucherNo })
     const st0 = await cerceveCagir("state").catch(() => null)
     if (st0 && st0.list) {
       await cerceveCagir("back").catch(() => {})
@@ -8377,6 +8368,7 @@ const ISLER = {
       musteri: musteriAd,
       yil,
       ay,
+      voucherNo: p.voucherNo || null,
       secilen: sec.toplam,
       bolunen: onay.adet,
       secenekler: dlg.secenekler || {},
@@ -34637,17 +34629,7 @@ if (protokolUrl) {
       }
       if (err.code === "EADDRINUSE") process.exit(0);
     });
-    // Uzun suren islerde (Luca girisi, CAPTCHA, fatura sorgusu) baglanti
-  // kopmasin: Node varsayilan keepAliveTimeout 5 sn'dir ve uzun isteklerde
-  // "bosta tutulacagi beklenen baglanti kapatildi" hatasi olusur.
-  try {
-    server.keepAliveTimeout = 65 * 60 * 1000;
-    server.headersTimeout = 66 * 60 * 1000;
-    server.requestTimeout = 0;
-    server.timeout = 65 * 60 * 1000;
-  } catch (e) {
-  }
-  server.listen(PORT, "127.0.0.1", () => {
+    server.listen(PORT, "127.0.0.1", () => {
       console.log("==========================================");
       console.log("MUBiS GIB Yardimci SUNUCU MODU");
       console.log("Port: " + PORT + " (127.0.0.1)");
@@ -34768,14 +34750,6 @@ if (protokolUrl) {
       }
       if (err.code === "EADDRINUSE") process.exit(0);
     });
-    // Uzun suren islerde baglanti kopmasin (Node varsayilan keepAliveTimeout 5 sn).
-    try {
-      server.keepAliveTimeout = 65 * 60 * 1000;
-      server.headersTimeout = 66 * 60 * 1000;
-      server.requestTimeout = 0;
-      server.timeout = 65 * 60 * 1000;
-    } catch (e) {
-    }
     server.listen(PORT, "127.0.0.1", () => {
       try {
         console.log("==========================================");
@@ -34785,13 +34759,13 @@ if (protokolUrl) {
         console.log("Indirilenler: " + indirmeKlasoru);
         console.log("==========================================");
         if (!SUNUCU_MODU) {
-          if (process.env.MUBIS_TRAY_KAPALI !== "1") trayBaslat();
+          trayBaslat();
           try {
             yerelAgPolitikasiYaz();
           } catch (e) {
           }
-          if (process.env.MUBIS_OTOMASYON_KAPALI !== "1") otomasyonZamanlayiciyiBaslat();
-          if (process.env.MUBIS_KISAYOL_KAPALI !== "1") masaustuLucaKisayolSil();
+          otomasyonZamanlayiciyiBaslat();
+          masaustuLucaKisayolSil();
         }
       } catch (e) {
         try {

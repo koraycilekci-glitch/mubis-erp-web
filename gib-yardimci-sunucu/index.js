@@ -8219,7 +8219,7 @@ const ISLER = {
     await durumBekle("filter", 30000)
 
     ilerle("filtre", 20)
-    const filtre = fisBolFiltresi({ yil, ay })
+    const filtre = fisBolFiltresi({ yil, ay, voucherNo: p.voucherNo })
     const st0 = await cerceveCagir("state").catch(() => null)
     if (st0 && st0.list) {
       await cerceveCagir("back").catch(() => {})
@@ -8368,6 +8368,7 @@ const ISLER = {
       musteri: musteriAd,
       yil,
       ay,
+      voucherNo: p.voucherNo || null,
       secilen: sec.toplam,
       bolunen: onay.adet,
       secenekler: dlg.secenekler || {},

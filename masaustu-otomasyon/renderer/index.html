@@ -33,6 +33,7 @@
       <button class="menu-oge" data-sayfa="tebligat"><span class="ikon">✉</span> e-Tebligat</button>
       <button class="menu-oge" data-sayfa="fis"><span class="ikon">✂</span> Fiş İşlemleri</button>
       <button class="menu-oge" data-sayfa="edefter"><span class="ikon">ED</span> e-Defter (Luca)</button>
+      <button class="menu-oge" data-sayfa="edefter-islem"><span class="ikon">ED</span> e-Defter İşlemleri</button>
       <button class="menu-oge" data-sayfa="gonderim"><span class="ikon">➤</span> Gönderim</button>
       <button class="menu-oge" data-sayfa="ayarlar"><span class="ikon">⚙</span> Ayarlar</button>
       <button class="menu-oge" data-sayfa="log"><span class="ikon">≡</span> Log</button>
@@ -637,6 +638,99 @@
       </div>
 
       <div class="kart"><h2>Sonuç</h2><div id="edefterSonuc" class="sonuc">Luca E-Defter kurulum durumu ve işlem sonuçları burada gösterilir.</div></div>
+    </section>
+
+    <!-- ----------------------------- E-DEFTER İŞLEMLERİ ----------------- -->
+    <section class="sayfa" id="sayfa-edefter-islem">
+      <h1>e-Defter İşlemleri (Otomasyon)</h1>
+
+      <div class="kart">
+        <h2>1) Müşteri ve dönem seçimi</h2>
+        <div class="form">
+          <label><span>Defter yılı</span><input id="eiYil" type="text" inputmode="numeric" placeholder="2026" /></label>
+          <label><span>Dönem (ay)</span>
+            <select id="eiAy">
+              <option value="1">Ocak</option><option value="2">Şubat</option><option value="3">Mart</option>
+              <option value="4">Nisan</option><option value="5">Mayıs</option><option value="6">Haziran</option>
+              <option value="7">Temmuz</option><option value="8">Ağustos</option><option value="9">Eylül</option>
+              <option value="10">Ekim</option><option value="11">Kasım</option><option value="12">Aralık</option>
+            </select>
+          </label>
+        </div>
+        <div class="kart-baslik" style="margin-top:12px">
+          <h2>Müşteriler</h2>
+          <div class="dugme-grubu">
+            <button id="eiListeBtn" class="dugme dugme-hayalet">Luca'dan firmaları getir</button>
+            <button id="eiTumSecBtn" class="dugme dugme-hayalet">Tümünü seç</button>
+            <button id="eiTemizleBtn" class="dugme dugme-hayalet">Seçimi temizle</button>
+          </div>
+        </div>
+        <div class="tablo-kap" style="max-height:260px">
+          <table class="veri-tablo" id="eiTablo">
+            <thead><tr><th style="width:40px"></th><th>Kısa ad</th><th>Unvan</th><th>VKN/TCKN</th><th>GİB şifresi</th></tr></thead>
+            <tbody id="eiSatirlar"><tr><td colspan="5" class="bos">Firma listesi henüz getirilmedi.</td></tr></tbody>
+          </table>
+        </div>
+        <p id="eiOzet" class="ipucu"></p>
+      </div>
+
+      <div class="kart">
+        <h2>2) Hazırlık ve uyarılar</h2>
+        <p class="ipucu ust-bosluk">
+          Seçilen müşteriler için e-Defter oluşturulacak. Her müşteri arasında <strong>e-imza/mali mühür</strong>
+          değiştirilmesi gerekirse program uyarır. Başlamadan önce mali mühürün bilgisayara takılı ve PIN'in
+          hazır olduğundan emin olun.
+        </p>
+        <div class="dugme-grubu">
+          <button id="eiBaslatBtn" class="dugme dugme-ana">e-Defter gönderme işine başla</button>
+          <button id="eiDurdurBtn" class="dugme">İptal</button>
+          <span id="eiMesaj" class="mesaj"></span>
+        </div>
+      </div>
+
+      <div class="kart">
+        <h2>3) Luca E-Defter (Java programı) — otomatik akış</h2>
+        <p class="ipucu ust-bosluk">
+          Program Luca E-Defter'i açar, müşteri no / kullanıcı adı / parola girer, ay-yıl seçer, Giriş'e basar
+          ve müşteri seçim ekranına kadar bekler. Java Swing ekranı otomatik sürülemediği için son adımlar (Tamam,
+          Defteri Oluştur, Yes) sizden onay alarak ilerler.
+        </p>
+        <div class="satir">
+          <div class="bilgi"><span class="etiket">Kurulum</span><span id="eiEdurum" class="deger">—</span></div>
+          <div class="bilgi"><span class="etiket">Seçili müşteri</span><span id="eiSecili" class="deger">—</span></div>
+          <div class="bilgi"><span class="etiket">İlerleme</span><span id="eiIlerleme" class="deger">—</span></div>
+        </div>
+        <div class="dugme-grubu">
+          <button id="eiEdKurBtn" class="dugme dugme-hayalet">Luca E-Defter Kur</button>
+          <button id="eiEdAcBtn" class="dugme dugme-ana">Luca E-Defter'ı Aç</button>
+          <button id="eiEdKopyalaBtn" class="dugme">Seçili müşterinin bilgilerini panoya kopyala</button>
+        </div>
+      </div>
+
+      <div class="kart">
+        <h2>4) Hata ile karşılaşıldıysa — fiş bölme</h2>
+        <p class="ipucu ust-bosluk">
+          Luca E-Defter "Durum sorgulanıyor" ekranında <strong>HATA</strong> yazarsa, hata mesajındaki
+          fiş numaralarını (örn. 02695, 02713, 02736) aşağıya yapıştırın. Program bu fişleri Luca'da otomatik böler.
+        </p>
+        <textarea id="eiHata" rows="3" placeholder="Hata mesajını veya fiş numaralarını buraya yapıştırın"></textarea>
+        <div class="dugme-grubu ust-bosluk">
+          <button id="eiHataBolBtn" class="dugme dugme-tehlike">Bu fişleri Luca'da böl</button>
+          <button id="eiHataTemizleBtn" class="dugme dugme-hayalet">Temizle</button>
+          <span id="eiHataMesaj" class="mesaj"></span>
+        </div>
+        <div id="eiHataListesi" class="sonuc" style="margin-top:10px"></div>
+      </div>
+
+      <div class="kart">
+        <h2>5) Tamamlandıktan sonra</h2>
+        <p class="ipucu">
+          Tüm seçili müşteriler işlendikten sonra Luca E-Defter'de <strong>e-Defter İşlemleri → Luca Giriş</strong>
+          düğmesiyle baştan işleme başlayabilirsiniz. Program her müşteri arasında e-imza değişimi için uyarı verir.
+        </p>
+      </div>
+
+      <div class="kart"><h2>Sonuç / Log</h2><div id="eiSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
     </section>
 
     <!-- ----------------------------- AYARLAR --------------------------- -->

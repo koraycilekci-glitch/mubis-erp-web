@@ -10,7 +10,7 @@
 import { yardimciIsSunucu } from '../utils/gibOdemeHelper'
 import { lucaBilgileriGetir } from './efaturaService'
 
-export async function fisBol({ client, yil, ay, secenekler, onDurum }) {
+export async function fisBol({ client, yil, ay, secenekler, voucherNo, onDurum }) {
   const durum = (m, yuzde) => { try { onDurum?.(m, yuzde) } catch { /* yoksay */ } }
   if (!client?.id) throw new Error('Müşteri seçili değil.')
 
@@ -29,6 +29,7 @@ export async function fisBol({ client, yil, ay, secenekler, onDurum }) {
     fullName: client.name || client.company || '',
     yil: String(yil || new Date().getFullYear()),
     ay: ay === '' || ay == null ? null : Number(ay),
+    voucherNo: voucherNo ? String(voucherNo).trim() : undefined,
     secenekler: secenekler && typeof secenekler === 'object' ? secenekler : undefined
   }, 90 * 60 * 1000, (adim, yuzde) => durum(adim, yuzde))
 

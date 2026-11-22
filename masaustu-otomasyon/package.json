@@ -16,7 +16,7 @@
     "electronVersion": "33.4.11",
     "electronDist": "../mubis-asistan/node_modules/electron/dist",
     "directories": {
-      "output": "cikti",
+      "output": "C:/Users/hp/AppData/Local/Temp/mubis-masaustu-build",
       "buildResources": "assets"
     },
     "files": [

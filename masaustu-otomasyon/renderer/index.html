@@ -656,6 +656,7 @@
               <option value="10">Ekim</option><option value="11">Kasım</option><option value="12">Aralık</option>
             </select>
           </label>
+          <label><span>Çıktı klasörü</span><input id="eiKlasor" type="text" placeholder="G:\Drive'ım\edefter yüklemeler" autocomplete="off" /></label>
         </div>
         <div class="kart-baslik" style="margin-top:12px">
           <h2>Müşteriler</h2>
@@ -665,9 +666,9 @@
             <button id="eiTemizleBtn" class="dugme dugme-hayalet">Seçimi temizle</button>
           </div>
         </div>
-        <div class="tablo-kap" style="max-height:260px">
+        <div class="tablo-kap" style="max-height:220px">
           <table class="veri-tablo" id="eiTablo">
-            <thead><tr><th style="width:40px"></th><th>Kısa ad</th><th>Unvan</th><th>VKN/TCKN</th><th>GİB şifresi</th></tr></thead>
+            <thead><tr><th style="width:40px"></th><th>Kısa ad</th><th>Unvan</th><th>VKN/TCKN</th><th>GİB kullanıcı</th></tr></thead>
             <tbody id="eiSatirlar"><tr><td colspan="5" class="bos">Firma listesi henüz getirilmedi.</td></tr></tbody>
           </table>
         </div>
@@ -681,6 +682,14 @@
           değiştirilmesi gerekirse program uyarır. Başlamadan önce mali mühürün bilgisayara takılı ve PIN'in
           hazır olduğundan emin olun.
         </p>
+        <div class="satir">
+          <div class="bilgi"><span class="etiket">İlerleme</span><span id="eiIlerleme" class="deger">—</span></div>
+          <div class="bilgi"><span class="etiket">Seçili müşteri</span><span id="eiSecili" class="deger">—</span></div>
+          <div class="bilgi"><span class="etiket">Durum</span><span id="eiDurum" class="deger">—</span></div>
+        </div>
+        <div id="eiProgressBar" style="height:8px; background:rgba(15,45,78,.6); border-radius:4px; overflow:hidden; margin-bottom:10px; display:none">
+          <div id="eiProgressFill" style="height:100%; width:0%; background:linear-gradient(90deg,#f5c542,#34d399); transition:width .4s"></div>
+        </div>
         <div class="dugme-grubu">
           <button id="eiBaslatBtn" class="dugme dugme-ana">e-Defter gönderme işine başla</button>
           <button id="eiDurdurBtn" class="dugme">İptal</button>

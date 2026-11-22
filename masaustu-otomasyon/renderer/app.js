@@ -774,13 +774,17 @@ $('eiBaslatBtn').addEventListener('click', async () => {
   eiAktif = true
   eiIptal = false
   eiCiz()
+  $('eiProgressBar').style.display = 'block'
+  $('eiProgressFill').style.width = '0%'
   $('eiIlerleme').textContent = 'Başlıyor…'
+  $('eiDurum').textContent = 'Çalışıyor'
   $('eiSonuc').textContent = ''
 
   for (let i = 0; i < secili.length; i++) {
     if (eiIptal) { mesaj('eiMesaj', 'İşlem kullanıcı tarafından iptal edildi.', 'hatali'); break }
     const m = secili[i]
     const step = `[${i + 1}/${secili.length}] ${m.kisaAd || m.ad}`
+    $('eiProgressFill').style.width = (Math.round((i / secili.length) * 100)) + '%'
     $('eiIlerleme').textContent = step + ' — Luca E-Defter açılıyor…'
     $('eiSecili').textContent = `${m.kisaAd || m.ad}`
 
@@ -822,8 +826,11 @@ $('eiBaslatBtn').addEventListener('click', async () => {
 
   eiAktif = false
   eiCiz()
+  $('eiProgressBar').style.display = 'none'
+  $('eiProgressFill').style.width = '0%'
   mesaj('eiMesaj', 'e-Defter gönderme akışı tamamlandı. Luca E-Defter\'de e-Defter İşlemleri → Luca Giriş ile baştan başlayabilirsiniz.', 'basarili')
   $('eiSonuc').textContent = 'İşlem tamamlandı. Hata ile karşılaşıldıysa 4. adımdaki fiş bölmeyi kullanın.'
+  $('eiDurum').textContent = 'Tamamlandı'
 })
 
 $('eiDurdurBtn').addEventListener('click', () => {

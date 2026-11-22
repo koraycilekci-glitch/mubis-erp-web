@@ -19,6 +19,9 @@ contextBridge.exposeInMainWorld('mubis', {
   dosyalar: () => ipcRenderer.invoke('dosyalar'),
   indirmeKlasoruAc: () => ipcRenderer.invoke('indirme-klasoru-ac'),
   dosyaKaydet: (veri) => ipcRenderer.invoke('dosya-kaydet', veri),
+  edefterDurum: () => ipcRenderer.invoke('edefter-durum'),
+  edefterKur: () => ipcRenderer.invoke('edefter-kur'),
+  edefterAc: () => ipcRenderer.invoke('edefter-ac'),
   durumDinle: (cb) => {
     const dinleyici = (_e, veri) => cb(veri)
     ipcRenderer.on('durum', dinleyici)

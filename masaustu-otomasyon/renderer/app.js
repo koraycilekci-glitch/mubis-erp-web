@@ -641,6 +641,39 @@ $('mailBtn').addEventListener('click', async () => {
   })
 })
 
+function efEdefterDurum() {
+  window.mubis.edefterDurum().then((r) => {
+    $('edefterDurum').textContent = r && r.ok ? 'Kurulu' : 'Kurulu değil'
+    $('edefterDurum').style.color = r && r.ok ? 'var(--yesil)' : 'var(--kirmizi)'
+    $('edefterYol').textContent = (r && r.yol) || '—'
+    $('edefterAcBtn').disabled = !(r && r.ok)
+  }).catch(() => {
+    $('edefterDurum').textContent = 'Kontrol edilemedi'
+    $('edefterDurum').style.color = 'var(--kirmizi)'
+  })
+}
+
+$('edefterKurBtn').addEventListener('click', async () => {
+  dugmeBeklet($('edefterKurBtn'), true, 'Kurulum açılıyor…')
+  const r = await window.mubis.edefterKur()
+  mesaj('edefterMesaj', (r && r.mesaj) || (r && r.ok ? 'Tamam.' : 'Başarısız.'), r && r.ok ? 'basarili' : 'hatali')
+  dugmeBeklet($('edefterKurBtn'), false)
+  setTimeout(efEdefterDurum, 1500)
+})
+
+$('edefterAcBtn').addEventListener('click', async () => {
+  dugmeBeklet($('edefterAcBtn'), true, 'Açılıyor…')
+  const r = await window.mubis.edefterAc()
+  mesaj('edefterMesaj', (r && r.mesaj) || (r && r.ok ? 'Tamam.' : 'Başarısız.'), r && r.ok ? 'basarili' : 'hatali')
+  dugmeBeklet($('edefterAcBtn'), false)
+})
+
+$('edefterDurumBtn').addEventListener('click', () => efEdefterDurum())
+
+document.querySelectorAll('#sayfa-edefter [data-ac]').forEach((btn) => {
+  btn.addEventListener('click', () => window.mubis.disariAc(btn.getAttribute('data-ac')))
+})
+
 // ---------------------------------------------------------------- AYARLAR
 
 async function ayarlariDoldur() {
@@ -698,4 +731,5 @@ varsayilanlariDoldur()
 yenile()
 lucaDoldur()
 ayarlariDoldur()
+efEdefterDurum()
 setInterval(yenile, 6000)

@@ -586,6 +586,57 @@ ipcMain.handle('dosya-kaydet', async (_e, { ad, icerik }) => {
   }
 })
 
+ipcMain.handle('edefter-durum', async () => {
+  const adaylar = [
+    'C:\\LucaEDefter\\lucaedefter.bat',
+    'C:\\Program Files\\LucaEDefter\\lucaedefter.bat',
+    'C:\\Program Files (x86)\\LucaEDefter\\lucaedefter.bat',
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'LucaEDefter', 'lucaedefter.bat')
+  ]
+  for (const y of adaylar) {
+    try { if (y && fs.existsSync(y)) return { ok: true, yol: y } } catch { /* yoksay */ }
+  }
+  return { ok: false, yol: '' }
+})
+
+ipcMain.handle('edefter-kur', async () => {
+  // Paketlenmiş kurulum dosyası
+  let kurulum = path.join(process.resourcesPath || '', 'luca-edefter', 'LucaEDefter-Kurulum.exe')
+  if (!fs.existsSync(kurulum)) kurulum = path.join(__dirname, 'resources', 'luca-edefter', 'LucaEDefter-Kurulum.exe')
+  if (!fs.existsSync(kurulum)) return { ok: false, mesaj: 'Kurulum dosyası bulunamadı.' }
+  try {
+    const child = spawn(kurulum, [], { detached: true, stdio: 'ignore', windowsHide: false })
+    child.unref()
+    logEkle('Luca E-Defter kurulumu başlatıldı.')
+    return { ok: true, mesaj: 'Kurulum penceresi açıldı. Kurulum bittikten sonra "Luca E-Defter\'ı Aç" düğmesini kullanın.' }
+  } catch (e) {
+    return { ok: false, mesaj: e && e.message }
+  }
+})
+
+ipcMain.handle('edefter-ac', async () => {
+  const d = await (async () => {
+    const adaylar = [
+      'C:\\LucaEDefter\\lucaedefter.bat',
+      'C:\\Program Files\\LucaEDefter\\lucaedefter.bat',
+      'C:\\Program Files (x86)\\LucaEDefter\\lucaedefter.bat'
+    ]
+    for (const y of adaylar) {
+      try { if (y && fs.existsSync(y)) return y } catch { /* yoksay */ }
+    }
+    return ''
+  })()
+  if (!d) return { ok: false, mesaj: 'Luca E-Defter kurulu değil. Önce "Kur" düğmesini kullanın.' }
+  try {
+    const child = spawn('cmd.exe', ['/c', 'start', '""', d], { detached: true, stdio: 'ignore', windowsHide: true, shell: false })
+    child.unref()
+    logEkle('Luca E-Defter açıldı: ' + d)
+    return { ok: true, mesaj: 'Luca E-Defter açıldı.' }
+  } catch (e) {
+    return { ok: false, mesaj: e && e.message }
+  }
+})
+
 ipcMain.handle('pencere-kucult', () => {  if (anaPencere) anaPencere.hide()
   pencereGizli = true
   guncelleTray()

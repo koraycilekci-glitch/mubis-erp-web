@@ -1,7 +1,5 @@
 # Masaustu Otomasyon - paket ciktilari ve bagimliliklar
-masaustu-otomasyon/cikti/
-masaustu-otomasyon/engine/*.exe
-masaustu-otomasyon/node_modules/
-gib-yardimci/index.eski-*.js
-gib-yardimci/dist/
-gib-yardimci/node_modules/
+cikti/
+engine/*.exe
+node_modules/
+resources/luca-edefter/*.exe

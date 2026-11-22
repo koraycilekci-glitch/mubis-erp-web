@@ -32,6 +32,7 @@
       <button class="menu-oge" data-sayfa="dvs"><span class="ikon">▩</span> POS / KDV</button>
       <button class="menu-oge" data-sayfa="tebligat"><span class="ikon">✉</span> e-Tebligat</button>
       <button class="menu-oge" data-sayfa="fis"><span class="ikon">✂</span> Fiş İşlemleri</button>
+      <button class="menu-oge" data-sayfa="edefter"><span class="ikon">ED</span> e-Defter (Luca)</button>
       <button class="menu-oge" data-sayfa="gonderim"><span class="ikon">➤</span> Gönderim</button>
       <button class="menu-oge" data-sayfa="ayarlar"><span class="ikon">⚙</span> Ayarlar</button>
       <button class="menu-oge" data-sayfa="log"><span class="ikon">≡</span> Log</button>
@@ -579,6 +580,63 @@
         </p>
       </div>
       <div class="kart"><h2>Sonuç</h2><div id="fisSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
+    </section>
+
+    <!-- ----------------------------- E-DEFTER --------------------------- -->
+    <section class="sayfa" id="sayfa-edefter">
+      <h1>e-Defter (Luca E-Defter)</h1>
+
+      <div class="kart">
+        <h2>Luca E-Defter yardımcı programı</h2>
+        <p class="ipucu ust-bosluk">
+          Luca E-Defter, elektronik defter (Yevmiye/Kebir/Berat) oluşturma,
+          doğrulama, imzalama (mali mühür) ve GİB e-Defter sayfasına gönderme
+          işlemlerini yapan resmi Luca masaüstü programıdır.
+        </p>
+        <div class="satir">
+          <div class="bilgi"><span class="etiket">Kurulum durumu</span><span id="edefterDurum" class="deger">Kontrol ediliyor…</span></div>
+          <div class="bilgi"><span class="etiket">Kurulum yolu</span><span id="edefterYol" class="deger">—</span></div>
+        </div>
+        <div class="dugme-grubu">
+          <button id="edefterKurBtn" class="dugme dugme-ana">Luca E-Defter Kur</button>
+          <button id="edefterAcBtn" class="dugme">Luca E-Defter'ı Aç</button>
+          <button id="edefterDurumBtn" class="dugme dugme-hayalet">Durumu yenile</button>
+          <span id="edefterMesaj" class="mesaj"></span>
+        </div>
+        <p class="ipucu">
+          Kurulum, program klasöründeki <code>LucaEDefter-Kurulum.exe</code> (5 MB) dosyasını çalıştırır.
+          Kurulumdan sonra Luca E-Defter kendi penceresinde açılır; smart card (mali mühür) ile imzalama
+          bu programdan yapılır.
+        </p>
+      </div>
+
+      <div class="kart">
+        <h2>GİB e-Defter sayfası</h2>
+        <p class="ipucu ust-bosluk">
+          İmzalanmış ve zip'lenmiş e-Defter dosyalarını GİB e-Defter portalına yüklemek için:
+        </p>
+        <div class="dugme-grubu">
+          <button class="dugme dugme-ana" data-ac="https://edefter.gib.gov.tr">GİB e-Defter'i aç</button>
+          <button class="dugme" data-ac="https://mubiserp.com">MUBiS ERP e-Defter sayfası</button>
+        </div>
+        <p class="ipucu">
+          Smart card imzalama yerel bir işlem olduğundan bu adım Luca E-Defter programında yapılır;
+          MUBiS bu süreci durum takibi ve dosya organizasyonuyla destekler.
+        </p>
+      </div>
+
+      <div class="kart">
+        <h2>Kısa akış</h2>
+        <ol class="ipucu" style="margin:0; padding-left:20px; line-height:1.8">
+          <li>Luca E-Defter'i kurun (yukarıdaki "Luca E-Defter Kur").</li>
+          <li>MUBiS'te fatura/beyan sorgulamalarınızı tamamlayın.</li>
+          <li>Luca E-Defter'i açın → Luca üye no + kullanıcı ile giriş.</li>
+          <li>Defter indirme (yevmiye/kebir/berat) → doğrula → mali mühür ile imzala.</li>
+          <li>Zip'lenen dosyaları GİB e-Defter portalına yükleyin.</li>
+        </ol>
+      </div>
+
+      <div class="kart"><h2>Sonuç</h2><div id="edefterSonuc" class="sonuc">Luca E-Defter kurulum durumu ve işlem sonuçları burada gösterilir.</div></div>
     </section>
 
     <!-- ----------------------------- AYARLAR --------------------------- -->

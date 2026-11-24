@@ -69,14 +69,52 @@ export async function uttsSatirlariniOku(arrayBuffer) {
     return null
   }
 
+  // Baslik esleme: GIB UTTS raporu sabit kolon duzeninde gelir
+  // (Fatura Tarihi | Fatura Numarasi | Fatura Turu | VKN TCKN | Aciklama |
+  //  Plaka | Tevkifat Orani | Ozel Matrah | %1..%20 KDV | %1..%20 Matrah | Toplam)
+  const bas = (satirlar[0] || []).map(v => String(v ?? '').toLocaleLowerCase('tr').replace(/\s+/g, ''))
+  const kolBul = (desen) => bas.findIndex(x => desen.test(x))
+  const kdvKolonlari = []
+  const matrahKolonlari = []
+  for (const oran of [1, 8, 10, 18, 20]) {
+    const k = kolBul(new RegExp(`^%${oran}'?likkdv$`))
+    const m = kolBul(new RegExp(`^%${oran}'?likmatrah$`))
+    if (k >= 0) kdvKolonlari.push({ oran, k })
+    if (m >= 0) matrahKolonlari.push({ oran, m })
+  }
+  const topKolon = kolBul(/^toplam$/)
+  const duzenli = kdvKolonlari.length > 0 && matrahKolonlari.length > 0 && topKolon >= 0
+
   const sonuc = []
   for (const s of satirlar) {
     const dolu = s.filter(v => v !== '' && v != null)
     if (!dolu.length) continue
     const tarih = tarihDuzelt(s[0])
     const faturaNo = String(s[1] ?? '').trim()
+    // s[2] = FATURA TÜRÜ ("UTTS") — ÜNVAN DEĞİL. Ünvan bu raporda yok;
+    // GİB VKN sorgusuyla (vkn-sorgula) sonradan doldurulur.
+    const unvan = ''
     const vkn = String(s[3] ?? '').trim()
     if (!tarih && !faturaNo && !vkn) continue // baslik/boş satir
+
+    if (duzenli) {
+      // Kolon adlarina gore oku — hizalama kaymalarindan etkilenmez
+      let matrah = 0, kdv = 0, oran = null, oranMatrah = 0
+      for (const k of kdvKolonlari) kdv += sayisal(s[k.k]) || 0
+      for (const m of matrahKolonlari) {
+        const deger = sayisal(s[m.m]) || 0
+        matrah += deger
+        if (deger > oranMatrah) { oranMatrah = deger; oran = m.oran }
+      }
+      const toplam = sayisal(s[topKolon])
+      if (!matrah && !kdv && !toplam) continue
+      const matrahY = +matrah.toFixed(2)
+      const kdvY = +kdv.toFixed(2)
+      const toplamY = toplam != null ? +toplam.toFixed(2) : +(matrahY + kdvY).toFixed(2)
+      sonuc.push({ tarih, faturaNo, unvan, vkn, oran: oran ?? null, matrah: matrahY, kdv: kdvY, toplam: toplamY })
+      continue
+    }
+
     const sayilar = s.map(x => sayisal(x)).filter(n => n !== null)
     if (!sayilar.length) continue
 
@@ -94,7 +132,7 @@ export async function uttsSatirlariniOku(arrayBuffer) {
         kdv = +(toplam - onceki).toFixed(2)
       }
     }
-    sonuc.push({ tarih, faturaNo, vkn, oran, matrah, kdv, toplam })
+    sonuc.push({ tarih, faturaNo, unvan, vkn, oran, matrah, kdv, toplam })
   }
   return sonuc
 }

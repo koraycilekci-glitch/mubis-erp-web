@@ -60,6 +60,7 @@ const KiraStopajListesi = lazy(() => import('./pages/KiraStopajListesi'))
 const MusteriGirisTakip = lazy(() => import('./pages/MusteriGirisTakip'))
 const KurumSifreleri = lazy(() => import('./pages/KurumSifreleri'))
 const FaturaSorgulama = lazy(() => import('./pages/FaturaSorgulama'))
+const TevkifatliFaturalar = lazy(() => import('./pages/TevkifatliFaturalar'))
 const BeyannameKontrol = lazy(() => import('./pages/BeyannameKontrol'))
 const MuhasebeKayit = lazy(() => import('./pages/MuhasebeKayit'))
 const KontrolMerkezi = lazy(() => import('./pages/KontrolMerkezi'))
@@ -278,6 +279,7 @@ function AppContent() {
           <Route path="/admin/otomasyon-belgeler" element={<OtomasyonBelgeler />} />
           <Route path="/admin/kira-stopaj" element={<KiraStopajListesi />} />
           <Route path="/admin/fatura-sorgulama" element={<FaturaSorgulama />} />
+<Route path="/admin/tevkifatli-faturalar" element={<TevkifatliFaturalar />} />
           <Route path="/admin/beyanname-kontrol" element={<BeyannameKontrol />} />
           <Route path="/admin/beyanname-gonderim" element={<BeyannameGonderim />} />
           <Route path="/admin/beyan-hazirlama" element={<BeyanHazirlama />} />

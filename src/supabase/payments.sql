@@ -67,14 +67,14 @@ BEGIN
       EXISTS (
         SELECT 1 FROM public.profiles p
         WHERE p.id = auth.uid() AND p.role IN ('admin', 'personel')
-          AND p.office_id = public.payments.office_id
+          AND (p.office_id = public.payments.office_id OR public.payments.office_id IS NULL)
       )
     )
     WITH CHECK (
       EXISTS (
         SELECT 1 FROM public.profiles p
         WHERE p.id = auth.uid() AND p.role IN ('admin', 'personel')
-          AND p.office_id = public.payments.office_id
+          AND (p.office_id = public.payments.office_id OR public.payments.office_id IS NULL)
       )
     );
   END IF;

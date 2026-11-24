@@ -467,14 +467,14 @@ const IZINLI_ISLER = [
   'beyanname-indir', 'tahakkuk-indir', 'makbuz-indir', 'eb-beyanname-indir', 'eb-tahakkuk-indir',
   'beyanname-sorgula', 'beyanname-gecici-oku',
   'gib-borc-sorgula', 'sgk-borc-sorgula', 'sgk-vizite-sorgula', 'sgk-rapor-dokumu',
-  'etebligat', 'etebligat-indir',
+  'etebligat', 'etebligat-indir', 'vergi-etebligat-sorgula', 'vergi-etebligat-belge-indir',
   'dvs-sorgula',
   'gib-odeme', 'tecilli-odeme', 'sgk-odeme',
   'defterbeyan-giris', 'defterbeyan-hesap-ozeti', 'defterbeyan-donem-sonu-gonder',
   'defterbeyan-gecici-vergi', 'defterbeyan-ortaklik-beyanlari',
   'earsiv-fatura-doldur', 'efatura-fatura-doldur', 'esmm-makbuz-doldur',
   'whatsapp-web-gonder', 'whatsapp-desktop-gonder', 'mail-gonder',
-  'toplu-belge-duzenle', 'fis-tarama', 'fis-bol',
+  'toplu-belge-duzenle', 'fis-tarama', 'fis-bol', 'luca-edefter-olustur',
   'edefter-kopyala', 'luca-hesap-ekle'
 ]
 
@@ -564,6 +564,24 @@ ipcMain.handle('dosyalar', async () => {
 
 ipcMain.handle('indirme-klasoru-ac', async () => {
   try { await shell.openPath(path.join(MOTOR_KOK, 'motor', 'indirilenler')); return { ok: true } } catch { return { ok: false } }
+})
+
+ipcMain.handle('dosya-ac', async (_e, { filtreler } = {}) => {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog(anaPencere || undefined, {
+      title: 'Dosya aç',
+      properties: ['openFile'],
+      filters: filtreler || [
+        { name: 'CSV / Metin', extensions: ['csv', 'txt'] },
+        { name: 'Tüm dosyalar', extensions: ['*'] }
+      ]
+    })
+    if (canceled || !filePaths || !filePaths.length) return { ok: false, iptal: true }
+    const icerik = fs.readFileSync(filePaths[0], 'utf8')
+    return { ok: true, yol: filePaths[0], icerik }
+  } catch (e) {
+    return { ok: false, mesaj: e && e.message }
+  }
 })
 
 ipcMain.handle('dosya-kaydet', async (_e, { ad, icerik }) => {

@@ -282,6 +282,118 @@ $('sgkBorcBtn').addEventListener('click', async () => {
 
 // ------------------------------------------------------------------- DVS
 
+// Toplu seçim durumları
+const dvsSecili = new Set()
+const tebSecili = new Set()
+const borcSecili = new Set()
+const TOPLU_SECIM = { dvs: dvsSecili, teb: tebSecili, borc: borcSecili }
+
+function topluKaynak() {
+  // Mükellef Bilgileri sayfasındaki ortak liste
+  if (typeof mukellefler !== 'undefined' && mukellefler.length) return mukellefler
+  if (typeof eiMusteriler !== 'undefined' && eiMusteriler.length) return eiMusteriler
+  return []
+}
+
+function topluCiz(prefix) {
+  const liste = topluKaynak()
+  const secili = TOPLU_SECIM[prefix]
+  const govde = $(prefix + 'Satirlar')
+  const ozet = $(prefix + 'Ozet')
+  if (!govde || !secili) return
+  const kolon = prefix === 'borc' ? 8 : (prefix === 'teb' ? 7 : 6)
+  if (!liste.length) {
+    govde.innerHTML = '<tr><td colspan="' + kolon + '" class="bos">Mükellef listesi boş. Önce Mükellef Bilgileri sayfasından listeyi getirin.</td></tr>'
+    if (ozet) ozet.textContent = ''
+    return
+  }
+  const girdi = (i, alan, deger, gizli) => '<input class="toplu-girdi" type="' + (gizli ? 'password' : 'text') + '" data-idx="' + i + '" data-alan="' + alan + '" value="' + kacis(deger || '') + '" autocomplete="off" />'
+  govde.innerHTML = liste.map((m, i) => {
+    const isaret = secili.has(i) ? ' checked' : ''
+    let ek = ''
+    if (prefix === 'dvs') {
+      ek = '<td>' + girdi(i, 'gibKullanici', m.gibKullanici, false) + '</td>' +
+        '<td>' + girdi(i, 'gibParola', m.gibParola, true) + '</td>'
+    } else if (prefix === 'teb') {
+      ek = '<td>' + girdi(i, 'gibKullanici', m.gibKullanici, false) + '</td>' +
+        '<td>' + girdi(i, 'gibParola', m.gibParola, true) + '</td>' +
+        '<td>' + girdi(i, 'edevletSifre', m.edevletSifre, true) + '</td>'
+    } else if (prefix === 'borc') {
+      ek = '<td>' + girdi(i, 'gibKullanici', m.gibKullanici, false) + '</td>' +
+        '<td>' + girdi(i, 'gibParola', m.gibParola, true) + '</td>' +
+        '<td>' + girdi(i, 'sgkKullanici', m.sgkKullanici, false) + '</td>' +
+        '<td>' + girdi(i, 'sgkSistemSifre', m.sgkSistemSifre, true) + '</td>'
+    }
+    return '<tr' + ((m.gibKullanici && !m.gibParola) ? ' class="eksik"' : '') + '>' +
+      '<td><input type="checkbox" data-idx="' + i + '"' + isaret + ' /></td>' +
+      '<td>' + kacis(m.kisaAd || '—') + '</td>' +
+      '<td>' + kacis(m.ad || '—') + '</td>' +
+      '<td>' + kacis(m.kimlik || '—') + '</td>' +
+      ek +
+      '</tr>'
+  }).join('')
+  const eksik = liste.filter((m) => m.gibKullanici && !m.gibParola).length
+  if (ozet) {
+    ozet.textContent = liste.length + ' mükellef · ' + secili.size + ' seçili' +
+      (eksik ? ' · ' + eksik + ' kayıtta GİB parolası boş (tablodan yazabilirsiniz)' : '')
+  }
+}
+
+function topluModDegistir(prefix) {
+  const mod = $(prefix + 'Mod').value
+  const tekKart = $(prefix + 'TekKart')
+  const topluKart = $(prefix + 'TopluKart')
+  const tekMi = mod !== 'toplu'
+  if (tekKart) tekKart.style.display = tekMi ? '' : 'none'
+  if (topluKart) topluKart.style.display = tekMi ? 'none' : ''
+  if (!tekMi) topluCiz(prefix)
+}
+
+function topluSecimBagla(prefix) {
+  const secili = TOPLU_SECIM[prefix]
+  const govde = $(prefix + 'Satirlar')
+  if (!govde || !secili) return
+  govde.addEventListener('change', (e) => {
+    const cb = e.target.closest('input[type="checkbox"]')
+    if (!cb) return
+    const idx = Number(cb.dataset.idx)
+    if (cb.checked) secili.add(idx)
+    else secili.delete(idx)
+    topluCiz(prefix)
+  })
+  // Tabloda şifre / kullanıcı adı düzenlemesi: kayda ve programa yaz
+  govde.addEventListener('input', (e) => {
+    const el = e.target.closest('input.toplu-girdi')
+    if (!el) return
+    const idx = Number(el.dataset.idx)
+    const alan = el.dataset.alan
+    const liste = topluKaynak()
+    if (!liste[idx] || !alan) return
+    liste[idx][alan] = el.value
+    // Ortak listeleri senkronla + kalıcı kaydet
+    try {
+      if (typeof mukellefler !== 'undefined' && mukellefler[idx]) mukellefler[idx][alan] = el.value
+      if (typeof eiMusteriler !== 'undefined' && eiMusteriler[idx]) eiMusteriler[idx][alan] = el.value
+      localStorage.setItem('mubis_mukellefler', JSON.stringify(mukellefler))
+    } catch { /* yoksay */ }
+  })
+  $(prefix + 'TumSecBtn').addEventListener('click', () => {
+    const liste = topluKaynak()
+    if (secili.size === liste.length) secili.clear()
+    else liste.forEach((_, i) => secili.add(i))
+    topluCiz(prefix)
+  })
+  $(prefix + 'TemizleBtn').addEventListener('click', () => {
+    secili.clear()
+    topluCiz(prefix)
+  })
+  $(prefix + 'Mod').addEventListener('change', () => topluModDegistir(prefix))
+}
+
+topluSecimBagla('dvs')
+topluSecimBagla('teb')
+topluSecimBagla('borc')
+
 $('dvsBtn').addEventListener('click', async () => {
   await isCalistir('dvs-sorgula', {
     kullaniciKodu: $('dvsKullanici').value.trim(),
@@ -292,13 +404,144 @@ $('dvsBtn').addEventListener('click', async () => {
   }, { btn: $('dvsBtn'), mesajId: 'dvsMesaj', sonucId: 'dvsSonuc' })
 })
 
+$('dvsTopluBtn').addEventListener('click', async () => {
+  const liste = topluKaynak()
+  if (!liste.length) { mesaj('dvsTopluMesaj', 'Mükellef listesi boş. Önce Mükellef Bilgileri sayfasından listeyi getirin.', 'hatali'); return }
+  if (!dvsSecili.size) { mesaj('dvsTopluMesaj', 'En az bir mükellef seçin.', 'hatali'); return }
+  const yil = ($('dvsYil').value || String(bugun.getFullYear())).trim()
+  const ay = Number($('dvsAy').value)
+  const tur = $('dvsTur').value
+  const secilenler = Array.from(dvsSecili).sort((a, b) => a - b).map((i) => liste[i])
+  dugmeBeklet($('dvsTopluBtn'), true, 'Sorgulanıyor…')
+  const sonuclar = []
+  let basarili = 0
+  for (let k = 0; k < secilenler.length; k++) {
+    const m = secilenler[k]
+    mesaj('dvsTopluMesaj', `(${k + 1}/${secilenler.length}) ${m.kisaAd || m.ad} sorgulanıyor…`)
+    try {
+      const j = await window.mubis.isCalistir('dvs-sorgula', {
+        kullaniciKodu: m.gibKullanici || '',
+        parola: m.gibParola || '',
+        yil: yil,
+        ay: ay,
+        tur: tur,
+        shortName: m.kisaAd || '',
+        fullName: m.ad || '',
+        vkn: m.kimlik || ''
+      })
+      const ok = j && j.success !== false
+      if (ok) basarili++
+      sonuclar.push({ m, ok, mesaj: (j && (j.not || j.error)) || (ok ? 'tamam' : 'hata') })
+    } catch (e) {
+      sonuclar.push({ m, ok: false, mesaj: e && e.message })
+    }
+  }
+  dugmeBeklet($('dvsTopluBtn'), false)
+  $('dvsSonuc').textContent = 'Toplu sorgu: ' + basarili + '/' + secilenler.length + ' başarılı\n\n' +
+    sonuclar.map((r) => (r.ok ? '✓ ' : '✗ ') + (r.m.kisaAd || r.m.ad) + ' — ' + r.mesaj).join('\n')
+  mesaj('dvsTopluMesaj', basarili + '/' + secilenler.length + ' tamamlandı.', basarili === secilenler.length ? 'basarili' : 'hatali')
+})
+
+// Borç toplu sorgu
+$('borcTopluBtn').addEventListener('click', async () => {
+  const liste = topluKaynak()
+  if (!liste.length) { mesaj('borcTopluMesaj', 'Mükellef listesi boş. Önce Mükellef Bilgileri sayfasından listeyi getirin.', 'hatali'); return }
+  if (!borcSecili.size) { mesaj('borcTopluMesaj', 'En az bir mükellef seçin.', 'hatali'); return }
+  const tur = $('borcTur').value
+  const turler = tur === 'hepsi' ? ['vergi', 'sgk'] : [tur]
+  const secilenler = Array.from(borcSecili).sort((a, b) => a - b).map((i) => liste[i])
+  dugmeBeklet($('borcTopluBtn'), true, 'Sorgulanıyor…')
+  const sonuclar = []
+  let basarili = 0
+  for (let k = 0; k < secilenler.length; k++) {
+    const m = secilenler[k]
+    mesaj('borcTopluMesaj', `(${k + 1}/${secilenler.length}) ${m.kisaAd || m.ad} sorgulanıyor…`)
+    let ok = true
+    const notlar = []
+    for (const t of turler) {
+      try {
+        let j
+        if (t === 'vergi') {
+          j = await window.mubis.isCalistir('gib-borc-sorgula', {
+            kullaniciKodu: m.gibKullanici || '', parola: m.gibParola || '',
+            shortName: m.kisaAd || '', fullName: m.ad || '', vkn: m.kimlik || ''
+          })
+        } else {
+          j = await window.mubis.isCalistir('sgk-borc-sorgula', {
+            kullaniciAdi: m.sgkKullanici || '', isyeriKodu: m.sgkIsyeriKodu || '',
+            sistemSifre: m.sgkSistemSifre || '', isyeriSifre: m.sgkIsyeriSifresi || '',
+            shortName: m.kisaAd || '', fullName: m.ad || '', vkn: m.kimlik || ''
+          })
+        }
+        if (!j || j.success === false) { ok = false; notlar.push(t + ': ' + ((j && (j.error || j.not)) || 'hata')) }
+        else notlar.push(t + ': tamam')
+      } catch (e) {
+        ok = false; notlar.push(t + ': ' + (e && e.message))
+      }
+    }
+    if (ok) basarili++
+    sonuclar.push({ m, ok, mesaj: notlar.join(' · ') })
+  }
+  dugmeBeklet($('borcTopluBtn'), false)
+  $('borcSonuc').textContent = 'Toplu sorgu: ' + basarili + '/' + secilenler.length + ' başarılı\n\n' +
+    sonuclar.map((r) => (r.ok ? '✓ ' : '✗ ') + (r.m.kisaAd || r.m.ad) + ' — ' + r.mesaj).join('\n')
+  mesaj('borcTopluMesaj', basarili + '/' + secilenler.length + ' tamamlandı.', basarili === secilenler.length ? 'basarili' : 'hatali')
+})
+
 // -------------------------------------------------------------- TEBLİGAT
 
+// Tür bazlı tebligat sorgusu: vergi (Dijital VD) / sgk (e-Devlet) / ikisi
+async function tebligatCalistir(m, tur) {
+  const turler = tur === 'hepsi' ? ['vergi', 'sgk'] : [tur]
+  let ok = true
+  const notlar = []
+  for (const t of turler) {
+    try {
+      let j
+      if (t === 'vergi') {
+        j = await window.mubis.isCalistir('vergi-etebligat-sorgula', {
+          kullaniciKodu: m.gibKullanici || '',
+          parola: m.gibParola || '',
+          shortName: m.kisaAd || '',
+          fullName: m.ad || '',
+          vkn: m.kimlik || ''
+        })
+      } else {
+        j = await window.mubis.isCalistir('etebligat-indir', {
+          kaynak: 'sgk',
+          tc: m.kimlik || '',
+          edevletSifre: m.edevletSifre || '',
+          shortName: m.kisaAd || '',
+          fullName: m.ad || '',
+          vkn: m.kimlik || ''
+        })
+      }
+      if (!j || j.success === false) { ok = false; notlar.push(t + ': ' + ((j && (j.error || j.not)) || 'hata')) }
+      else notlar.push(t + ': tamam')
+    } catch (e) {
+      ok = false
+      notlar.push(t + ': ' + (e && e.message))
+    }
+  }
+  return { ok, mesaj: notlar.join(' · ') }
+}
+
 $('tebSorguBtn').addEventListener('click', async () => {
-  await isCalistir('etebligat', {
-    kullaniciKodu: $('tebKullanici').value.trim(),
-    parola: $('tebParola').value.trim()
-  }, { btn: $('tebSorguBtn'), mesajId: 'tebMesaj', sonucId: 'tebSonuc' })
+  const m = {
+    kisaAd: 'Tek mükellef',
+    gibKullanici: $('tebKullanici').value.trim(),
+    gibParola: $('tebParola').value.trim(),
+    kimlik: $('tebTc').value.trim(),
+    edevletSifre: $('tebEdevlet').value
+  }
+  dugmeBeklet($('tebSorguBtn'), true, 'Sorgulanıyor…')
+  try {
+    const r = await tebligatCalistir(m, $('tebTur').value)
+    $('tebSonuc').textContent = (r.ok ? '✓ ' : '✗ ') + r.mesaj
+    mesaj('tebMesaj', r.ok ? 'Tamamlandı.' : 'Hata: ' + r.mesaj, r.ok ? 'basarili' : 'hatali')
+  } finally {
+    dugmeBeklet($('tebSorguBtn'), false)
+  }
 })
 
 $('tebIndirBtn').addEventListener('click', async () => {
@@ -306,6 +549,28 @@ $('tebIndirBtn').addEventListener('click', async () => {
     kullaniciKodu: $('tebKullanici').value.trim(),
     parola: $('tebParola').value.trim()
   }, { btn: $('tebIndirBtn'), mesajId: 'tebMesaj', sonucId: 'tebSonuc' })
+})
+
+$('tebTopluSorguBtn').addEventListener('click', async () => {
+  const liste = topluKaynak()
+  if (!liste.length) { mesaj('tebTopluMesaj', 'Mükellef listesi boş. Önce Mükellef Bilgileri sayfasından listeyi getirin.', 'hatali'); return }
+  if (!tebSecili.size) { mesaj('tebTopluMesaj', 'En az bir mükellef seçin.', 'hatali'); return }
+  const tur = $('tebTur').value
+  const secilenler = Array.from(tebSecili).sort((a, b) => a - b).map((i) => liste[i])
+  dugmeBeklet($('tebTopluSorguBtn'), true, 'Sorgulanıyor…')
+  const sonuclar = []
+  let basarili = 0
+  for (let k = 0; k < secilenler.length; k++) {
+    const m = secilenler[k]
+    mesaj('tebTopluMesaj', `(${k + 1}/${secilenler.length}) ${m.kisaAd || m.ad} sorgulanıyor…`)
+    const r = await tebligatCalistir(m, tur)
+    if (r.ok) basarili++
+    sonuclar.push({ m, ok: r.ok, mesaj: r.mesaj })
+  }
+  dugmeBeklet($('tebTopluSorguBtn'), false)
+  $('tebSonuc').textContent = 'Toplu sorgu: ' + basarili + '/' + secilenler.length + ' başarılı\n\n' +
+    sonuclar.map((r) => (r.ok ? '✓ ' : '✗ ') + (r.m.kisaAd || r.m.ad) + ' — ' + r.mesaj).join('\n')
+  mesaj('tebTopluMesaj', basarili + '/' + secilenler.length + ' tamamlandı.', basarili === secilenler.length ? 'basarili' : 'hatali')
 })
 
 // -------------------------------------------------------------------- FİŞ
@@ -377,7 +642,7 @@ function mukCiz() {
   })
 
   if (!liste.length) {
-    govde.innerHTML = '<tr><td colspan="11" class="bos">' +
+    govde.innerHTML = '<tr><td colspan="12" class="bos">' +
       (mukellefler.length ? 'Aramaya uyan kayıt yok.' : 'Henüz liste getirilmedi.') + '</td></tr>'
   } else {
     govde.innerHTML = liste.map((m, i) => {
@@ -387,7 +652,8 @@ function mukCiz() {
         mukHucre(m.vdSifreOtomatik),
         mukHucre(m.sgkKullanici),
         mukHucre(m.sgkIsyeriKodu),
-        mukHucre(m.sgkSistemSifre || m.sgkIsyeriSifresi)
+        mukHucre(m.sgkSistemSifre),
+        mukHucre(m.sgkIsyeriSifresi)
       ]
       return '<tr>' +
         '<td>' + (i + 1) + '</td>' +
@@ -443,6 +709,11 @@ $('mukGetirBtn').addEventListener('click', async () => {
     const liste = Array.isArray(j.firmalar) ? j.firmalar : (Array.isArray(j.sirketler) ? j.sirketler : [])
     mukellefler = liste.map((m, i) => Object.assign({}, m, { __idx: i }))
     mukCiz()
+    // e-Defter İşlemleri sayfasıyla da paylaş
+    eiMusteriler = mukellefler.map((m, i) => Object.assign({}, m, { __idx: i }))
+    eiSecili = new Set()
+    eiCiz()
+    topluCiz('dvs'); topluCiz('teb'); topluCiz('borc')
     const gibVar = mukellefler.filter((m) => m.gibKullanici).length
     mesaj('mukMesaj', `${mukellefler.length} mükellef getirildi (${gibVar} tanesinde GİB kullanıcı adı var).`, 'basarili')
   } catch (e) {
@@ -458,6 +729,88 @@ $('mukAra').addEventListener('input', () => mukCiz())
 $('mukSatirlar').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-kopya]')
   if (btn) mukSatirKopyala(Number(btn.dataset.kopya))
+})
+
+$('mukKaydetBtn').addEventListener('click', async () => {
+  if (!mukellefler.length) { mesaj('mukMesaj', 'Önce Luca\'dan mükellefleri getirin.', 'hatali'); return }
+  // Program içine kaydet (localStorage)
+  try {
+    localStorage.setItem('mubis_mukellefler', JSON.stringify(mukellefler))
+    mesaj('mukMesaj', mukellefler.length + ' mükellef programa kaydedildi.', 'basarili')
+  } catch (e) {
+    mesaj('mukMesaj', 'Kaydedilemedi: ' + (e && e.message), 'hatali')
+  }
+  // Ayrıca CSV olarak da kaydet
+  const basliklar = [
+    'Kısa Ad', 'Unvan', 'VKN/TCKN', 'GİB Kullanıcı Adı', 'GİB Parola', 'V.D. Şifresi',
+    'SGK Kullanıcı Adı', 'SGK İşyeri Kodu', 'SGK Sistem Şifresi', 'SGK İşyeri Şifresi'
+  ]
+  const kacisCsv = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'
+  const satirlar = [basliklar.map(kacisCsv).join(';')]
+  for (const m of mukellefler) {
+    satirlar.push([
+      m.kisaAd, m.ad, m.kimlik, m.gibKullanici, m.gibParola, m.vdSifreOtomatik,
+      m.sgkKullanici, m.sgkIsyeriKodu, m.sgkSistemSifre, m.sgkIsyeriSifresi
+    ].map(kacisCsv).join(';'))
+  }
+  const r = await window.mubis.dosyaKaydet({
+    ad: 'mubis-mukellef-bilgileri-' + new Date().toISOString().slice(0, 10) + '.csv',
+    icerik: satirlar.join('\r\n')
+  })
+  if (r && r.ok) mesaj('mukMesaj', 'Kaydedildi: ' + r.yol, 'basarili')
+  else if (r && !r.iptal) mesaj('mukMesaj', 'Kaydedilemedi: ' + (r.mesaj || ''), 'hatali')
+})
+
+$('mukIceAktarBtn').addEventListener('click', async () => {
+  try {
+    const r = await window.mubis.dosyaAc()
+    if (!r || r.iptal) return
+    if (!r.ok) { mesaj('mukMesaj', 'Dosya açılamadı: ' + (r.mesaj || ''), 'hatali'); return }
+    const icerik = r.icerik || ''
+    const satirlar = icerik.split(/\r?\n/).filter((s) => s.trim())
+    if (satirlar.length < 2) { mesaj('mukMesaj', 'Dosya boş veya geçersiz.', 'hatali'); return }
+    // CSV parse (noktalı virgül veya tab)
+    const ayirici = satirlar[0].includes(';') ? ';' : '\t'
+    const basliklar = satirlar[0].split(ayirici).map((s) => s.replace(/^"|"$/g, '').trim().toLocaleLowerCase('tr'))
+    const idxKisa = basliklar.findIndex((b) => b.includes('kisa') || b.includes('kısa'))
+    const idxAd = basliklar.findIndex((b) => b.includes('unvan') || b.includes('ad'))
+    const idxKimlik = basliklar.findIndex((b) => b.includes('vkn') || b.includes('tckn') || b.includes('kimlik'))
+    const idxGibKul = basliklar.findIndex((b) => b.includes('gib') && b.includes('kullan'))
+    const idxGibPar = basliklar.findIndex((b) => b.includes('gib') && b.includes('parola'))
+    const idxVd = basliklar.findIndex((b) => b.includes('v.d') || b.includes('vd şifre') || b.includes('vd sifre'))
+    const idxSgkKul = basliklar.findIndex((b) => b.includes('sgk') && b.includes('kullan'))
+    const idxSgkIsy = basliklar.findIndex((b) => b.includes('sgk') && (b.includes('isyeri') || b.includes('işyeri')) && b.includes('kod'))
+    const idxSgkSis = basliklar.findIndex((b) => b.includes('sgk') && b.includes('sistem'))
+    const idxSgkIsySif = basliklar.findIndex((b) => b.includes('sgk') && (b.includes('isyeri') || b.includes('işyeri')) && b.includes('sifre'))
+    const parseSatir = (satir) => {
+      const hucreler = satir.split(ayirici).map((s) => s.replace(/^"|"$/g, '').trim())
+      return {
+        kisaAd: idxKisa >= 0 ? hucreler[idxKisa] : '',
+        ad: idxAd >= 0 ? hucreler[idxAd] : '',
+        kimlik: idxKimlik >= 0 ? hucreler[idxKimlik] : '',
+        gibKullanici: idxGibKul >= 0 ? hucreler[idxGibKul] : '',
+        gibParola: idxGibPar >= 0 ? hucreler[idxGibPar] : '',
+        vdSifreOtomatik: idxVd >= 0 ? hucreler[idxVd] : '',
+        sgkKullanici: idxSgkKul >= 0 ? hucreler[idxSgkKul] : '',
+        sgkIsyeriKodu: idxSgkIsy >= 0 ? hucreler[idxSgkIsy] : '',
+        sgkSistemSifre: idxSgkSis >= 0 ? hucreler[idxSgkSis] : '',
+        sgkIsyeriSifresi: idxSgkIsySif >= 0 ? hucreler[idxSgkIsySif] : ''
+      }
+    }
+    const liste = satirlar.slice(1).map(parseSatir).filter((m) => m.kisaAd || m.ad)
+    if (!liste.length) { mesaj('mukMesaj', 'Dosyada geçerli mükellef kaydı bulunamadı.', 'hatali'); return }
+    mukellefler = liste.map((m, i) => Object.assign({}, m, { __idx: i }))
+    eiMusteriler = mukellefler.map((m, i) => Object.assign({}, m, { __idx: i }))
+    eiSecili = new Set()
+    mukCiz()
+    eiCiz()
+    topluCiz('dvs'); topluCiz('teb'); topluCiz('borc')
+    // Programa kaydet
+    localStorage.setItem('mubis_mukellefler', JSON.stringify(mukellefler))
+    mesaj('mukMesaj', liste.length + ' mükellef içe aktarıldı ve programa kaydedildi.', 'basarili')
+  } catch (e) {
+    mesaj('mukMesaj', 'Hata: ' + (e && e.message), 'hatali')
+  }
 })
 
 $('mukCsvBtn').addEventListener('click', async () => {
@@ -730,6 +1083,10 @@ $('eiListeBtn').addEventListener('click', async () => {
     eiMusteriler = liste.map((m, i) => Object.assign({}, m, { __idx: i }))
     eiSecili = new Set()
     eiCiz()
+    // Mükellef Bilgileri sayfasıyla da paylaş
+    mukellefler = eiMusteriler.map((m, i) => Object.assign({}, m, { __idx: i }))
+    mukCiz()
+    topluCiz('dvs'); topluCiz('teb'); topluCiz('borc')
     const gibVar = eiMusteriler.filter((m) => m.gibKullanici).length
     mesaj('eiMesaj', `${eiMusteriler.length} mükellef getirildi (${gibVar} tanesinde GİB bilgisi var).`, 'basarili')
   } catch (e) {
@@ -994,8 +1351,19 @@ window.mubis.durumDinle((d) => ekranaYaz(d))
 window.mubis.logDinle((m) => logYaz(m))
 
 varsayilanlariDoldur()
-yenile()
-lucaDoldur()
-ayarlariDoldur()
-efEdefterDurum()
-setInterval(yenile, 6000)
+// Mükellef bilgilerini programdan yükle (kayıtlı varsa)
+try {
+  const kayitli = localStorage.getItem('mubis_mukellefler')
+  if (kayitli) {
+    const liste = JSON.parse(kayitli)
+    if (Array.isArray(liste) && liste.length) {
+      mukellefler = liste.map((m, i) => Object.assign({}, m, { __idx: i }))
+      eiMusteriler = mukellefler.map((m, i) => Object.assign({}, m, { __idx: i }))
+      mukCiz()
+      eiCiz()
+      topluCiz('dvs')
+      topluCiz('teb')
+      topluCiz('borc')
+    }
+  }
+} catch (e) { /* yoksay */ }

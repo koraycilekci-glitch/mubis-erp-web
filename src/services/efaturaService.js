@@ -728,7 +728,14 @@ async function uttsExcelDosyalariniYukle({ client, yil, ay, dosyalar, kaynak, il
       if (error || !Array.isArray(data)) throw new Error('Mevcut UTTS kayıtları okunamadı: ' + (error?.message || 'yanıt eksik'))
       for (const row of data) {
         const numara = String(row.fatura_no || '').trim()
-        if (numaralar.has(numara) && (!row.tarih || !/^\d{10,11}$/.test(String(row.karsi_vkn || '').trim()))) throw new Error('Mevcut UTTS kaydının kimliği eksik; tekrar kontrolü yapılamıyor')
+        // 2.8.75: kimligi eksik ESKI kayitlar (VKN/tarih bos) artik aktarimi
+        // durdurmuyor — bu kayitlar "eski" sayilir ve yeni satirlarla
+        // guncellenir/ yeniden yazilir. Boylece "Mevcut UTTS kaydinin kimligi
+        // eksik" hatasi yuzunden UTTS yuklemesi tamamen bloke olmaz.
+        if (numaralar.has(numara) && (!row.tarih || !/^\d{10,11}$/.test(String(row.karsi_vkn || '').trim()))) {
+          console.warn('[utts] kimligi eksik eski kayit yenilenecek:', row.fatura_uuid || numara)
+          continue
+        }
         const key = anahtar(row)
         if (!tumAnahtarlar.has(key)) continue
         if (mevcut.has(key)) throw new Error('Mevcut UTTS kayıtlarında tekrar bulundu; aktarım durduruldu')
@@ -756,7 +763,7 @@ async function uttsExcelDosyalariniYukle({ client, yil, ay, dosyalar, kaynak, il
         const kayitlar = await Promise.all(yeni.map(async row => {
           const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(anahtar(row)))
           const uuid = 'utts_' + Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('')
-          return { client_id: client.id, yon: 'gelen', tur: 'utts', fatura_turu: 'UTTS', fatura_uuid: uuid, fatura_no: row.faturaNo, tarih: row.tarih, karsi_vkn: row.vkn, karsi_unvan: '', tutar: row.toplam, matrah: row.matrah, kdv: row.kdv, para_birimi: 'TRY', pdf_url: '', xml_url: url, html_url: '', sorgu_ts: new Date().toISOString() }
+          return { client_id: client.id, yon: 'gelen', tur: 'utts', fatura_turu: 'UTTS', fatura_uuid: uuid, fatura_no: row.faturaNo, tarih: row.tarih, karsi_vkn: row.vkn, karsi_unvan: row.unvan || '', tutar: row.toplam, matrah: row.matrah, kdv: row.kdv, para_birimi: 'TRY', pdf_url: '', xml_url: url, html_url: '', sorgu_ts: new Date().toISOString() }
         }))
         const { error } = await supabase.from('efatura_faturalar').upsert(kayitlar, { onConflict: 'client_id,yon,tur,fatura_uuid' })
         if (error) throw new Error('UTTS kayıtları yazılamadı: ' + error.message)
@@ -2138,13 +2145,12 @@ export async function karsiTarafOnar(clientId, adaylar = null) {
         .limit(400)
       liste = data || []
     }
-    const supheli = liste.filter(f => {
-      const v = String(f.karsi_vkn || '').replace(/\s/g, '')
-      const u = String(f.karsi_unvan || '').trim().toLocaleUpperCase('tr')
-      if (mv && v && v === mv) return true
-      if (ad && u && u === ad) return true
-      return false
-    }).slice(0, 40)
+    // 2.8.74: Tüm XML'i olan kayıtlar işlenir (sadece "şüpheli" olanlar değil).
+    // Eski kayıtlarda yön (alınan/satış) hatalı olabiliyor; XML'den yeniden
+    // hesaplanıp düzeltilir. En fazla 40 kayıt / tur.
+    const supheli = (liste || [])
+      .filter(f => f.xml_url)
+      .slice(0, 40)
     if (!supheli.length) return 0
     let onarilan = 0
     for (const f of supheli) {
@@ -2653,10 +2659,15 @@ export async function afaDokumuYukle({ client, dosya, tip, yil, ay, otomatik = f
   const temelUuid = uuidAdlandan(temel) || temel
   const gumrukModu = tip === 'gumruk'
   const zRaporuModu = tip === 'zraporu'
+  // 2.8.75: UTTS Excel dosyalari (utts_*.xlsx) AFA/gider dokumu DEGILDIR —
+  // kendi kolon duzeni vardir ve UTTS kaydi olarak yazilmalidir.
+  const uttsModu = /utts/i.test(dosya.name || '') || tip === 'utts'
 
   let liste = []
   try {
-    liste = zRaporuModu
+    liste = uttsModu
+      ? await uttsOtomatikSatirlariniOku(await dosya.arrayBuffer())
+      : zRaporuModu
       ? await zRaporuSatirlariniOku(await dosya.arrayBuffer(), dosya.name)
       : await afaDokumSatirlariniOku(await dosya.arrayBuffer(), dosya.name, otomatik)
     if (otomatik) {
@@ -2667,7 +2678,9 @@ export async function afaDokumuYukle({ client, dosya, tip, yil, ay, otomatik = f
     return { ok: false, sayi: 0, not: 'Döküm okunamadı: ' + (e?.message || 'bilinmeyen hata') }
   }
   if (!liste.length) {
-    return { ok: false, sayi: 0, not: zRaporuModu
+    return { ok: false, sayi: 0, not: uttsModu
+      ? 'Dökümde UTTS satırı bulunamadı. GİB UTTS raporu olmalı (Fatura Tarihi | Fatura Numarası | Fatura Türü | VKN/TCKN | ... | Toplam).'
+      : zRaporuModu
       ? 'Dökümde Z raporu satırı bulunamadı. Yapı: TARİH; EVRAK NO; AÇIKLAMA; SATIŞ...; NAKİT; KREDİ K; MATRAH...; KDV...'
       : 'Dökümde fatura satırı bulunamadı. Luca "AFA" dökümü olmalı (TARİH | FATURA NO | ÜNVANI | KDV ORANI | KDV MATRAHI | KDV TUTARI | TOPLAM).' }
   }
@@ -2711,7 +2724,7 @@ export async function afaDokumuYukle({ client, dosya, tip, yil, ay, otomatik = f
         .select('id,fatura_no,tarih,kdv,matrah')
         .eq('client_id', client.id)
         .eq('yon', zRaporuModu ? 'giden' : 'gelen')
-        .in('tur', gumrukModu ? ['gumruk'] : ['efatura', 'earsiv'])
+        .in('tur', gumrukModu ? ['gumruk'] : (uttsModu ? ['utts'] : ['efatura', 'earsiv']))
         .order('id'))
       if (error) throw error
       for (const satir of (data || [])) {
@@ -2734,13 +2747,13 @@ export async function afaDokumuYukle({ client, dosya, tip, yil, ay, otomatik = f
     kayitlar.push({
       client_id: client.id,
       yon: zRaporuModu ? 'giden' : 'gelen',
-      tur: gumrukModu ? 'gumruk' : 'efatura',
-      fatura_turu: gumrukModu ? 'ITHALAT' : (zRaporuModu ? 'Z RAPORU' : 'GİDER DÖKÜMÜ'),
+      tur: gumrukModu ? 'gumruk' : (uttsModu ? 'utts' : 'efatura'),
+      fatura_turu: gumrukModu ? 'ITHALAT' : (uttsModu ? 'UTTS' : (zRaporuModu ? 'Z RAPORU' : 'GİDER DÖKÜMÜ')),
       fatura_uuid: `${temelUuid}-r${r.kayitSira ?? i}`,
       fatura_no: faturaNo || `${i + 1}`,
       tarih: r.tarih || null,
-      karsi_vkn: '',
-      karsi_unvan: zRaporuModu ? (r.aciklama || 'Z RAPORU') : r.unvan || '',
+      karsi_vkn: uttsModu ? (r.vkn || '') : '',
+      karsi_unvan: zRaporuModu ? (r.aciklama || 'Z RAPORU') : (r.unvan || ''),
       tutar: r.toplam ?? null,
       matrah: r.matrah ?? null,
       kdv: r.kdv ?? null,
@@ -2755,14 +2768,17 @@ export async function afaDokumuYukle({ client, dosya, tip, yil, ay, otomatik = f
   // 500'er parselarla yaz
   let yazilan = 0
   for (let i = 0; i < kayitlar.length; i += 500) {
-    const { error } = await supabase.from('efatura_faturalar').insert(kayitlar.slice(i, i + 500))
+    // UTTS kayitlari tekrar yuklenebilir — cakisma durumunda guncelle
+    const { error } = uttsModu
+      ? await supabase.from('efatura_faturalar').upsert(kayitlar.slice(i, i + 500), { onConflict: 'client_id,yon,tur,fatura_uuid' })
+      : await supabase.from('efatura_faturalar').insert(kayitlar.slice(i, i + 500))
     if (error) {
       return { ok: false, sayi: yazilan, not: 'Kayıtlar yazılamadı: ' + (error.message || '') }
     }
     yazilan += Math.min(500, kayitlar.length - i)
   }
 
-  const etiket = gumrukModu ? 'ithalat (gümrük)' : (zRaporuModu ? 'Z raporu' : 'gider fiş/fatura')
+  const etiket = gumrukModu ? 'ithalat (gümrük)' : (zRaporuModu ? 'Z raporu' : (uttsModu ? 'UTTS' : 'gider fiş/fatura'))
   return {
     ok: true,
     sayi: yazilan,

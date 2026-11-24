@@ -85,7 +85,7 @@ export default function ClientDetail() {
   const istenCikisBildirgeRef = useRef(null)
   // Muhasebe ucreti
   const [accountingFee, setAccountingFee] = useState(null)
-  const [feeForm, setFeeForm] = useState({ onceki_donem_borc: '', defter_tasdik_ucreti: '', aylik_ucret: '', baslangic_ay: '1', baslangic_yil: '2025', notlar: '' })
+  const [feeForm, setFeeForm] = useState({ onceki_donem_borc: '', defter_tasdik_ucreti: '', aylik_ucret: '', baslangic_ay: '1', baslangic_yil: '2025', notlar: '', muhasebe_ucreti_var: true })
   const [clientPayments, setClientPayments] = useState([])
   const [showPaymentForm, setShowPaymentForm] = useState(false)
   const [paymentForm, setPaymentForm] = useState({ tutar: '', odeme_tipi: 'eft', donem: '', aciklama: '', odeme_tarihi: new Date().toISOString().split('T')[0] })
@@ -562,7 +562,8 @@ export default function ClientDetail() {
           aylik_ucret: fee.aylik_ucret || '',
           baslangic_ay: String(fee.baslangic_ay || 1),
           baslangic_yil: String(fee.baslangic_yil || 2025),
-          notlar: fee.notlar || ''
+          notlar: fee.notlar || '',
+          muhasebe_ucreti_var: fee.muhasebe_ucreti_var !== false
         })
       }
       setClientPayments(pays)
@@ -742,7 +743,9 @@ export default function ClientDetail() {
     // Tarih alanlarini yyyy-aa-gg formatinda normalize et
     const dateFields = ['isAcilisTarihi','openDate','closeDate','eimzaStart','eimzaEnd','kiraBaslangic','kiraBitis']
     dateFields.forEach(df => {
-      if (cleanData[df] && typeof cleanData[df] === 'string' && cleanData[df].match(/^\d{2}\.\d{2}\.\d{4}$/)) {
+      if (cleanData[df] === '' || cleanData[df] === undefined) {
+        cleanData[df] = null
+      } else if (typeof cleanData[df] === 'string' && cleanData[df].match(/^\d{2}\.\d{2}\.\d{4}$/)) {
         const [g, a, y] = cleanData[df].split('.')
         cleanData[df] = `${y}-${a}-${g}`
       }
@@ -4027,13 +4030,24 @@ export default function ClientDetail() {
                 <label className="block text-sm text-gray-400 mb-1">Baslangic Yil</label>
                 <select value={feeForm.baslangic_yil} onChange={(e) => setFeeForm({...feeForm, baslangic_yil: e.target.value})}
                   className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400">
-                  {[2020,2021,2022,2023,2024,2025,2026].map(y => <option key={y} value={y}>{y}</option>)}
+                  {[2020,2021,2022,2023,2024,2025,2026,2027,2028,2029,2030].map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Notlar</label>
                 <input type="text" value={feeForm.notlar} onChange={(e) => setFeeForm({...feeForm, notlar: e.target.value})}
                   className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400" />
+              </div>
+              <div className="md:col-span-3 flex items-center gap-3 bg-blue-900/20 border border-blue-700/40 rounded-lg p-3">
+                <label className="text-sm text-gray-300">Muhasebe ücreti:</label>
+                <button type="button"
+                  onClick={() => setFeeForm(f => ({...f, muhasebe_ucreti_var: !f.muhasebe_ucreti_var}))}
+                  className={`px-4 py-1.5 rounded-lg font-semibold text-sm transition-colors ${feeForm.muhasebe_ucreti_var ? 'bg-green-500/20 text-green-300 border border-green-500/40' : 'bg-red-500/20 text-red-300 border border-red-500/40'}`}>
+                  {feeForm.muhasebe_ucreti_var ? 'Var' : 'Yok'}
+                </button>
+                <span className="text-xs text-gray-400">
+                  {feeForm.muhasebe_ucreti_var ? 'Ödeme takip listesinde görünür.' : 'Ödeme takip listesinden çıkarılır.'}
+                </span>
               </div>
             </div>
             <button onClick={handleSaveFee}

@@ -49,14 +49,13 @@ let SUNUCU_ANAHTARI = process.env.MUBIS_SUNUCU_ANAHTARI || ''
 // ------------------------------------------------------------
 let CONFIG = {}
 const exeDizini = path.dirname(process.execPath)
-const configYolu = fs.existsSync(path.join(exeDizini, 'config.json'))
-  ? path.join(exeDizini, 'config.json')
-  : path.join(__dirname, 'config.json')
+const configYolu = path.join(exeDizini, 'config.json')
 try {
   CONFIG = JSON.parse(fs.readFileSync(configYolu, 'utf8'))
   console.log('[config] config.json yuklendi')
 } catch (e) {
   console.log('[config] config.json bulunamadi - giris gerektiren isler kimlik bilgisi isteyecek')
+  CONFIG = {}
 }
 if (!SUNUCU_ANAHTARI && CONFIG.sunucu_anahtari) SUNUCU_ANAHTARI = String(CONFIG.sunucu_anahtari)
 
@@ -17903,6 +17902,34 @@ const ISLER = {
       return { ok: false, error: e && e.message || "hata" };
     }
   },
+  "luca-edefter-olustur": async (p) => {
+    const soap = require("./luca-edefter-soap");
+    const etiket = "luca-edefter-olustur";
+    const log = (m) => console.log(`[${etiket}] ${m}`);
+    try {
+      const musteriId = String(p.musteriId || p.lucaMember || p.luca_member || p.uyeNo || "").trim();
+      const kullanici = String(p.kullanici || p.lucaUsername || p.luca_username || "").trim();
+      const parola = String(p.parola || p.lucaPassword || p.luca_password || "").trim();
+      const sirketId = String(p.sirketId || p.sirket_id || "").trim();
+      const donemId = String(p.donemId || p.donem_id || "").trim();
+      const yil = String(p.yil || new Date().getFullYear());
+      const ay = String(p.ay || (new Date().getMonth() + 1));
+      if (!musteriId || !kullanici || !parola) throw new Error("Luca giris bilgileri eksik");
+      if (!sirketId || !donemId) throw new Error("Firma bilgisi eksik (sirketId/donemId)");
+      log(`basladi: musteri=${musteriId} sirket=${sirketId} donem=${donemId} ${yil}/${ay}`);
+      const sonuc = await soap.lucaDefterOlusturTam(
+        { musteriId, kullaniciAdi: kullanici, parola },
+        { sirketId, donemId },
+        yil, ay,
+        (m) => log(m)
+      );
+      log("bitti: " + JSON.stringify(sonuc).substring(0, 500));
+      return sonuc;
+    } catch (e) {
+      log("hata: " + (e && e.message));
+      return { ok: false, error: e && e.message || "hata" };
+    }
+  },
   "edefter-kopyala": async (p) => {
     try {
       const dosyalar = Array.isArray(p.dosyalar) ? p.dosyalar.map((f) => path.basename(String(f))).filter(Boolean) : [];
@@ -34027,6 +34054,7 @@ document.getElementById('gir').addEventListener('click', async () => {
     }
     disk.luca = { uyeNo, kullanici: kullanici, parola: parola };
     disk.adminMod = true;
+    fs.mkdirSync(path.dirname(configYolu), { recursive: true });
     fs.writeFileSync(configYolu, JSON.stringify(disk, null, 2));
     console.log("[ayar] Luca giris bilgileri kaydedildi (config.json) \uFFFD adminMod ACIK");
     masaustuLucaKisayolSil();
@@ -34465,7 +34493,7 @@ async function protokolIsle(gelenUrl) {
       const captchaSonuc = await guvenlikKoduDoldur(page, "gib-odeme-protokol", { buton: "sorgula" }).catch((e) => ({ ok: false, neden: "hata: " + (e?.message || e) }));
       console.log("[protokol] captcha sonucu:", JSON.stringify(captchaSonuc));
     } else if (ISLER[isAdi]) {
-      if (["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle", "fis-tarama", "fis-bol"].includes(isAdi) && !CONFIG.adminMod) {
+      if (["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle", "fis-tarama", "fis-bol", "luca-edefter-olustur"].includes(isAdi) && !CONFIG.adminMod) {
         console.log("[protokol]", isAdi, "| reddedildi: adminMod kapali");
         const page = await sayfaAc("about:blank");
         await page.setContent('<h3 style="font-family:sans-serif">Luca entegrasyonu yalnizca muhasebe ofisi (admin) kurulumunda etkindir.</h3>');

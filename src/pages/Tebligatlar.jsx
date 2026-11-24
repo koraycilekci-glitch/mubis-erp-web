@@ -176,11 +176,30 @@ export default function Tebligatlar() {
     if (!seciliId) { setSatirlar([]); return }
     setSeciliSet(new Set())
     let iptal = false
+    if (seciliId === 'hepsi') {
+      // Tum musterilerin tebligatlarini birlestir, tarihe gore azalan sirala
+      const istekler = musteriler.map(c =>
+        etebligatlariGetir(c.id).then(s => (s || []).map(t => ({ ...t, _musteri: c.name || c.company || ('Müşteri #' + c.id) }))).catch(() => [])
+      )
+      Promise.all(istekler).then(listeler => {
+        if (iptal) return
+        const birlesik = listeler.flat()
+        birlesik.sort((a, b) => {
+          const da = tarihCoz(a.teblig_tarihi)
+          const db = tarihCoz(b.teblig_tarihi)
+          if (da && db) return db - da
+          return String(b.teblig_tarihi || '').localeCompare(String(a.teblig_tarihi || ''), 'tr')
+        })
+        setSatirlar(birlesik)
+        setOkunduSetim(new Set())
+      })
+      return () => { iptal = true }
+    }
     etebligatlariGetir(seciliId).then(s => { if (!iptal) setSatirlar(s || []) })
     // 2.8.5: bu kullaniciya ozel okundu isaretleri (kim okuduysa onda okundu)
     kullaniciOkunduSeti(seciliId).then(s => { if (!iptal) setOkunduSetim(s || new Set()) }).catch(() => {})
     return () => { iptal = true }
-  }, [seciliId])
+  }, [seciliId, musteriler])
 
   // 2.8.5: KISIYE OZEL OKUNDU — paylasilan okundu kolonu + bu kullanicinin
   // kendi isaretleri birlesik degerlendirilir. Baska birisi (diger admin,
@@ -189,7 +208,8 @@ export default function Tebligatlar() {
   const [okunduSetim, setOkunduSetim] = useState(new Set())
   const effOkundu = useCallback((s) => !!(s?.okundu || okunduSetim.has(s?.belge_no)), [okunduSetim])
 
-  const seciliMusteri = musteriler.find(m => String(m.id) === String(seciliId))
+  const hepsiSecili = seciliId === 'hepsi'
+const seciliMusteri = hepsiSecili ? null : musteriler.find(m => String(m.id) === String(seciliId))
   // 2.7.521: "Yeni Gelen Tebligatlar" listesi — onceki sorgudan sonra gelenler
   const yeniSatirlar = useMemo(() => satirlar.filter(s => s.yeni), [satirlar])
 
@@ -457,7 +477,8 @@ export default function Tebligatlar() {
   // Belgeyi indir + ac + Storage'a yukle
   // yenidenIndir=true: kayitli PDF olsa bile DVS'ten yeniden indirilir.
   const belgeAc = useCallback(async (satir, yenidenIndir = false) => {
-    if (!seciliMusteri) return
+    const musteri = seciliMusteri || musteriler.find(m => String(m.id) === String(satir.client_id))
+    if (!musteri) return
     // 2.7.466: Toplu indirme surerken tek belge tıklaması yardımcının
     // tarayıcı pencerisini kapatıp toplu indirmeyi bozuyordu — engelle.
     if (!yenidenIndir && topluIndiriliyor) {
@@ -496,7 +517,7 @@ export default function Tebligatlar() {
         setIslem({ belgeNo: null, tip: null })
         return
       }
-      const res = await etebligatBelgesiAl(seciliMusteri, satir)
+      const res = await etebligatBelgesiAl(musteri, satir)
       if (!res.ok) {
         setMesaj({ tip: 'hata', metin: res.reason === 'liste-ciktisi'
           ? 'İndirilen dosya tebligat LİSTESİ çıktısı (belgenin kendisi değil). Yardımcı programı güncelleyip tekrar deneyin; sorun sürerse bu tebligatı bize bildirin.'
@@ -517,7 +538,7 @@ export default function Tebligatlar() {
       setMesaj({ tip: 'hata', metin: 'Belge indirme hatası: ' + (e?.message || e) })
     }
     setIslem({ belgeNo: null, tip: null })
-  }, [seciliMusteri, topluIndiriliyor])
+  }, [musteri, topluIndiriliyor])
 
   // Filtreler (toplu gonderim ve secim yardimcilari bunu kullanir; ustte tanimli olmali)
   const gorunenSatirlar = useMemo(() => {
@@ -551,14 +572,15 @@ export default function Tebligatlar() {
   // gonderim zamanini kaydeder. Sonuc dondurur ({ok, hata}) - mesaj göstermez,
   // boylece tekil ve toplu gonderim ayni cekirdegi kullanir.
   const gonderCekirdek = useCallback(async (satir, kanal) => {
-    if (!seciliMusteri) return { ok: false, hata: 'Müşteri seçilmedi' }
+    const musteri = seciliMusteri || musteriler.find(m => String(m.id) === String(satir.client_id))
+    if (!musteri) return { ok: false, hata: 'Müşteri bulunamadı' }
     let url = satir.file_url
     if (url && !(await tebligatPdfGetir(url)).ok) url = null
     if (!url) {
       if ((satir.kaynak || 'vergi') === 'sgk') {
         return { ok: false, hata: 'SGK tebligatının PDF’i bulunamadı. SGK tebligatlarını yeniden sorgulayın.' }
       }
-      const res = await etebligatBelgesiAl(seciliMusteri, satir)
+      const res = await etebligatBelgesiAl(musteri, satir)
       if (!res.ok) return { ok: false, hata: 'Belge indirilemedi: ' + (res.reason || res.hata || 'bilinmeyen') }
       url = res.url
       setSatirlar(prev => prev.map(s => s.belge_no === satir.belge_no ? { ...s, file_url: res.url } : s))
@@ -568,35 +590,35 @@ export default function Tebligatlar() {
 
     try {
       if (kanal === 'whatsapp') {
-        const telefon = seciliMusteri.whatsapp || seciliMusteri.phone || ''
+        const telefon = musteri.whatsapp || musteri.phone || ''
         if (!telefon) return { ok: false, hata: 'Müşteri kaydında telefon numarası yok' }
         const waSonuc = await sendDocumentViaWhatsAppChannel({
           phone: telefon,
           documentUrl: url,
           documentName: `etebligat_${satir.belge_no}.pdf`,
           caption: notMetni,
-          clientId: seciliMusteri.id,
+          clientId: musteri.id,
           documentType: 'etebligat',
           settings
         })
         if (waSonuc?.ok === false) return { ok: false, hata: waSonuc?.not || waSonuc?.reason || 'WhatsApp gönderilemedi' }
-        await gonderimKaydet(seciliMusteri.id, satir.belge_no, 'whatsapp')
+        await gonderimKaydet(musteri.id, satir.belge_no, 'whatsapp')
         setSatirlar(prev => prev.map(s => s.belge_no === satir.belge_no
           ? { ...s, whatsapp_gonderim_ts: new Date().toISOString() } : s))
         return { ok: true }
       } else {
-        const adres = seciliMusteri.email || ''
+        const adres = musteri.email || ''
         if (!adres) return { ok: false, hata: 'Müşteri kaydında e-posta adresi yok' }
         await sendEmail({
           toEmail: adres,
           subject: baslik,
           message: notMetni,
           documentUrl: url,
-          clientId: seciliMusteri.id,
+          clientId: musteri.id,
           documentType: 'etebligat',
           settings
         })
-        await gonderimKaydet(seciliMusteri.id, satir.belge_no, 'email')
+        await gonderimKaydet(musteri.id, satir.belge_no, 'email')
         setSatirlar(prev => prev.map(s => s.belge_no === satir.belge_no
           ? { ...s, email_gonderim_ts: new Date().toISOString() } : s))
         return { ok: true }
@@ -604,7 +626,7 @@ export default function Tebligatlar() {
     } catch (e) {
       return { ok: false, hata: e?.message || String(e) }
     }
-  }, [seciliMusteri, settings])
+  }, [musteri, settings])
 
   // Tekil gonderim (satir butonlari)
   const gonder = useCallback(async (satir, kanal) => {
@@ -717,6 +739,7 @@ export default function Tebligatlar() {
               className="w-full bg-blue-900/30 border border-blue-700/40 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"
             >
               <option value="">Müşteri seçin…</option>
+              <option value="hepsi">Tüm müşteriler (Hepsi)</option>
               {musteriler.map(c => (
                 <option key={c.id} value={c.id}>{c.name || c.company}</option>
               ))}
@@ -742,7 +765,7 @@ export default function Tebligatlar() {
           </div>
           <button
             onClick={sorgula}
-            disabled={!seciliId || yukleniyor}
+            disabled={!seciliId || seciliId === 'hepsi' || yukleniyor}
             className="inline-flex items-center gap-2 bg-yellow-500 text-blue-950 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {yukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
@@ -751,7 +774,7 @@ export default function Tebligatlar() {
           {kaynakSecim === 'vergi' && (
             <button
               onClick={vergiTopluIndir}
-              disabled={!seciliId || yukleniyor || topluIndiriliyor}
+              disabled={!seciliId || seciliId === 'hepsi' || yukleniyor || topluIndiriliyor}
               className="inline-flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg font-semibold text-sm hover:bg-green-500 disabled:opacity-40 disabled:cursor-not-allowed"
               title="Listelenen tebligatların PDF'lerini tek oturumda toplu indirir"
             >
@@ -1220,6 +1243,7 @@ export default function Tebligatlar() {
                       title="Tümünü seç / kaldır"
                     />
                   </th>
+                  {hepsiSecili && <th className="text-left py-3 px-2 font-medium">Müşteri</th>}
                   <th className="text-left py-3 px-2 font-medium">Kurum / Belge</th>
                   <th className="text-left py-3 px-2 font-medium">Belge No</th>
                   <th className="text-left py-3 px-2 font-medium">Tebliğ Tarihi</th>
@@ -1230,7 +1254,7 @@ export default function Tebligatlar() {
               <tbody className="divide-y divide-blue-800/20">
                 {gorunenSatirlar.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="py-8 text-center text-gray-500">
+                    <td colSpan={hepsiSecili ? 7 : 6} className="py-8 text-center text-gray-500">
                       {satirlar.length === 0
                         ? 'Henüz tebligat yok. "Güncel Tebligatları Al" ile sorgulayın.'
                         : 'Filtreye uyan tebligat yok.'}
@@ -1250,10 +1274,12 @@ export default function Tebligatlar() {
                         className="w-4 h-4 accent-yellow-500 cursor-pointer"
                       />
                     </td>
+                    {hepsiSecili && (
+                      <td className="py-3 px-2 text-gray-300 text-xs font-medium">{s._musteri || '-'}</td>
+                    )}
                     <td className="py-3 px-2">
                       <button
                         onClick={() => belgeAc(s)}
-                        className="text-left text-gray-200 hover:text-yellow-400"
                         title="Belgeyi aç / indir"
                       >
                         <div className="font-medium">{s.kurum || '-'}</div>

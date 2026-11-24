@@ -205,6 +205,7 @@ export default function OdemeTakip() {
   // Her musteri icin matris satiri
   const tumSatirlar = clients.map(c => {
     const fee = fees.find(f => f.client_id === c.id) || null
+    if (fee && fee.muhasebe_ucreti_var === false) return null
     const clientPayments = payments.filter(p => p.client_id === c.id)
     const aylikUcret = Number(fee?.aylik_ucret) || 0
     const defterTasdik = Number(fee?.defter_tasdik_ucreti) || 0
@@ -271,6 +272,7 @@ export default function OdemeTakip() {
   })
 
   const rows = tumSatirlar
+    .filter(Boolean)
     .filter(c => {
       if (searchTerm) {
         const s = searchTerm.toLowerCase()

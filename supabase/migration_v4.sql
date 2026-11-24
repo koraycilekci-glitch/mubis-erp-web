@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS accounting_fees (
   onceki_donem_borc NUMERIC DEFAULT 0,
   defter_tasdik_ucreti NUMERIC DEFAULT 0,
   aylik_ucret NUMERIC DEFAULT 0,
+  muhasebe_ucreti_var BOOLEAN DEFAULT true,
   baslangic_ay INT DEFAULT 1,
   baslangic_yil INT DEFAULT 2025,
   notlar TEXT DEFAULT '',
@@ -29,7 +30,7 @@ CREATE TABLE IF NOT EXISTS payments (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 3. RLS
+ALTER TABLE accounting_fees ADD COLUMN IF NOT EXISTS muhasebe_ucreti_var BOOLEAN DEFAULT true;
 ALTER TABLE accounting_fees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
 

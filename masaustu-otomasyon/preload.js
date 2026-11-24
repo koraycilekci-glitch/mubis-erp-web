@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('mubis', {
   dosyalar: () => ipcRenderer.invoke('dosyalar'),
   indirmeKlasoruAc: () => ipcRenderer.invoke('indirme-klasoru-ac'),
   dosyaKaydet: (veri) => ipcRenderer.invoke('dosya-kaydet', veri),
+  dosyaAc: (veri) => ipcRenderer.invoke('dosya-ac', veri),
   edefterDurum: () => ipcRenderer.invoke('edefter-durum'),
   edefterKur: () => ipcRenderer.invoke('edefter-kur'),
   edefterAc: () => ipcRenderer.invoke('edefter-ac'),

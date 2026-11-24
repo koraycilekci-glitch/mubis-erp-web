@@ -12,7 +12,7 @@
   <!-- ============================ SOL MENÜ ============================ -->
   <aside class="yan">
     <div class="yan-marka">
-      <img src="../../assets/logo-icon.png" alt="" />
+      <img src="../assets/logo-icon.png" alt="" />
       <div>
         <strong>MUBiS</strong>
         <span>Masaüstü Otomasyon</span>
@@ -118,6 +118,8 @@
         </div>
         <div class="dugme-grubu ust-bosluk">
           <button id="mukGetirBtn" class="dugme dugme-ana">Luca'dan mükellefleri getir</button>
+          <button id="mukIceAktarBtn" class="dugme">Excel'den içe aktar</button>
+          <button id="mukKaydetBtn" class="dugme dugme-ana">Kaydet</button>
           <button id="mukCsvBtn" class="dugme" disabled>Excel'e aktar (CSV)</button>
           <button id="mukKopyaBtn" class="dugme" disabled>Tabloyu kopyala</button>
           <button id="mukGizleBtn" class="dugme dugme-hayalet">Şifreleri gizle</button>
@@ -143,7 +145,8 @@
                 <th>V.D. şifresi</th>
                 <th>SGK kullanıcı</th>
                 <th>SGK işyeri</th>
-                <th>SGK şifre</th>
+                <th>SGK sistem şifresi</th>
+                <th>SGK işyeri şifresi</th>
                 <th></th>
               </tr>
             </thead>
@@ -473,6 +476,25 @@
     <section class="sayfa" id="sayfa-borc">
       <h1>Borç Sorgulama</h1>
       <div class="kart">
+        <h2>Sorgulama modu</h2>
+        <div class="form">
+          <label><span>Mod</span>
+            <select id="borcMod">
+              <option value="tek">Tek mükellef</option>
+              <option value="toplu">Toplu (müşteri listesinden)</option>
+            </select>
+          </label>
+          <label><span>Sorgu türü</span>
+            <select id="borcTur">
+              <option value="hepsi">Vergi + SGK (ikisi birden)</option>
+              <option value="vergi">Vergi (GİB)</option>
+              <option value="sgk">SGK</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div id="borcTekKart">
+      <div class="kart">
         <h2>GİB vergi borcu</h2>
         <div class="form">
           <label><span>Kullanıcı kodu</span><input id="borcKullanici" type="text" autocomplete="off" /></label>
@@ -495,6 +517,26 @@
           </div>
         </div>
       </div>
+      </div>
+
+      <div class="kart" id="borcTopluKart" style="display:none">
+        <h2>Toplu sorgulama — müşteri listesi</h2>
+        <p class="ipucu ust-bosluk">Mükellef Bilgileri sayfasından yüklenen liste kullanılır.</p>
+        <div class="dugme-grubu ust-bosluk">
+          <button id="borcTumSecBtn" class="dugme dugme-hayalet">Tümünü seç</button>
+          <button id="borcTemizleBtn" class="dugme dugme-hayalet">Seçimi temizle</button>
+          <button id="borcTopluBtn" class="dugme dugme-ana">Toplu sorgula</button>
+          <span id="borcTopluMesaj" class="mesaj"></span>
+        </div>
+        <div class="tablo-kap" style="max-height:220px; margin-top:10px">
+          <table class="veri-tablo" id="borcTablo">
+            <thead><tr><th style="width:40px"></th><th>Kısa ad</th><th>Unvan</th><th>VKN/TCKN</th><th>GİB kullanıcı</th><th>GİB parola</th><th>SGK kullanıcı</th><th>SGK sistem şifre</th></tr></thead>
+            <tbody id="borcSatirlar"><tr><td colspan="8" class="bos">Mükellef listesi henüz yüklenmedi.</td></tr></tbody>
+          </table>
+        </div>
+        <p id="borcOzet" class="ipucu"></p>
+      </div>
+
       <div class="kart"><h2>Sonuç</h2><div id="borcSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
     </section>
 
@@ -502,10 +544,14 @@
     <section class="sayfa" id="sayfa-dvs">
       <h1>POS / KDV Dökümü</h1>
       <div class="kart">
-        <h2>Dijitaş DVS sorgusu</h2>
+        <h2>Sorgulama modu</h2>
         <div class="form">
-          <label><span>Kullanıcı kodu</span><input id="dvsKullanici" type="text" autocomplete="off" /></label>
-          <label><span>Parola</span><input id="dvsParola" type="password" autocomplete="off" /></label>
+          <label><span>Mod</span>
+            <select id="dvsMod">
+              <option value="tek">Tek mükellef</option>
+              <option value="toplu">Toplu (müşteri listesinden)</option>
+            </select>
+          </label>
           <label><span>Yıl</span><input id="dvsYil" type="text" inputmode="numeric" /></label>
           <label><span>Ay</span>
             <select id="dvsAy">
@@ -522,12 +568,39 @@
               <option value="110">Gümrük İşlemleri KDV (110)</option>
             </select>
           </label>
+        </div>
+      </div>
+
+      <div class="kart" id="dvsTekKart">
+        <h2>Tek mükellef bilgileri</h2>
+        <div class="form">
+          <label><span>Kullanıcı kodu</span><input id="dvsKullanici" type="text" autocomplete="off" /></label>
+          <label><span>Parola</span><input id="dvsParola" type="password" autocomplete="off" /></label>
           <div class="form-alt">
             <button id="dvsBtn" class="dugme dugme-ana">Sorgula</button>
             <span id="dvsMesaj" class="mesaj"></span>
           </div>
         </div>
       </div>
+
+      <div class="kart" id="dvsTopluKart" style="display:none">
+        <h2>Toplu sorgulama — müşteri listesi</h2>
+        <p class="ipucu ust-bosluk">Mükellef Bilgileri sayfasından yüklenen liste kullanılır. Seçili müşteriler için POS / KDV dökümü alınır.</p>
+        <div class="dugme-grubu ust-bosluk">
+          <button id="dvsTumSecBtn" class="dugme dugme-hayalet">Tümünü seç</button>
+          <button id="dvsTemizleBtn" class="dugme dugme-hayalet">Seçimi temizle</button>
+          <button id="dvsTopluBtn" class="dugme dugme-ana">Toplu sorgula</button>
+          <span id="dvsTopluMesaj" class="mesaj"></span>
+        </div>
+        <div class="tablo-kap" style="max-height:220px; margin-top:10px">
+          <table class="veri-tablo" id="dvsTablo">
+            <thead><tr><th style="width:40px"></th><th>Kısa ad</th><th>Unvan</th><th>VKN/TCKN</th><th>GİB kullanıcı</th><th>GİB parola</th></tr></thead>
+            <tbody id="dvsSatirlar"><tr><td colspan="6" class="bos">Mükellef listesi henüz yüklenmedi.</td></tr></tbody>
+          </table>
+        </div>
+        <p id="dvsOzet" class="ipucu"></p>
+      </div>
+
       <div class="kart"><h2>Sonuç</h2><div id="dvsSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
     </section>
 
@@ -535,10 +608,31 @@
     <section class="sayfa" id="sayfa-tebligat">
       <h1>e-Tebligat</h1>
       <div class="kart">
-        <h2>Sorgulama</h2>
+        <h2>Sorgulama modu</h2>
         <div class="form">
-          <label><span>Kullanıcı kodu</span><input id="tebKullanici" type="text" autocomplete="off" /></label>
-          <label><span>Parola</span><input id="tebParola" type="password" autocomplete="off" /></label>
+          <label><span>Mod</span>
+            <select id="tebMod">
+              <option value="tek">Tek mükellef</option>
+              <option value="toplu">Toplu (müşteri listesinden)</option>
+            </select>
+          </label>
+          <label><span>Sorgu türü</span>
+            <select id="tebTur">
+              <option value="vergi">Vergi (GİB)</option>
+              <option value="sgk">SGK</option>
+              <option value="hepsi">Vergi + SGK (ikisi birden)</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="kart" id="tebTekKart">
+        <h2>Tek mükellef bilgileri</h2>
+        <div class="form">
+          <label><span>GİB kullanıcı kodu</span><input id="tebKullanici" type="text" autocomplete="off" /></label>
+          <label><span>GİB parola</span><input id="tebParola" type="password" autocomplete="off" /></label>
+          <label><span>TC kimlik no (e-Devlet / SGK)</span><input id="tebTc" type="text" autocomplete="off" /></label>
+          <label><span>e-Devlet şifresi (SGK)</span><input id="tebEdevlet" type="password" autocomplete="off" /></label>
           <div class="form-alt">
             <button id="tebSorguBtn" class="dugme dugme-ana">Tebligatları sorgula</button>
             <button id="tebIndirBtn" class="dugme">Belgeleri indir</button>
@@ -546,6 +640,25 @@
           </div>
         </div>
       </div>
+
+      <div class="kart" id="tebTopluKart" style="display:none">
+        <h2>Toplu sorgulama — müşteri listesi</h2>
+        <p class="ipucu ust-bosluk">Mükellef Bilgileri sayfasından yüklenen liste kullanılır.</p>
+        <div class="dugme-grubu ust-bosluk">
+          <button id="tebTumSecBtn" class="dugme dugme-hayalet">Tümünü seç</button>
+          <button id="tebTemizleBtn" class="dugme dugme-hayalet">Seçimi temizle</button>
+          <button id="tebTopluSorguBtn" class="dugme dugme-ana">Toplu sorgula</button>
+          <span id="tebTopluMesaj" class="mesaj"></span>
+        </div>
+        <div class="tablo-kap" style="max-height:220px; margin-top:10px">
+          <table class="veri-tablo" id="tebTablo">
+            <thead><tr><th style="width:40px"></th><th>Kısa ad</th><th>Unvan</th><th>VKN/TCKN</th><th>GİB kullanıcı</th><th>GİB parola</th><th>e-Devlet şifre</th></tr></thead>
+            <tbody id="tebSatirlar"><tr><td colspan="7" class="bos">Mükellef listesi henüz yüklenmedi.</td></tr></tbody>
+          </table>
+        </div>
+        <p id="tebOzet" class="ipucu"></p>
+      </div>
+
       <div class="kart"><h2>Sonuç</h2><div id="tebSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
     </section>
 

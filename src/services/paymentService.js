@@ -56,6 +56,7 @@ export async function saveAccountingFee(clientId, feeData) {
       baslangic_ay: feeData.baslangic_ay || 1,
       baslangic_yil: feeData.baslangic_yil || 2025,
       notlar: feeData.notlar || '',
+      muhasebe_ucreti_var: feeData.muhasebe_ucreti_var !== false,
       updated_at: new Date().toISOString()
     }, { onConflict: 'client_id' })
     .select()
@@ -151,8 +152,9 @@ export async function addPayment(paymentData) {
 }
 
 export async function deletePayment(id) {
-  const { error } = await supabase.from('payments').delete().eq('id', id)
+  const { data, error } = await supabase.from('payments').delete().eq('id', id).select('id')
   if (error) throw error
+  if (!data || !data.length) throw new Error('Ödeme kaydı silinemedi (yetki veya kayıt bulunamadı).')
 }
 
 // Odemenin borc kalemini (donem) satirdan duzelt — yanlis kayitlar icin

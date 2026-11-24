@@ -40,6 +40,7 @@ export const MENU = [
     id: 'fatura-islemleri', icon: Receipt, label: 'Fatura İşlemleri',
     children: [
       { to: '/admin/fatura-sorgulama', icon: Receipt, label: 'Fatura Sorgulama' },
+{ to: '/admin/tevkifatli-faturalar', icon: Receipt, label: 'Tevkifatlı Faturalar' },
       { to: '/admin/fisler', icon: Receipt, label: 'Fişler' },
       { to: '/admin/taramalar', icon: ScanLine, label: 'Taramalar' },
       { to: '/admin/muhasebe-kayit', icon: Calculator, label: 'Fatura Muhasebeleştime' },

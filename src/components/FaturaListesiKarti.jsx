@@ -49,7 +49,12 @@ function oranEtiket(o) {
 
 function unvanYok(fatura) {
   const unvan = String(fatura.karsi_unvan || '').trim()
-  return !unvan || unvan === String(fatura.karsi_vkn || '').trim()
+  if (!unvan) return true
+  if (unvan === String(fatura.karsi_vkn || '').trim()) return true
+  // 2.8.75: eski UTTS kayitlarinda unvan yerine "UTTS" (fatura turu) yazilmis
+  // olabiliyor — bu yer tutucu gercek unvan sayilmaz, GIB sorgusuyla doldurulur.
+  if (fatura.tur === 'utts' && /^utts$/i.test(unvan)) return true
+  return false
 }
 
 function uttsUnvanlariBirlestir(faturalar) {
@@ -92,7 +97,7 @@ function karsiTarafMetni(fatura, client = null) {
     const ayniAd = !!(ad && su && (su === ad || ((su.includes(ad) || ad.includes(su)) && su.slice(0, 8) === ad.slice(0, 8))))
     if (ayniVkn || ayniAd) return '-'
   }
-  if (fatura.tur === 'utts' && unvan && vkn && unvan !== vkn) return `${unvan}, ${vkn}`
+  if (fatura.tur === 'utts' && unvan) return unvan
   return unvan || vkn || '-'
 }
 
@@ -199,13 +204,14 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
   aktifClientRef.current = clientId
 
   const uttsUnvanlariniSorgula = async (liste, hedefClientId) => {
-    const adaylar = uttsUnvanlariBirlestir(liste).filter(f => f.tur === 'utts' && unvanYok(f))
+    // Ünvanı eksik tüm faturalar (UTTS dahil) için VKN'den GİB sorgusu
+    const adaylar = uttsUnvanlariBirlestir(liste).filter(f => unvanYok(f))
     const numaralar = [...new Set(adaylar.map(f => String(f.karsi_vkn || '').trim()).filter(vkn => /^\d{10,11}$/.test(vkn)))]
       .filter(vkn => !uttsSorgulananRef.current.has(`${hedefClientId}:${vkn}`))
     if (!numaralar.length) return
     numaralar.forEach(vkn => uttsSorgulananRef.current.add(`${hedefClientId}:${vkn}`))
     const tamamlanan = new Set()
-    setUttsUnvanMesaj('UTTS unvanları GİB üzerinden sorgulanıyor...')
+    setUttsUnvanMesaj('Ünvanlar vergi numarasından GİB üzerinden sorgulanıyor...')
     try {
       const { data, error } = await supabase.auth.getSession()
       if (error || !data?.session?.access_token) throw new Error('GİB sorgusu için oturum açın')
@@ -230,8 +236,8 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
           if (!unvan || /^\d+$/.test(unvan)) continue
           unvanlar[vkn] = unvan
           const { data: kayitlar, error: kayitError } = await supabase.from('efatura_faturalar')
-            .update({ karsi_unvan: unvan }).eq('client_id', hedefClientId).eq('tur', 'utts').eq('karsi_vkn', vkn)
-            .or(`karsi_unvan.is.null,karsi_unvan.eq.,karsi_unvan.eq.${vkn}`).select('id')
+            .update({ karsi_unvan: unvan }).eq('client_id', hedefClientId).eq('karsi_vkn', vkn)
+            .select('id')
           if (kayitError || !kayitlar?.length) {
             kayitHatasi = true
             kaydedilemeyen.add(vkn)
@@ -240,12 +246,12 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
         }
         if (aktifClientRef.current !== hedefClientId) return
         grup.filter(vkn => !kaydedilemeyen.has(vkn)).forEach(vkn => tamamlanan.add(vkn))
-        setFaturalar(onceki => onceki.map(f => f.tur === 'utts' && unvanYok(f) && unvanlar[String(f.karsi_vkn || '').trim()]
+        setFaturalar(onceki => onceki.map(f => unvanYok(f) && unvanlar[String(f.karsi_vkn || '').trim()]
           ? { ...f, karsi_unvan: unvanlar[String(f.karsi_vkn || '').trim()] } : f))
       }
-      if (aktifClientRef.current === hedefClientId) setUttsUnvanMesaj(`GİB sorgusu tamamlandı: ${bulunan}/${numaralar.length} unvan bulundu.${kayitHatasi ? ' Bazı unvanlar kaydedilemedi.' : ''}`)
+      if (aktifClientRef.current === hedefClientId) setUttsUnvanMesaj(`Ünvan sorgusu tamamlandı: ${bulunan}/${numaralar.length} unvan bulunup kaydedildi.${kayitHatasi ? ' Bazı unvanlar kaydedilemedi.' : ''}`)
     } catch (error) {
-      if (aktifClientRef.current === hedefClientId) setUttsUnvanMesaj(`UTTS unvanları sorgulanamadı: ${error?.message || 'GİB bağlantı hatası'}`)
+      if (aktifClientRef.current === hedefClientId) setUttsUnvanMesaj(`Ünvan sorgusu yapılamadı: ${error?.message || 'GİB bağlantı hatası'}`)
     } finally {
       numaralar.filter(vkn => !tamamlanan.has(vkn)).forEach(vkn => uttsSorgulananRef.current.delete(`${hedefClientId}:${vkn}`))
     }

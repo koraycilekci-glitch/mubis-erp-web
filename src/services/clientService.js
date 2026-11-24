@@ -484,9 +484,10 @@ export async function updateClient(id, updateData) {
     // Bilinmeyen alanlari atla (clients tablosunda olmayanlar)
   }
 
-  // kira_bilgisi text kolonu oldugu icin object gelirse JSON string'e cevir
-  if (mapped.kira_bilgisi && typeof mapped.kira_bilgisi === 'object') {
-    mapped.kira_bilgisi = JSON.stringify(mapped.kira_bilgisi)
+  // Tarih kolonlarinda bos string Postgres'te hata verir; null'a cevir
+  const tarihKolonlari = new Set(['open_date','close_date','eimza_start','eimza_end','kira_kontrat_bitis'])
+  for (const k of Object.keys(mapped)) {
+    if (tarihKolonlari.has(k) && mapped[k] === '') mapped[k] = null
   }
 
   const { data, error } = await supabase

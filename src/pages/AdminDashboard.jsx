@@ -23,6 +23,7 @@ import RadioUstBant from '../components/RadioUstBant'
 import YouTubeMuzik from '../components/YouTubeMuzik'
 import SpotifyUstBant from '../components/SpotifyUstBant'
 import AnalyticsOzet from '../components/AnalyticsOzet'
+import TevkifatKdv2Uyarisi from '../components/TevkifatKdv2Uyarisi'
 
 // ── Beyan tipleri ve son tarih gunleri ──
 const BEYAN_TYPES = [
@@ -737,6 +738,11 @@ export default function AdminDashboard() {
           </button>
         </div>
       )}
+
+      {/* ═══════════════════════════════════════════ */}
+      {/* TEVKİFATLI ALIŞ → KDV2 BEYAN UYARISI */}
+      {/* ═══════════════════════════════════════════ */}
+      <TevkifatKdv2Uyarisi />
 
       {/* ═══════════════════════════════════════════ */}
       {/* E-TEBLIGAT UYARISI */}

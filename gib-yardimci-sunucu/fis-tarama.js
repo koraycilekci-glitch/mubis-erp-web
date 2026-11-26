@@ -10,7 +10,8 @@
 const FIS_TURLERI = Object.freeze({
   empty: 'Boş fiş',
   unbalanced: 'Dengesiz fiş',
-  passive: 'Pasif fiş'
+  passive: 'Pasif fiş',
+  'kdv-tahakkuk': 'KDV tahakkuk fişi adayları'
 })
 
 const iki = (n) => String(n).padStart(2, '0')
@@ -90,6 +91,11 @@ function fisTaramaSayfa(request) {
 
   if (request.action === 'state') {
     return { filter: filtreEkrani, list: listeEkrani, ready: document.readyState === 'complete' }
+  }
+  if (request.action === 'period') {
+    if (!filtreEkrani) throw new Error('Fiş filtre ekranı açık değil.')
+    const alan = (id) => document.getElementById(id) || document.querySelector(`[name="${id}"]`)
+    return { start: norm(alan('tarih1')?.value), end: norm(alan('tarih2')?.value) }
   }
   if (request.action === 'back') {
     if (!listeEkrani) throw new Error('Fiş listesi açık değil.')
@@ -208,8 +214,11 @@ function fisTaramaSayfa(request) {
         credit: degerler[7]
       })
     }
+    const sonraki = dugmeBul('Sonraki Sayfa')
     return {
       rows: satirlar,
+      nextAvailable: !!sonraki && !sonraki.disabled && sonraki.getAttribute('aria-disabled') !== 'true',
+      nextDisabled: !!sonraki && (sonraki.disabled || sonraki.getAttribute('aria-disabled') === 'true'),
       marker: document.documentElement.dataset.voucherScanPage || '',
       end: /sonraki sayfa yok/i.test(document.body.innerText),
       url: location.href
@@ -218,4 +227,18 @@ function fisTaramaSayfa(request) {
   throw new Error('Gecersiz salt okunur fis islemi: ' + request.action)
 }
 
-module.exports = { FIS_TURLERI, donemAraligi, fisFiltresi, fisTaramaSayfa }
+function fisTarihAnahtari(tarih) {
+  const ayir = /^(\d{2})[/.](\d{2})[/.](20\d{2})$/.exec(String(tarih || '').trim())
+  if (!ayir) return ''
+  const [, gun, ay, yil] = ayir
+  const tarihUtc = new Date(Date.UTC(Number(yil), Number(ay) - 1, Number(gun)))
+  const iso = `${yil}-${ay}-${gun}`
+  return tarihUtc.toISOString().slice(0, 10) === iso ? iso : ''
+}
+
+function kdvTahakkukAdayi(fis) {
+  const aciklama = String(fis?.description || '').toLocaleLowerCase('tr').normalize('NFD').replace(/\p{M}/gu, '').replace(/ı/g, 'i')
+  return /\bkdv\b|\bkatma\s+deger\s+vergisi\b/.test(aciklama) && /\b(?:tahakkuk|mahsu[pb]|kapatma|yansitma)/.test(aciklama)
+}
+
+module.exports = { FIS_TURLERI, donemAraligi, fisFiltresi, fisTaramaSayfa, fisTarihAnahtari, kdvTahakkukAdayi }

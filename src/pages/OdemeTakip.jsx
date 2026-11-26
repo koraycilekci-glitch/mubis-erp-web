@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useClients } from '../hooks/useClients'
-import { getAllAccountingFees, getAllPayments, addPayment, deletePayment, saveAccountingFee, hesaplaBorcOzeti, getActivePaymentProvider, getBankInfo, buildBorcMesaji } from '../services/paymentService'
+import { getAllAccountingFees, getAllPayments, addPayment, deletePayment, saveAccountingFee, clearPreviousPeriodDebt, hesaplaBorcOzeti, getActivePaymentProvider, getBankInfo, buildBorcMesaji } from '../services/paymentService'
 import {
   DollarSign, Users, Search, FileSpreadsheet, FileText,
   CheckCircle, AlertTriangle, Clock, X, CreditCard, Copy, Mail, MessageCircle, Minus, Plus, Trash2, Pencil
@@ -12,6 +12,7 @@ import { parseTurkishNumber, formatTurkishInput, hamTutarGirdisi } from '../util
 import { sendEmail, sendShareDocumentsViaWhatsApp, logWhatsAppWebSend, getWhatsAppChannel, openWhatsAppWeb } from '../services/whatsappService'
 import { getSettings } from '../services/settingsService'
 import { sendBulkDebtNotifications, buildDebtPayload } from '../services/debtNotificationService'
+import { kapanisSonrasiAy, acilisOncesiAy } from '../utils/beyanKapanis'
 
 const AYLER = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
 
@@ -125,6 +126,7 @@ export default function OdemeTakip() {
   const [feeYil, setFeeYil] = useState(new Date().getFullYear())
   const [feeSaving, setFeeSaving] = useState(false)
   const [feeError, setFeeError] = useState('')
+  const [borcSilinenId, setBorcSilinenId] = useState(null)
 
   const FEE_ALANLARI = {
     aylik_ucret: { etiket: 'Aylık Ücret', alan: 'aylik_ucret' },
@@ -167,6 +169,24 @@ export default function OdemeTakip() {
     }
   }
 
+  const handleOncekiBorcSil = async (row) => {
+    if (borcSilinenId !== null || row.oncekiDonem <= 0) return
+    const ad = row.name || row.company || 'Müşteri'
+    const kalanAciklama = row.oncekiDonemToplam > row.oncekiDonem
+      ? '\nGeçmiş aylardan hesaplanan borç ve ödeme kayıtları korunacaktır.'
+      : '\nÖdeme kayıtları korunacaktır.'
+    if (!confirm(`${ad} için elle girilen önceki dönem borcu silinsin mi?${kalanAciklama}`)) return
+    setBorcSilinenId(row.id)
+    try {
+      const updated = await clearPreviousPeriodDebt(row.id)
+      setFees(current => current.map(fee => fee.client_id === row.id ? { ...fee, ...updated } : fee))
+    } catch (err) {
+      alert('Önceki dönem borcu silinemedi: ' + (err?.message || 'Bilinmeyen hata'))
+    } finally {
+      setBorcSilinenId(null)
+    }
+  }
+
   // Online odeme linki (musteri bazli)
   const [selectedClient, setSelectedClient] = useState(null)
   const [showLinkModal, setShowLinkModal] = useState(false)
@@ -204,6 +224,7 @@ export default function OdemeTakip() {
 
   // Her musteri icin matris satiri
   const tumSatirlar = clients.map(c => {
+    if (kapanisSonrasiAy(c, yil, 1)) return null
     const fee = fees.find(f => f.client_id === c.id) || null
     if (fee && fee.muhasebe_ucreti_var === false) return null
     const clientPayments = payments.filter(p => p.client_id === c.id)
@@ -219,7 +240,7 @@ export default function OdemeTakip() {
 
     // Faturalanan ay sayisi: baslangictan (veya ilk odemenin yapildigi aydan) bugune
     const odenenAyListesi = Array.from({ length: 12 }, (_, i) => i + 1)
-      .filter(m => tahsilEden(`${yil}-${String(m).padStart(2, '0')}`) > 0)
+      .filter(m => !acilisOncesiAy(c, yil, m) && !kapanisSonrasiAy(c, yil, m) && tahsilEden(`${yil}-${String(m).padStart(2, '0')}`) > 0)
     const faturalananAy = (() => {
       if (yil > nowY) return 0
       const sonAy = yil === nowY ? nowM : 12
@@ -230,7 +251,8 @@ export default function OdemeTakip() {
         if (basY === yil) basA = Number(fee.baslangic_ay) || 1
       }
       if (odenenAyListesi.length > 0) basA = Math.min(basA, Math.min(...odenenAyListesi))
-      return Math.max(0, sonAy - basA + 1)
+      return Array.from({ length: Math.max(0, sonAy - basA + 1) }, (_, i) => basA + i)
+        .filter(m => !acilisOncesiAy(c, yil, m) && !kapanisSonrasiAy(c, yil, m)).length
     })()
 
     // Onceki yillarin odenmemis aylik ucretleri: secili yildan onceki her yil icin
@@ -249,10 +271,13 @@ export default function OdemeTakip() {
         if (Y > nowY) break
         const sonAy = Y === nowY ? nowM : 12
         let odendiTutar = 0
-        for (let m = 1; m <= sonAy; m++) {
+        let acikAySayisi = 0
+        for (let m = Y === basY ? (Number(fee?.baslangic_ay) || 1) : 1; m <= sonAy; m++) {
+          if (acilisOncesiAy(c, Y, m) || kapanisSonrasiAy(c, Y, m)) continue
+          acikAySayisi++
           odendiTutar += Math.min(tahsilEden(`${Y}-${String(m).padStart(2, '0')}`), aylikUcret)
         }
-        toplam += Math.max(0, aylikUcret * sonAy - odendiTutar)
+        toplam += Math.max(0, aylikUcret * acikAySayisi - odendiTutar)
       }
       return toplam
     })()
@@ -269,7 +294,7 @@ export default function OdemeTakip() {
         .reduce((s, m) => s + Math.min(tahsilEden(`${yil}-${String(m).padStart(2, '0')}`), aylikUcret), 0)
 
     return { ...c, fee, clientPayments, aylikUcret, defterTasdik, oncekiDonem, oncekiDonemToplam, faturalananAy, toplamBorc, odenen, kalan: toplamBorc - odenen }
-  })
+  }).filter(Boolean)
 
   const rows = tumSatirlar
     .filter(Boolean)
@@ -292,6 +317,8 @@ export default function OdemeTakip() {
 
   // Ayin odeme durumu (manuel kayitlar ve alinan online odemeler = tahsil edildi)
   const monthStatus = (row, m) => {
+    if (acilisOncesiAy(row, yil, m)) return 'acilmadi'
+    if (kapanisSonrasiAy(row, yil, m)) return 'kapali'
     const key = `${yil}-${String(m).padStart(2, '0')}`
     const odedi = row.clientPayments.some(p => p.donem === key &&
       (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel'))
@@ -330,13 +357,25 @@ export default function OdemeTakip() {
   const yuzde = (bolen) => yillikTahsilat > 0 ? `${((bolen / yillikTahsilat) * 100).toFixed(1).replace('.', ',')}` : '0,0'
 
   // Aylik tahsilat toplamlari (donem bazli, tahsil edilen odemeler)
+  const kapananMusteriIds = new Set(clients.filter(client => kapanisSonrasiAy(client, yil, 1)).map(client => client.id))
+  const musteriById = new Map(clients.map(client => [String(client.id), client]))
   const aylikTahsilatlar = AYLER.map((_, mi) => {
     const key = `${yil}-${String(mi + 1).padStart(2, '0')}`
     return payments
-      .filter(p => p.donem === key && (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel'))
+      .filter(p => !kapananMusteriIds.has(p.client_id) && !acilisOncesiAy(musteriById.get(String(p.client_id)), yil, mi + 1) && p.donem === key && (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel'))
       .reduce((s, p) => s + (Number(p.tutar) || 0), 0)
   })
   const aylikTahsilatToplam = aylikTahsilatlar.reduce((s, n) => s + n, 0)
+
+  // Alt toplamlar — listelenen (filtre uygulanmis) müşterilerin kalem toplamları
+  const altToplamlar = {
+    aylikUcret: rows.reduce((s, r) => s + (Number(r.aylikUcret) || 0), 0),
+    defterTasdik: rows.reduce((s, r) => s + (Number(r.defterTasdik) || 0), 0),
+    oncekiDonem: rows.reduce((s, r) => s + (Number(r.oncekiDonemToplam) || 0), 0),
+    toplamBorc: rows.reduce((s, r) => s + (Number(r.toplamBorc) || 0), 0),
+    odenen: rows.reduce((s, r) => s + (Number(r.odenen) || 0), 0),
+    kalan: rows.reduce((s, r) => s + (Number(r.kalan) || 0), 0)
+  }
 
   // ============ ODEME KAYDI MODAL ============
   // kalem: 1-12 (ay) veya 'Onceki Donem' / 'Defter Tasdik'
@@ -413,7 +452,7 @@ export default function OdemeTakip() {
   // ============ ONLINE ODEME LINKI ============
   const openLinkForm = async (row) => {
     setSelectedClient(row)
-    const ozet = hesaplaBorcOzeti(row.fee, row.clientPayments)
+    const ozet = hesaplaBorcOzeti(row.fee, row.clientPayments, new Date(), row)
     const tutar = ozet.kalanBorc > 0 ? Math.round(ozet.kalanBorc) : 0
     setLinkAmount(tutar > 0 ? String(tutar) : '')
     setLinkUrl('')
@@ -537,7 +576,7 @@ export default function OdemeTakip() {
 
   // ============ EXCEL AKTAR ============
   const exportExcel = () => {
-    const durumText = { odendi: 'Ödendi', bekliyor: 'Bekliyor', geciken: 'Geciken', yok: '-' }
+    const durumText = { odendi: 'Ödendi', bekliyor: 'Bekliyor', geciken: 'Geciken', kapali: 'KAPALI', acilmadi: 'AÇILMADI', yok: '-' }
     const aoa = [['#', 'Adı Soyadı', 'Aylık Ücret', 'Defter Tasdik', 'Önceki Dönem', 'Toplam Borç', ...AYLER, 'Ödenen', 'Kalan']]
     rows.forEach((r, i) => {
       aoa.push([
@@ -563,7 +602,7 @@ export default function OdemeTakip() {
 
   // ============ PDF AKTAR ============
   const exportPDF = async () => {
-    const durumText = { odendi: 'Ödendi', bekliyor: 'Bekliyor', geciken: 'Geciken', yok: '-' }
+    const durumText = { odendi: 'Ödendi', bekliyor: 'Bekliyor', geciken: 'Geciken', kapali: 'KAPALI', acilmadi: 'AÇILMADI', yok: '-' }
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
 
     // Turkce karakter destekli font (yuklenemezse helvetica + ASCII yedegi)
@@ -751,7 +790,7 @@ export default function OdemeTakip() {
           <p className="text-gray-400 mt-1">Müşterilerinizin aylık muhasebe ödemelerini kolayca takip edin.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <select value={yil} onChange={(e) => setYil(Number(e.target.value))}
+          <select value={yil} onChange={(e) => { setYil(Number(e.target.value)); setSelectedIds([]) }}
             className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400">
             {Array.from({ length: 4 }, (_, i) => nowY - 2 + i).map(y => <option key={y} value={y}>{y}</option>)}
           </select>
@@ -948,6 +987,13 @@ export default function OdemeTakip() {
                         className="inline-flex items-center p-1 rounded text-blue-300/70 hover:text-blue-300 hover:bg-blue-700/40 transition-colors">
                         <Pencil className="w-3 h-3" />
                       </button>
+                      {r.oncekiDonem > 0 && (
+                        <button type="button" onClick={() => handleOncekiBorcSil(r)} disabled={borcSilinenId !== null}
+                          title="Elle girilen önceki dönem borcunu sil" aria-label={`${r.name || r.company || 'Müşteri'}: elle girilen önceki dönem borcunu sil`}
+                          className="inline-flex items-center p-1 rounded text-red-400 hover:text-red-300 hover:bg-red-500/20 transition-colors disabled:opacity-50 disabled:cursor-wait">
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
                     </td>
                     <td className="lg:sticky z-10 bg-[#1f3d78] px-3 py-2 text-right text-yellow-400 font-medium whitespace-nowrap min-w-[110px] shadow-[6px_0_10px_-4px_rgba(0,0,0,0.45)]" style={{ left: 558 }}>₺ {fmt(r.toplamBorc)}</td>
                     {AYLER.map((_, mi) => {
@@ -955,13 +1001,13 @@ export default function OdemeTakip() {
                       const durum = monthStatus(r, m)
                       return (
                         <td key={m} className={`px-1 py-2 text-center ${buAyVurgu && yil === nowY && m === nowM ? 'bg-yellow-500/5' : ''}`}>
-                          <button
+                          {durum === 'acilmadi' ? <span className="text-xs font-semibold text-gray-400" title="İşyeri açılışından önceki ay">AÇILMADI</span> : durum === 'kapali' ? <span className="text-xs font-semibold text-gray-400" title="İşyeri kapanışından sonraki ay">KAPALI</span> : <button
                             onClick={() => openOdemeModal(r, m)}
                             title={durum === 'odendi' ? 'Ödendi - tıklayıp kayıtlı ödemeyi silebilirsiniz' : durum === 'bekliyor' ? 'Bekliyor - tıklayıp ödeme kaydı girin' : durum === 'geciken' ? 'Geciken - tıklayıp ödeme kaydı girin' : 'Ödeme kaydı ekle'}
                             className={`w-7 h-7 mx-auto rounded-full flex items-center justify-center transition-all ${hucreStil(durum)} hover:bg-blue-700/40 hover:scale-110 cursor-pointer`}
                           >
                             <HucreIkon durum={durum} />
-                          </button>
+                          </button>}
                         </td>
                       )
                     })}
@@ -974,6 +1020,28 @@ export default function OdemeTakip() {
               )}
             </tbody>
             <tfoot>
+              {/* Alt toplamlar: Aylık Ücret · Defter Tasdik · Önceki Dönem · Toplam Borç · Ödenen · Kalan */}
+              <tr className="bg-blue-900/70 border-t-2 border-blue-600/50 text-xs font-semibold">
+                <td colSpan="2" className="lg:sticky left-0 z-20 bg-[#274a8f] px-3 py-2 text-right text-yellow-300 whitespace-nowrap">
+                  ALT TOPLAM ({rows.length} müşteri)
+                </td>
+                <td className="lg:sticky z-10 bg-[#274a8f] px-3 py-2 text-right text-white whitespace-nowrap" style={{ left: 228 }}>
+                  {altToplamlar.aylikUcret > 0 ? `₺ ${fmt(altToplamlar.aylikUcret)}` : '-'}
+                </td>
+                <td className="lg:sticky z-10 bg-[#274a8f] px-3 py-2 text-right text-white whitespace-nowrap" style={{ left: 338 }}>
+                  {altToplamlar.defterTasdik > 0 ? `₺ ${fmt(altToplamlar.defterTasdik)}` : '-'}
+                </td>
+                <td className="lg:sticky z-10 bg-[#274a8f] px-3 py-2 text-right text-red-300 whitespace-nowrap" style={{ left: 448 }}>
+                  {altToplamlar.oncekiDonem > 0 ? `₺ ${fmt(altToplamlar.oncekiDonem)}` : '-'}
+                </td>
+                <td className="lg:sticky z-10 bg-[#274a8f] px-3 py-2 text-right text-yellow-400 whitespace-nowrap shadow-[6px_0_10px_-4px_rgba(0,0,0,0.45)]" style={{ left: 558 }}>
+                  ₺ {fmt(altToplamlar.toplamBorc)}
+                </td>
+                {AYLER.map((_, mi) => <td key={`alt-${mi}`} className="px-1 py-2" />)}
+                <td className="px-3 py-2 text-right text-green-400 whitespace-nowrap">{altToplamlar.odenen > 0 ? `₺ ${fmt(altToplamlar.odenen)}` : '-'}</td>
+                <td className={`px-3 py-2 text-right whitespace-nowrap font-bold ${altToplamlar.kalan > 0 ? 'text-red-400' : altToplamlar.kalan < 0 ? 'text-blue-400' : 'text-green-400'}`}>
+                  {altToplamlar.kalan !== 0 ? `₺ ${fmt(altToplamlar.kalan)}` : '-'}
+                </td>              </tr>
               <tr className="bg-blue-900/50 border-t-2 border-blue-700/40 text-xs">
                 <td colSpan="6" className="px-3 py-2 text-right text-gray-400 whitespace-nowrap">Aylık Tahsilat →</td>
                 {aylikTahsilatlar.map((toplam, mi) => (
@@ -998,6 +1066,18 @@ export default function OdemeTakip() {
             <span className="flex items-center gap-1"><Minus className="w-3.5 h-3.5 text-gray-500" /> Ödeme Yok</span>
           </div>
           <div className="flex flex-wrap items-center gap-6 text-sm">
+            <div>
+              <p className="text-xs text-gray-400">Aylık Ücret Toplamı</p>
+              <p className="font-bold text-white">₺ {fmt(altToplamlar.aylikUcret)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-400">Defter Tasdik Toplamı</p>
+              <p className="font-bold text-white">₺ {fmt(altToplamlar.defterTasdik)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-400">Önceki Dönem Toplamı</p>
+              <p className="font-bold text-red-300">₺ {fmt(altToplamlar.oncekiDonem)}</p>
+            </div>
             <div>
               <p className="text-xs text-gray-400">Genel Toplam</p>
               <p className="font-bold text-white">₺ {fmt(yillikTahsilat)}</p>

@@ -22,7 +22,7 @@ function normalizePhone(phone) {
 export async function getClientsWithDebt() {
   const { data: clients, error: cErr } = await supabase
     .from('clients')
-    .select('id, name, company, phone, email')
+    .select('id, name, company, phone, email, open_date, close_date')
     .order('name')
   if (cErr) throw cErr
 
@@ -40,7 +40,7 @@ export async function getClientsWithDebt() {
   for (const client of clients) {
     const fee = fees.find(f => f.client_id === client.id)
     const clientPayments = payments.filter(p => p.client_id === client.id)
-    const ozet = hesaplaBorcOzeti(fee, clientPayments)
+    const ozet = hesaplaBorcOzeti(fee, clientPayments, new Date(), client)
 
     if (ozet.kalanBorc > 0) {
       results.push({
@@ -127,7 +127,7 @@ export async function buildDebtPayload(clientId, { settings = null, bankInfo = n
   try {
     const { data: client, error } = await supabase
       .from('clients')
-      .select('id, name, company, phone, email, phonenumbers, emails')
+      .select('id, name, company, phone, email, phonenumbers, emails, open_date, close_date')
       .eq('id', clientId)
       .single()
     if (error || !client) return null
@@ -135,7 +135,7 @@ export async function buildDebtPayload(clientId, { settings = null, bankInfo = n
     const fee = await getAccountingFee(clientId)
     if (!fee) return null
     const clientPayments = await getPayments(clientId)
-    const ozet = hesaplaBorcOzeti(fee, clientPayments)
+    const ozet = hesaplaBorcOzeti(fee, clientPayments, new Date(), client)
     if (!(Number(ozet.kalanBorc) > 0)) return null
 
     let effSettings = settings
@@ -171,7 +171,7 @@ export async function sendDebtNotification(clientId, channel, settings = null) {
   // Musteri bilgilerini cek
   const { data: client, error: cErr } = await supabase
     .from('clients')
-    .select('id, name, company, phone, email, phonenumbers, emails')
+    .select('id, name, company, phone, email, phonenumbers, emails, open_date, close_date')
     .eq('id', clientId)
     .single()
   if (cErr) throw cErr
@@ -179,7 +179,7 @@ export async function sendDebtNotification(clientId, channel, settings = null) {
   // Borc hesapla
   const fee = await getAccountingFee(clientId)
   const clientPayments = await getPayments(clientId)
-  const ozet = hesaplaBorcOzeti(fee, clientPayments)
+  const ozet = hesaplaBorcOzeti(fee, clientPayments, new Date(), client)
 
   if (ozet.kalanBorc <= 0) {
     throw new Error('Musterinin borcu bulunmamaktadir')

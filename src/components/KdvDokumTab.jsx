@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
-import { CreditCard, Receipt, RefreshCw, Loader2, Calendar, ArrowRightLeft, ChevronDown, ChevronUp, Ship, FileText } from 'lucide-react'
+import {
+  CreditCard, Receipt, RefreshCw, Loader2, Calendar, ArrowRightLeft, ChevronDown, ChevronUp, Ship, FileText, Eye, Download, X, Copy
+} from 'lucide-react'
 import {
   dvsSorgula,
   dvsSorguDurumGetir,
@@ -12,6 +14,7 @@ import {
   gumrukKdvDokumu
 } from '../services/dvsSorguService'
 import { kdvOzelDokumler, tevkifatDurumOku, tevkifatOdendiYaz } from '../services/tevkifatService'
+import { okcBildirimGetir } from '../services/okcSorguService'
 
 function paraYaz(v) {
   const n = Number(v)
@@ -55,6 +58,100 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
   const [gumrukDetayAcik, setGumrukDetayAcik] = useState(false)
   const [ozetYenileniyor, setOzetYenileniyor] = useState(false)
   const pollingRef = useRef(null)
+
+  // OKC bildirimleri
+  const [okcAy, setOkcAy] = useState(varsayilanDonem.m)
+  const [okcYil, setOkcYil] = useState(varsayilanDonem.y)
+  const [okcKayitlar, setOkcKayitlar] = useState([])
+  const [okcYukleniyor, setOkcYukleniyor] = useState(false)
+  const [okcHata, setOkcHata] = useState('')
+  const [okcMesaj, setOkcMesaj] = useState('')
+  const [okcDetay, setOkcDetay] = useState(null)
+
+  const okcSorgula = async (detay) => {
+    setOkcYukleniyor(true)
+    setOkcHata('')
+    setOkcMesaj(detay
+      ? 'ÖKC bildirimleri ve detaylar okunuyor... (her kayıt için birkaç saniye)'
+      : 'ÖKC bildirimleri sorgulanıyor...')
+    try {
+      const res = await okcBildirimGetir({ clientId, yil: okcYil, ay: okcAy, detay })
+      setOkcKayitlar(Array.isArray(res.kayitlar) ? res.kayitlar : [])
+      setOkcMesaj(`${res.kayitlar?.length || 0} kayıt bulundu.`)
+    } catch (e) {
+      setOkcHata(e?.message || 'ÖKC bildirimleri alınamadı')
+      setOkcMesaj('')
+    } finally {
+      setOkcYukleniyor(false)
+    }
+  }
+
+  // Basliklar: Excel formatina yakin (ekrandaki tablo sutunlari)
+  const OKC_BASLIKLAR = [
+    ['firmaKodu', 'Firma Kodu'],
+    ['firmaAdi', 'Firma Adı'],
+    ['okcMarkasi', 'ÖKC Markası'],
+    ['okcModeli', 'ÖKC Modeli'],
+    ['cihazSicilNo', "Cihaz Sicil No'su"],
+    ['bildirimZamani', 'Bildirim Zamanı'],
+    ['bildirimYontemi', 'Bildirim Yöntemi']
+  ]
+
+  const okcTabloyuKopyala = async () => {
+    const satirlar = [
+      ['Dönem', 'Sıra', ...OKC_BASLIKLAR.map(([, b]) => b)].join('\t'),
+      ...okcKayitlar.map((k, i) => [
+        `${String(okcAy).padStart(2, '0')}.${okcYil}`,
+        i + 1,
+        ...OKC_BASLIKLAR.map(([a]) => k[a] || '')
+      ].join('\t'))
+    ]
+    try {
+      await navigator.clipboard.writeText(satirlar.join('\n'))
+      setOkcMesaj('Tablo panoya kopyalandı.')
+    } catch {
+      setOkcHata('Panoya kopyalanamadı.')
+    }
+  }
+
+  // Excel (CSV, noktali virgul — Turkce Excel uyumlu)
+  const okcExcelIndir = () => {
+    const kacis = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'
+    const satirlar = [
+      ['Dönem', 'Sıra', ...OKC_BASLIKLAR.map(([, b]) => b)].map(kacis).join(';'),
+      ...okcKayitlar.map((k, i) => [
+        `${String(okcAy).padStart(2, '0')}.${okcYil}`,
+        i + 1,
+        ...OKC_BASLIKLAR.map(([a]) => k[a] || '')
+      ].map(kacis).join(';'))
+    ]
+    const blob = new Blob(['\uFEFF' + satirlar.join('\r\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `okc-bildirim-${okcYil}-${String(okcAy).padStart(2, '0')}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    setOkcMesaj('CSV indirildi (Excel ile açabilirsiniz).')
+  }
+
+  const okcDetayKopyala = async () => {
+    if (!okcDetay) return
+    const d = okcDetay.detay || {}
+    const satirlar = [
+      `ÖKC Aylık Satış Rapor Bildirimi — ${String(okcAy).padStart(2, '0')}.${okcYil}`,
+      ...OKC_BASLIKLAR.map(([a, b]) => `${b}: ${okcDetay[a] || '-'}`),
+      ...(Object.keys(d).length ? ['', 'Detay:', ...Object.entries(d).map(([k, v]) => `${k}: ${v}`)] : [])
+    ]
+    try {
+      await navigator.clipboard.writeText(satirlar.join('\n'))
+      setOkcMesaj('Detay bilgileri panoya kopyalandı.')
+    } catch {
+      setOkcHata('Panoya kopyalanamadı.')
+    }
+  }
 
   const yukle = async () => {
     setHata('')
@@ -398,7 +495,191 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
         />
       ))}
 
-      {/* KDV BEYANINA ETKİSİ — bölüm toplamları ve net ilave */}
+      {/* ÖKC Aylık Satış Rapor Bildirimleri */}
+      <div className="bg-blue-950/30 border border-blue-800/30 rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+          <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+            <Receipt className="w-4 h-4 text-yellow-400" />
+            Yeni Nesil ÖKC Aylık Satış Rapor Bildirimleri
+          </h3>
+        </div>
+        <div className="flex flex-wrap gap-2 items-center mb-3">
+          <span className="text-xs text-gray-400">Dönem:</span>
+          <select
+            value={okcAy}
+            onChange={(e) => setOkcAy(Number(e.target.value))}
+            className="bg-blue-950/50 border border-blue-800/50 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+          >
+            {aylar.map((a, i) => (
+              <option key={i + 1} value={i + 1}>{a}</option>
+            ))}
+          </select>
+          <select
+            value={okcYil}
+            onChange={(e) => setOkcYil(Number(e.target.value))}
+            className="bg-blue-950/50 border border-blue-800/50 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+          >
+            {[...Array(7)].map((_, i) => {
+              const y = bugun.getFullYear() - 3 + i
+              return <option key={y} value={y}>{y}</option>
+            })}
+          </select>
+          <button
+            onClick={() => okcSorgula(false)}
+            disabled={okcYukleniyor}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 disabled:opacity-50 transition-colors"
+          >
+            {okcYukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Durum Sorgula
+          </button>
+          <button
+            onClick={() => okcSorgula(true)}
+            disabled={okcYukleniyor}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-green-600/20 text-green-300 hover:bg-green-600/30 disabled:opacity-50 transition-colors"
+            title="Her satırın detayını da okur (daha uzun sürer)"
+          >
+            {okcYukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />} Göster
+          </button>
+          {okcKayitlar.length > 0 && (
+            <>
+              <button
+                onClick={okcExcelIndir}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 transition-colors"
+              >
+                <Download className="w-4 h-4" /> Excel'e Çıkar
+              </button>
+              <button
+                onClick={okcTabloyuKopyala}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 transition-colors"
+              >
+                <FileText className="w-4 h-4" /> Tabloyu Kopyala
+              </button>
+            </>
+          )}
+          {okcMesaj && <span className="text-xs text-gray-300">{okcMesaj}</span>}
+        </div>
+        {okcHata && (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-sm text-red-300 mb-3">{okcHata}</div>
+        )}
+        {okcKayitlar.length === 0 ? (
+          <div className="bg-blue-950/50 rounded-lg p-4 border border-blue-800/30">
+            <p className="text-sm text-gray-400">
+              ÖKC bildirimleri burada listelenir. Dönem seçip <b>Durum Sorgula</b> deyin
+              (GİB Dijital Vergi Dairesi → İnternet Vergi Dairesi → ÖKC İşlemleri → Yeni Nesil ÖKC Aylık
+              Satış Rapor Bildirimleri → ÖKC Bildirim Görüntüleme).
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-gray-400 border-b border-blue-800/30">
+                  <th className="pb-2 pr-2">#</th>
+                  <th className="pb-2 pr-2">Firma Kodu</th>
+                  <th className="pb-2 pr-2">Firma Adı</th>
+                  <th className="pb-2 pr-2">ÖKC Markası</th>
+                  <th className="pb-2 pr-2">ÖKC Modeli</th>
+                  <th className="pb-2 pr-2">Cihaz Sicil No'su</th>
+                  <th className="pb-2 pr-2">Bildirim Zamanı</th>
+                  <th className="pb-2 pr-2">Bildirim Yöntemi</th>
+                  <th className="pb-2 text-right">Göster</th>
+                </tr>
+              </thead>
+              <tbody>
+                {okcKayitlar.map((k, i) => (
+                  <tr key={i} className="border-b border-blue-800/20 last:border-0">
+                    <td className="py-2 pr-2 text-gray-500">{i + 1}</td>
+                    <td className="py-2 pr-2 text-gray-300 whitespace-nowrap">{k.firmaKodu || '-'}</td>
+                    <td className="py-2 pr-2 text-gray-300">{k.firmaAdi || '-'}</td>
+                    <td className="py-2 pr-2 text-gray-400 whitespace-nowrap">{k.okcMarkasi || '-'}</td>
+                    <td className="py-2 pr-2 text-gray-400 whitespace-nowrap">{k.okcModeli || '-'}</td>
+                    <td className="py-2 pr-2 text-gray-400 whitespace-nowrap">{k.cihazSicilNo || '-'}</td>
+                    <td className="py-2 pr-2 text-gray-300 whitespace-nowrap">{k.bildirimZamani || '-'}</td>
+                    <td className="py-2 pr-2 text-gray-400 whitespace-nowrap">{k.bildirimYontemi || '-'}</td>
+                    <td className="py-2 text-right">
+                      <button
+                        onClick={() => setOkcDetay(k)}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-blue-600/20 text-blue-300 hover:bg-blue-600/30"
+                      >
+                        <Eye className="w-3 h-3" /> Göster
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-[11px] text-gray-500 mt-2">
+              Toplam {okcKayitlar.length} kayıt · {String(okcAy).padStart(2, '0')}.{okcYil}
+            </p>
+          </div>
+        )}
+      </div>
+      {/* ÖKC detay modalı */}
+      {okcDetay && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setOkcDetay(null)}>
+          <div className="bg-blue-950 border border-blue-700/60 rounded-2xl max-w-3xl w-full max-h-[86vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-blue-800/50">
+              <h3 className="text-white font-semibold text-sm flex items-center gap-2">
+                <Receipt className="w-4 h-4 text-yellow-400" />
+                ÖKC Bildirim Detayı — {String(okcAy).padStart(2, '0')}.{okcYil}
+              </h3>
+              <button onClick={() => setOkcDetay(null)} className="text-gray-400 hover:text-white p-1">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 overflow-y-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                {OKC_BASLIKLAR.map(([a, b]) => (
+                  <div key={a} className="bg-blue-900/30 rounded-lg px-3 py-2">
+                    <div className="text-[10px] text-gray-500 mb-0.5">{b}</div>
+                    <div className="text-sm text-gray-200 break-words">{okcDetay[a] || '-'}</div>
+                  </div>
+                ))}
+              </div>
+              {okcDetay.detay && Object.keys(okcDetay.detay).length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left text-gray-400 border-b border-blue-800/30">
+                        <th className="pb-2 pr-3">Alan</th>
+                        <th className="pb-2">Değer</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(okcDetay.detay).map(([k, v]) => (
+                        <tr key={k} className="border-b border-blue-800/20 last:border-0">
+                          <td className="py-1.5 pr-3 text-gray-400">{k}</td>
+                          <td className="py-1.5 text-gray-200">{String(v ?? '-')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500">
+                  Detay alanları okunmadı. Üstteki <b>Göster</b> düğmesiyle sorgularsanız her kaydın tüm satış/Kdv
+                  dökümü burada listelenir.
+                </p>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-blue-800/50 flex justify-end gap-2">
+              <button
+                onClick={okcDetayKopyala}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium bg-blue-600/20 text-blue-300 hover:bg-blue-600/30"
+              >
+                <Copy className="w-3.5 h-3.5" /> Bilgileri Kopyala
+              </button>
+              <button
+                onClick={() => setOkcDetay(null)}
+                className="px-3 py-2 rounded-lg text-xs font-medium bg-blue-900/60 text-gray-300 hover:bg-blue-800/60"
+              >
+                Kapat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* KDV Beyanına Etkisi */}
       <div className="bg-blue-950/30 border border-blue-800/30 rounded-xl p-4">
         <h3 className="text-sm font-semibold text-white flex items-center gap-2 mb-3">
           <ArrowRightLeft className="w-4 h-4 text-teal-400" />
@@ -549,7 +830,7 @@ function FaturaOranTablosu({ baslik, data }) {
       {data.eksikTutar > 0 && <p className="text-xs text-yellow-300 mt-2">{data.eksikTutar} kayıtta matrah veya KDV eksik; toplamlar yalnızca kayıtlı tutarları içerir.</p>}
       {(data.cozulemeyenler?.length || 0) > 0 && (
         <p className="text-xs text-orange-300 mt-1">
-          {data.cozulemeyenler.length} kayıt %20, %10 veya %1 oranlarından hiçbirine uymadı; ayrıntılar tarayıcı konsolunda listelenir.
+          {data.cozulemeyenler.length} kaydın KDV oranı doğrulanamadı; bu kayıtların tutarları toplamda yer alır.
         </p>
       )}
     </div>

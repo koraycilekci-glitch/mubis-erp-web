@@ -120,7 +120,7 @@ export default function Tebligatlar() {
     } catch { /* yoksay */ }
   }, [])
 
-  const gonderimKaydet = async (aktifTercihi = gonderimAktif) => {
+  const gonderimPlanKaydet = async (aktifTercihi = gonderimAktif) => {
     const oncekiAktif = gonderimAktif
     const tumGunler = [...gonderimGunler, ...[...gonderimAyGunler].map(d => 100 + d)]
     if (aktifTercihi && !tumGunler.length) { setGonderimMesaj({ ok: false, t: 'En az bir gün seçin.' }); return }
@@ -538,7 +538,7 @@ const seciliMusteri = hepsiSecili ? null : musteriler.find(m => String(m.id) ===
       setMesaj({ tip: 'hata', metin: 'Belge indirme hatası: ' + (e?.message || e) })
     }
     setIslem({ belgeNo: null, tip: null })
-  }, [musteri, topluIndiriliyor])
+  }, [seciliMusteri, musteriler, seciliId, topluIndiriliyor])
 
   // Filtreler (toplu gonderim ve secim yardimcilari bunu kullanir; ustte tanimli olmali)
   const gorunenSatirlar = useMemo(() => {
@@ -626,7 +626,7 @@ const seciliMusteri = hepsiSecili ? null : musteriler.find(m => String(m.id) ===
     } catch (e) {
       return { ok: false, hata: e?.message || String(e) }
     }
-  }, [musteri, settings])
+  }, [seciliMusteri, musteriler, settings])
 
   // Tekil gonderim (satir butonlari)
   const gonder = useCallback(async (satir, kanal) => {
@@ -1372,7 +1372,7 @@ const seciliMusteri = hepsiSecili ? null : musteriler.find(m => String(m.id) ===
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={() => gonderimKaydet(!gonderimAktif)}
+              onClick={() => gonderimPlanKaydet(!gonderimAktif)}
               disabled={gonderimKaydediliyor}
               className={`relative w-11 h-6 rounded-full transition-colors disabled:opacity-50 shrink-0 ${gonderimAktif ? 'bg-green-500' : 'bg-blue-800/80'}`}
               title={gonderimAktif ? 'Otomatik gönderim açık' : 'Otomatik gönderim kapalı'}
@@ -1467,7 +1467,7 @@ const seciliMusteri = hepsiSecili ? null : musteriler.find(m => String(m.id) ===
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => gonderimKaydet(true)}
+                onClick={() => gonderimPlanKaydet(true)}
                 disabled={gonderimKaydediliyor}
                 className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium disabled:opacity-50"
               >
@@ -1482,7 +1482,7 @@ const seciliMusteri = hepsiSecili ? null : musteriler.find(m => String(m.id) ===
               )}
               <button
                 type="button"
-                onClick={() => gonderimKaydet(false)}
+                onClick={() => gonderimPlanKaydet(false)}
                 disabled={gonderimKaydediliyor}
                 className="px-4 py-2 rounded-xl bg-blue-900/60 border border-blue-700/50 text-gray-300 hover:text-white text-sm disabled:opacity-50"
               >Kapat</button>

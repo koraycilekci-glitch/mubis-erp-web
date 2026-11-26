@@ -1379,7 +1379,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
         // Minimal kolon sorgusu (getClients tum tabloyu cektigi icin kullanilmaz)
         const { data, error } = await supabase
           .from('clients')
-          .select('id, name, email, esmm, earsiv, efatura, dvs_username, dvs_password')
+          .select('id, name, email, esmm, earsiv, efatura, dvs_username, dvs_password, close_date')
           .ilike('email', String(user.email).trim())
           .limit(1)
         if (!error && !iptal && data?.[0]) setKendiClient(data[0])
@@ -1776,7 +1776,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
     }
   }
 
-  const borcOzeti = hesaplaBorcOzeti(accountingFee, myPayments)
+  const borcOzeti = hesaplaBorcOzeti(accountingFee, myPayments, new Date(), clientDetail || kendiClient)
   const fmt = (n) => Number(n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 })
 
   // Mali müşavirin yüklediği serbest meslek makbuzları (en yeni önce)

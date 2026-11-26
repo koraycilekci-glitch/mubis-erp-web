@@ -131,7 +131,7 @@ Bugünün tarihi: ${bugun.toLocaleDateString('tr-TR')}`)
 
   // Mali musavirlik ucreti / borc
   if (fee) {
-    const b = hesaplaBorcOzeti(fee, payments, bugun)
+    const b = hesaplaBorcOzeti(fee, payments, bugun, client)
     bolumler.push(`MALI MÜŞAVİRLİK (muhasebe) ÜCRETİ:
 Aylık ücret: ${para(b.aylikUcret)} TL
 Önceki dönem devir borcu: ${para(b.oncekiDonem)} TL

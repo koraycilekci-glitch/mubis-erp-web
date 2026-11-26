@@ -14,6 +14,7 @@
 //   E-posta  -> nodemailer (app_settings SMTP)
 import nodemailer from 'nodemailer'
 import { json, supabaseAdmin, normalizePhone } from './_lib.js'
+import { kapanisSonrasiAy, acilisOncesiAy } from '../../src/utils/beyanKapanis.js'
 
 const PLAN_KEY = 'borc_bildirim_plan'
 const AY_ADLARI = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
@@ -217,7 +218,8 @@ function mesajHtmlUret(musteriAdi, tarih, sgk, vergi, muhasebe = null) {
 // Muhasebe (mesleki) borcu: accounting_fees + payments üzerinden kalan borç.
 // Frontend hesaplaBorcOzeti ile aynı mantığın sunucu tarafı sadeleştirilmiş
 // hâli: yalnızca "kalan borç > 0" bilgisi ve tutarı gerekir.
-async function muhasebeBorclari(supabase, musteriIdleri) {
+async function muhasebeBorclari(supabase, clients) {
+  const musteriIdleri = clients.map(client => client.id)
   const sonuc = new Map()
   try {
     const [{ data: fees }, { data: payments }] = await Promise.all([
@@ -226,6 +228,7 @@ async function muhasebeBorclari(supabase, musteriIdleri) {
     ])
     for (const fee of (fees || [])) {
       const cid = String(fee.client_id)
+      const client = clients.find(item => String(item.id) === cid)
       const odemeler = (payments || []).filter(p => String(p.client_id) === cid)
       const aylik = sayi(fee.aylik_ucret)
       // 2.8.46: GECMIS / GUNCEL DONEM AYRIMI (muhasebe borcu)
@@ -256,6 +259,7 @@ async function muhasebeBorclari(supabase, musteriIdleri) {
         const ilkAy = y === basYil ? basAy : 1
         const sonAy = y === buYil ? buAy : 12
         for (let m = ilkAy; m <= sonAy; m++) {
+          if (acilisOncesiAy(client, y, m) || kapanisSonrasiAy(client, y, m)) continue
           const kalan = Math.max(0, aylik - donemTahsil(y, m))
           if (y < buYil) gecmisAylik += kalan
           else guncelAylik += kalan
@@ -364,7 +368,7 @@ async function calistir(env, supabase) {
 
   // Müşteriler + güncel borç sonuçları
   const [{ data: musteriler }, { data: borclar }] = await Promise.all([
-    supabase.from('clients').select('id, name, company, phone, email, phonenumbers, emails, beyan_durumlari, beyanDurumlari, close_date'),
+    supabase.from('clients').select('id, name, company, phone, email, phonenumbers, emails, beyan_durumlari, beyanDurumlari, open_date, close_date'),
     supabase.from('borc_sonuclari').select('client_id, tip, toplam, detay, mesaj, sorgu_ts')
   ])
 
@@ -396,7 +400,7 @@ async function calistir(env, supabase) {
 
   // Muhasebe (mesleki) borçlar — plan seçeneğinde işaretliyse
   const muhasebeMap = plan.muhasebeDahil
-    ? await muhasebeBorclari(supabase, aktifler.map(m => m.id))
+    ? await muhasebeBorclari(supabase, aktifler)
     : new Map()
 
   const sonuclar = []

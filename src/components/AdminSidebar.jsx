@@ -35,7 +35,6 @@ export const MENU = [
       { to: '/admin/beyan-hazirlama', icon: FileSpreadsheet, label: 'Beyan Hazırlama' }
     ]
   },
-  { to: '/admin/musteriler', icon: Users, label: 'Müşteriler' },
   {
     id: 'fatura-islemleri', icon: Receipt, label: 'Fatura İşlemleri',
     children: [
@@ -47,6 +46,7 @@ export const MENU = [
       { to: '/admin/toplu-belge-islemleri', icon: FileCheck, label: 'Toplu Belge Türü ve Ödeme Yöntemi Düzenleme' }
     ]
   },
+  { to: '/admin/musteriler', icon: Users, label: 'Müşteriler' },
   { to: '/admin/kdv-dokumleri', icon: BarChart3, label: 'KDV Dökümleri' },
   { to: '/admin/kredi-karti-hasilat', icon: CreditCard, label: 'Kredi Kartı Hasılatı (POS)' },
   { to: '/admin/musteri-borc-dokumu', icon: Landmark, label: 'Müşteri Borç Dökümü' },
@@ -95,6 +95,7 @@ export const MENU = [
   },
   { to: '/admin/tax-calendar', icon: CalendarDays, label: 'Vergi Takvimi' },
   { to: '/admin/kdv-muavin-kontrol', icon: FileText, label: 'KDV Muavin Kontrol' },
+  { to: '/admin/kdv-tahakkuk-kontrol', icon: ClipboardCheck, label: 'KDV Tahakkuk Kontrolü' },
   {
     id: 'mevzuat-asistan', icon: Brain, label: 'Mevzuat & AI Asistan',
     children: [

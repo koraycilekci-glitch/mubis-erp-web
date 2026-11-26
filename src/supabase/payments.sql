@@ -66,15 +66,19 @@ BEGIN
     USING (
       EXISTS (
         SELECT 1 FROM public.profiles p
+        JOIN public.clients c ON c.id = public.payments.client_id
         WHERE p.id = auth.uid() AND p.role IN ('admin', 'personel')
-          AND (p.office_id = public.payments.office_id OR public.payments.office_id IS NULL)
+          AND p.office_id = c.office_id
+          AND (public.payments.office_id IS NULL OR public.payments.office_id = c.office_id)
       )
     )
     WITH CHECK (
       EXISTS (
         SELECT 1 FROM public.profiles p
+        JOIN public.clients c ON c.id = public.payments.client_id
         WHERE p.id = auth.uid() AND p.role IN ('admin', 'personel')
-          AND (p.office_id = public.payments.office_id OR public.payments.office_id IS NULL)
+          AND p.office_id = c.office_id
+          AND (public.payments.office_id IS NULL OR public.payments.office_id = c.office_id)
       )
     );
   END IF;

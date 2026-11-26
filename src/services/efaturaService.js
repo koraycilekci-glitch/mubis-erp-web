@@ -2238,8 +2238,17 @@ export async function faturaFisDetaylariniTamamla(faturalar) {
       satir.tarih === String(fatura.tarih).slice(0, 10) &&
       String(satir.evrakNo != null ? `Z-${satir.evrakNo}` : satir.faturaNo).trim() === String(fatura.fatura_no).trim())
     const eslesenler = satirlar.filter(satir => fatura.tutar != null && Math.abs(Number(satir.toplam) - Number(fatura.tutar)) <= 0.02)
-    const tekilEslesenler = [...new Map(eslesenler.map(satir => [JSON.stringify([satir.matrah, satir.kdv, satir.kdvDetaylari, satir.nakit, satir.kredi]), satir])).values()]
-    let satir = tekilEslesenler.length === 1 ? tekilEslesenler[0] : null
+    const tekilEslesenler = [...new Map(eslesenler.map(satir => [JSON.stringify([satir.matrah, satir.kdv, satir.kdvDetaylari]), satir])).values()]
+    let satir = tekilEslesenler.length === 1 ? { ...tekilEslesenler[0] } : null
+    let odemeCeliskili = false
+    if (satir) {
+      for (const alan of ['nakit', 'kredi']) {
+        if (eslesenler.some(kayit => kayit[alan] !== satir[alan])) {
+          satir[alan] = null
+          odemeCeliskili = true
+        }
+      }
+    }
     if (!satir && satirlar.length > 1) {
       const birlesik = {
         matrah: satirlar.reduce((sum, kayit) => sum + Number(kayit.matrah), 0),
@@ -2257,8 +2266,10 @@ export async function faturaFisDetaylariniTamamla(faturalar) {
     if (!satir) return { ...fatura, fisDetayUyari: 'KDV/ödeme ayrıntısı kaynak dökümden doğrulanamadı.' }
     const detaylar = fisDetaylariniDogrula(satir.kdvDetaylari, satir.matrah, satir.kdv, fatura.tutar)
     const odemeUyumlu = satir.nakit == null || satir.kredi == null || Math.abs(Number(satir.nakit) + Number(satir.kredi)) <= Math.abs(Number(fatura.tutar)) + 0.02
-    return { ...fatura, ...(detaylar.length ? { matrah: satir.matrah, kdv: satir.kdv } : {}), kdvDetaylari: detaylar, nakit: odemeUyumlu ? satir.nakit : null, kredi: odemeUyumlu ? satir.kredi : null,
-      fisDetayUyari: detaylar.length ? (odemeUyumlu ? '' : 'Ödeme tutarları belge toplamını aşıyor; kaynak dökümü kontrol edin.') : 'Kaynak KDV kırılımı belge toplamlarıyla uyuşmuyor.' }
+    const fisDetayUyari = !detaylar.length ? 'Kaynak KDV kırılımı belge toplamlarıyla uyuşmuyor.'
+      : !odemeUyumlu ? 'Ödeme tutarları belge toplamını aşıyor; kaynak dökümü kontrol edin.'
+      : odemeCeliskili ? 'Eşleşen kaynak satırlarında ödeme tutarları farklı; çelişkili tutarlar gösterilmedi.' : ''
+    return { ...fatura, ...(detaylar.length ? { matrah: satir.matrah, kdv: satir.kdv } : {}), kdvDetaylari: detaylar, nakit: odemeUyumlu ? satir.nakit : null, kredi: odemeUyumlu ? satir.kredi : null, fisDetayUyari }
   })
 }
 

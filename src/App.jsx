@@ -27,6 +27,7 @@ const Notifications = lazy(() => import('./pages/Notifications'))
 const TaxCalendar = lazy(() => import('./pages/TaxCalendar'))
 const MevzuatKaynaklari = lazy(() => import('./pages/MevzuatKaynaklari'))
 const KdvMuavinKontrol = lazy(() => import('./pages/KdvMuavinKontrol'))
+const KdvTahakkukKontrol = lazy(() => import('./pages/KdvTahakkukKontrol'))
 import HataSiniri from './components/HataSiniri'
 const TopluBelgeIslemleri = lazy(() => import('./pages/TopluBelgeIslemleri'))
 const AllBeyanReport = lazy(() => import('./pages/AllBeyanReport'))
@@ -251,6 +252,7 @@ function AppContent() {
           <Route path="/admin/tax-calendar" element={<TaxCalendar />} />
           <Route path="/admin/mevzuat-kaynaklari" element={<MevzuatKaynaklari />} />
           <Route path="/admin/kdv-muavin-kontrol" element={<KdvMuavinKontrol />} />
+          <Route path="/admin/kdv-tahakkuk-kontrol" element={<HataSiniri><KdvTahakkukKontrol /></HataSiniri>} />
           <Route path="/admin/toplu-belge-islemleri" element={<HataSiniri><TopluBelgeIslemleri /></HataSiniri>} />
           <Route path="/admin/all-beyan" element={<AllBeyanReport />} />
           <Route path="/admin/tax-center" element={<TaxCenter />} />

@@ -335,7 +335,7 @@ export default function MusteriBorcDokumu() {
             const fee = await getAccountingFee(c.id)
             if (!fee) return
             const odemeler = await getPayments(c.id)
-            const oz = hesaplaBorcOzeti(fee, odemeler)
+            const oz = hesaplaBorcOzeti(fee, odemeler, new Date(), c)
             if (sayi(oz?.kalanBorc) > 0) harita[String(c.id)] = oz
           } catch { /* yoksay */ }
         }))

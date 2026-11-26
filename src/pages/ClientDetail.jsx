@@ -25,6 +25,8 @@ import { tecilliPlanPdfOku } from '../services/tecilliService'
 import { ASGARI_UCRET, nettenBrute } from '../data/defaults'
 import { formatTurkishInput, parseTurkishNumber, parseMoneyInput, formatMoney, hamTutarGirdisi } from '../utils/numberFormat'
 import { formatDateTR } from '../utils/dateUtils'
+import { normalizeClientDate, normalizeRentalDates } from '../utils/clientForm'
+import { kapanisSonrasiAy, acilisOncesiAy } from '../utils/beyanKapanis'
 import { supabase } from '../lib/supabase'
 import KiraTalepOnay from '../components/KiraTalepOnay'
 import PortalErisimKarti from '../components/PortalErisimKarti'
@@ -574,10 +576,8 @@ export default function ClientDetail() {
     try {
       const result = await updateClient(parseInt(id), data)
       if (result.success) {
-        // data yalnizca guncellenen alanlari icerir (id yok); mevcut client
-        // uzerine yamalayarak id/auth_user_id gibi kimlik alanlarini koru
-        setClient(prev => ({ ...prev, ...data }))
-        setEditData(prev => ({ ...prev, ...data }))
+        setClient(prev => ({ ...prev, ...data, ...result.client }))
+        setEditData(prev => ({ ...prev, ...data, ...result.client }))
       } else {
         alert('Kaydetme hatasi: ' + (result.error || 'Bilinmeyen hata'))
       }
@@ -740,25 +740,12 @@ export default function ClientDetail() {
     allowedFields.forEach(key => {
       if (key in editData) cleanData[key] = editData[key]
     })
-    // Tarih alanlarini yyyy-aa-gg formatinda normalize et
-    const dateFields = ['isAcilisTarihi','openDate','closeDate','eimzaStart','eimzaEnd','kiraBaslangic','kiraBitis']
+    const dateFields = ['openDate','closeDate','eimzaStart','eimzaEnd','kiraKontratBitis']
     dateFields.forEach(df => {
-      if (cleanData[df] === '' || cleanData[df] === undefined) {
-        cleanData[df] = null
-      } else if (typeof cleanData[df] === 'string' && cleanData[df].match(/^\d{2}\.\d{2}\.\d{4}$/)) {
-        const [g, a, y] = cleanData[df].split('.')
-        cleanData[df] = `${y}-${a}-${g}`
-      }
+      if (Object.hasOwn(cleanData, df)) cleanData[df] = normalizeClientDate(cleanData[df])
     })
-    // kiraBilgisi icindeki tarihleri de normalize et
     if (cleanData.kiraBilgisi && typeof cleanData.kiraBilgisi === 'object') {
-      const kb = { ...cleanData.kiraBilgisi }
-      ;['kiraBaslangic','kiraBitis'].forEach(df => {
-        if (kb[df] && typeof kb[df] === 'string' && kb[df].match(/^\d{2}\.\d{2}\.\d{4}$/)) {
-          const [g, a, y] = kb[df].split('.')
-          kb[df] = `${y}-${a}-${g}`
-        }
-      })
+      const kb = normalizeRentalDates(cleanData.kiraBilgisi)
       // Isyeri sahiplerinde net/brut hesaplamasini kaydetmeden once uygula
       if (Array.isArray(kb.isyeriSahipleri)) {
         kb.isyeriSahipleri = kb.isyeriSahipleri.map(sahip => {
@@ -775,12 +762,7 @@ export default function ClientDetail() {
           return { ...sahip, brutKira: formatTurkishInput(girilen), netKira: (numericValue * (1 - stopajOrani)).toFixed(2) }
         })
       }
-      delete kb.evSahipleri
       cleanData.kiraBilgisi = kb
-    }
-    // Eger isAcilisTarihi varsa openDate'e de yaz (geriye uyumluluk)
-    if (cleanData.isAcilisTarihi && !cleanData.openDate) {
-      cleanData.openDate = cleanData.isAcilisTarihi
     }
     if (cleanData.faaliyetKodu) {
       cleanData.naceCode = naceSadeceKod(cleanData.faaliyetKodu)
@@ -848,18 +830,9 @@ export default function ClientDetail() {
 
   // Kira gecmisi silme / guncelleme
   const saveKiraHistoryChanges = async (nextHistory) => {
-    const kb = { ...getKiraBilgisi(client), kiraGecmisi: nextHistory }
-    const { error } = await supabase
-      .from('clients')
-      .update({ kira_bilgisi: kb })
-      .eq('id', id)
-    if (error) {
-      console.error('Kira gecmisi kaydedilemedi:', error)
-      alert('Kira gecmisi kaydedilemedi: ' + error.message)
-      return false
-    }
-    setClient(prev => ({ ...prev, kiraBilgisi: kb, kira_bilgisi: kb }))
-    return true
+    const kb = normalizeRentalDates({ ...getKiraBilgisi(client), kiraGecmisi: nextHistory })
+    const result = await saveClient({ kiraBilgisi: kb })
+    return result.success
   }
 
   const deleteKiraHistoryItem = async (originalIndex) => {
@@ -1608,6 +1581,7 @@ export default function ClientDetail() {
     const tutarSayi = parseTurkishNumber(paymentForm.tutar)
     if (!tutarSayi || tutarSayi <= 0) return alert('Tutar giriniz!')
     if (!seciliBorcKalemler.length) return alert('En az bir borç kalemi seçin!')
+    if (seciliBorcKalemler.some(kalem => !getBorcKalemleri().some(secenek => secenek.value === kalem))) return alert('Kapalı dönem için ödeme kaydı oluşturulamaz.')
     try {
       const fee = accountingFee
       const toplandi = (p) => p.durum !== 'reddedildi' && (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel')
@@ -1726,6 +1700,7 @@ export default function ClientDetail() {
         const ayUst = y === simdi.getFullYear() ? simdi.getMonth() + 1 : 12
         const ayAlt = y === basYil ? basAy : 1
         for (let a = ayUst; a >= ayAlt; a--) {
+          if (acilisOncesiAy(client, y, a) || kapanisSonrasiAy(client, y, a)) continue
           secenekler.push({ value: `${y}-${String(a).padStart(2, '0')}`, label: `${y}-${String(a).padStart(2, '0')} Muhasebe Ucreti` })
         }
       }
@@ -1744,6 +1719,7 @@ export default function ClientDetail() {
     const payment = odemeOnayModal?.payment
     if (!payment) return
     if (!odemeOnaySecimler.length) return alert('En az bir borç kalemi seçin!')
+    if (odemeOnaySecimler.some(kalem => !getBorcKalemleri().some(secenek => secenek.value === kalem))) return alert('Kapalı dönem için ödeme uygulanamaz.')
     try {
       const fee = accountingFee
       const toplandi = (p) => p.durum !== 'reddedildi' && (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel')
@@ -2395,7 +2371,7 @@ export default function ClientDetail() {
                 {isEditing ? (
                   <input
                     type="date"
-                    value={editData.openDate || client.openDate || ''}
+                    value={normalizeDateForInput(editData.openDate)}
                     onChange={(e) => setEditData({ ...editData, openDate: e.target.value })}
                     className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
                   />
@@ -2408,7 +2384,7 @@ export default function ClientDetail() {
                 {isEditing ? (
                   <input
                     type="date"
-                    value={editData.closeDate || client.closeDate || ''}
+                    value={normalizeDateForInput(editData.closeDate)}
                     onChange={(e) => setEditData({ ...editData, closeDate: e.target.value })}
                     className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
                   />
@@ -2421,7 +2397,7 @@ export default function ClientDetail() {
                 {isEditing ? (
                   <input
                     type="date"
-                    value={editData.eimzaStart || client.eimzaStart || ''}
+                    value={normalizeDateForInput(editData.eimzaStart)}
                     onChange={(e) => setEditData({ ...editData, eimzaStart: e.target.value })}
                     className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
                   />
@@ -2434,7 +2410,7 @@ export default function ClientDetail() {
                 {isEditing ? (
                   <input
                     type="date"
-                    value={editData.eimzaEnd || client.eimzaEnd || ''}
+                    value={normalizeDateForInput(editData.eimzaEnd)}
                     onChange={(e) => setEditData({ ...editData, eimzaEnd: e.target.value })}
                     className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400"
                   />
@@ -2902,7 +2878,7 @@ export default function ClientDetail() {
             <div className="space-y-3">
               <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
                 <span className="text-gray-400 text-sm">Is Acilis</span>
-                {isEditing ? <input type="date" value={normalizeDateForInput(editData.isAcilisTarihi || editData.openDate)} onChange={(e) => setEditData({...editData, isAcilisTarihi: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" /> : <span className="text-white text-sm">{formatDisplayDate(client.isAcilisTarihi || client.openDate)}</span>}
+                {isEditing ? <input type="date" value={normalizeDateForInput(editData.openDate)} onChange={(e) => setEditData({...editData, openDate: e.target.value})} className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-1 text-white text-sm w-48 focus:outline-none focus:border-yellow-400" /> : <span className="text-white text-sm">{formatDisplayDate(client.openDate)}</span>}
               </div>
               <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
                 <span className="text-gray-400 text-sm">e-Imza Baslangic</span>
@@ -3939,7 +3915,7 @@ export default function ClientDetail() {
         <div className="space-y-6">
           {/* Borc Ozeti */}
           {(() => {
-            const ozet = hesaplaBorcOzeti(accountingFee, clientPayments)
+            const ozet = hesaplaBorcOzeti(accountingFee, clientPayments, new Date(), client)
             const fmt = (n) => Number(n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 })
             return (
               <div className="bg-blue-800/20 rounded-2xl p-6 border border-blue-700/30">

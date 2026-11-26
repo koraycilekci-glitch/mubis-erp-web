@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabase'
 import { requireMoneyInput, parseMoneyInput } from '../utils/numberFormat'
 import { getMyOfficeId } from './officeService'
 import { getSettings } from './settingsService'
+import { kapanisSonrasiAy, acilisOncesiAy } from '../utils/beyanKapanis'
 
 export async function getActivePaymentProvider() {
   try {
@@ -62,6 +63,18 @@ export async function saveAccountingFee(clientId, feeData) {
     .select()
     .single()
   if (error) throw error
+  return data
+}
+
+export async function clearPreviousPeriodDebt(clientId) {
+  const { data, error } = await supabase
+    .from('accounting_fees')
+    .update({ onceki_donem_borc: 0, updated_at: new Date().toISOString() })
+    .eq('client_id', clientId)
+    .select('client_id, onceki_donem_borc')
+    .single()
+  if (error) throw error
+  if (!data) throw new Error('Önceki dönem borcu silinemedi (yetki veya kayıt bulunamadı).')
   return data
 }
 
@@ -181,7 +194,7 @@ export function normalizeDonem(d) {
   return s
 }
 
-export function hesaplaBorcOzeti(fee, payments, referansTarih = new Date()) {
+export function hesaplaBorcOzeti(fee, payments, referansTarih = new Date(), client = null) {
   const bos = { oncekiDonem: 0, defterTasdik: 0, aylikUcret: 0, gecenAy: 0, aylikToplam: 0, toplamBorc: 0, toplamOdeme: 0, kalanBorc: 0, alindiOdeme: 0, bekleyenOdeme: 0, reddedilenOdeme: 0, sonOdeme: null, odenenAylar: [], odenmeyenAylar: [] }
   if (!fee) return bos
 
@@ -204,12 +217,14 @@ export function hesaplaBorcOzeti(fee, payments, referansTarih = new Date()) {
 
   // Odemelerin basladigi ay (baslangictan once odeme varsa faturalama oradan baslar)
   const odenenAyListesi = Array.from({ length: 12 }, (_, i) => i + 1)
-    .filter(m => donemToplam(`${refYil}-${String(m).padStart(2, '0')}`) > 0)
+    .filter(m => !acilisOncesiAy(client, refYil, m) && !kapanisSonrasiAy(client, refYil, m) && donemToplam(`${refYil}-${String(m).padStart(2, '0')}`) > 0)
 
   // Faturalanan ay sayisi: baslangictan (veya ilk odemeden) bu aya kadar
   let basAyNo = basYil === refYil ? basAy : 1
   if (odenenAyListesi.length > 0) basAyNo = Math.min(basAyNo, Math.min(...odenenAyListesi))
-  const gecenAy = Math.max(0, refAy - basAyNo + 1)
+  const faturalananAylar = Array.from({ length: Math.max(0, refAy - basAyNo + 1) }, (_, i) => basAyNo + i)
+    .filter(m => !acilisOncesiAy(client, refYil, m) && !kapanisSonrasiAy(client, refYil, m))
+  const gecenAy = faturalananAylar.length
 
   const aylikToplam = aylikUcret * gecenAy
   // Onceki yillarin odenmemis aylik ucretleri: referans yilindan onceki her yil icin
@@ -229,10 +244,13 @@ export function hesaplaBorcOzeti(fee, payments, referansTarih = new Date()) {
       if (Y > simdiYil) break
       const sonAy = Y === simdiYil ? simdiAy : 12
       let odendiTutar = 0
-      for (let m = 1; m <= sonAy; m++) {
+      let acikAySayisi = 0
+      for (let m = Y === gecmisBasYil ? basAy : 1; m <= sonAy; m++) {
+        if (acilisOncesiAy(client, Y, m) || kapanisSonrasiAy(client, Y, m)) continue
+        acikAySayisi++
         odendiTutar += Math.min(donemToplam(`${Y}-${String(m).padStart(2, '0')}`), aylikUcret)
       }
-      t += Math.max(0, aylikUcret * sonAy - odendiTutar)
+      t += Math.max(0, aylikUcret * acikAySayisi - odendiTutar)
     }
     return t
   })()
@@ -250,7 +268,6 @@ export function hesaplaBorcOzeti(fee, payments, referansTarih = new Date()) {
   const bekleyenOdeme = toplam((payments || []).filter(p => p.durum === 'bekliyor'))
   const reddedilenOdeme = toplam((payments || []).filter(p => p.durum === 'reddedildi'))
 
-  const faturalananAylar = Array.from({ length: gecenAy }, (_, i) => basAyNo + i)
   const tamOdenenAylar = faturalananAylar.filter(m => aylikUcret > 0 && donemToplam(`${refYil}-${String(m).padStart(2, '0')}`) >= aylikUcret)
   const odenmeyenAylar = faturalananAylar.filter(m => !tamOdenenAylar.includes(m))
   const aylikKalan = faturalananAylar.reduce((s, m) => s + Math.max(0, aylikUcret - Math.min(donemToplam(`${refYil}-${String(m).padStart(2, '0')}`), aylikUcret)), 0)

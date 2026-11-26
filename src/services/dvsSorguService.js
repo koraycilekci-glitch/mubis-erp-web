@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { yardimciIsSunucu, musteriGirisBilgileriGetir } from '../utils/gibOdemeHelper'
 import { devredenKdvOku, storageBeyanUrl } from './kdvDurumService'
 import { tevkifatKdvDokumu, tevkifatOdendiOku } from './tevkifatService'
+import { faturaFisDetaylariniTamamla } from './efaturaService'
 
 function sayi(v) {
   const n = Number(v)
@@ -540,29 +541,31 @@ export function kdvOranTahminEt({ matrah, kdv, tutar }) {
   return null
 }
 
+const kdvDokumTutari = deger => deger !== null && deger !== undefined && deger !== '' && Number.isFinite(Number(deger)) && Number(deger) >= 0 ? Number(deger) : null
+const kdvDokumKurusu = deger => Math.round(deger * 100)
+
+function kdvDokumDetayiGecerli({ matrah, kdv }, parcalar) {
+  if (kdvDokumTutari(matrah) === null || kdvDokumTutari(kdv) === null) return false
+  return parcalar.length > 0 && parcalar.every(parca => {
+    const oran = kdvDokumTutari(parca.oran)
+    return oran !== null && oran <= 100 && kdvDokumTutari(parca.matrah) !== null && kdvDokumTutari(parca.kdv) !== null
+  }) && parcalar.reduce((toplam, parca) => toplam + kdvDokumKurusu(Number(parca.matrah)), 0) === kdvDokumKurusu(matrah)
+    && parcalar.reduce((toplam, parca) => toplam + kdvDokumKurusu(Number(parca.kdv)), 0) === kdvDokumKurusu(kdv)
+}
+
 export function faturaKdvOranlariniGrupla(faturalar, detaylar) {
   const gruplar = new Map()
   let eksikTutar = 0
   let tahminEdilen = 0
   const cozulemeyenler = []
-  const tutar = deger => deger !== null && deger !== undefined && deger !== '' && Number.isFinite(Number(deger)) && Number(deger) >= 0 ? Number(deger) : null
-  const kurus = deger => Math.round(deger * 100)
 
   for (const fatura of faturalar) {
-    const matrah = tutar(fatura.matrah)
-    const kdv = tutar(fatura.kdv)
+    const matrah = kdvDokumTutari(fatura.matrah)
+    const kdv = kdvDokumTutari(fatura.kdv)
     if (matrah === null || kdv === null) eksikTutar++
     const parcalar = detaylar[fatura.id] || []
-    const gecerli = parcalar.length > 0 && parcalar.every(parca => {
-      const oran = tutar(parca.oran)
-      return oran !== null && oran <= 100 && tutar(parca.matrah) !== null && tutar(parca.kdv) !== null
-    }) && matrah !== null && kdv !== null
-      && parcalar.reduce((toplam, parca) => toplam + kurus(Number(parca.matrah)), 0) === kurus(matrah)
-      && parcalar.reduce((toplam, parca) => toplam + kurus(Number(parca.kdv)), 0) === kurus(kdv)
-    const satirlar = gecerli ? parcalar : (() => {
-      // Oran detayi yok / toplamlarla uyusmuyor: matrah+KDV (ve varsa tutar)
-      // uzerinden orani tahmin et; bulunamazsa "Oran belirlenemedi"de kalir.
-      const tahmin = kdvOranTahminEt({ matrah, kdv, tutar: fatura.tutar })
+    const satirlar = kdvDokumDetayiGecerli(fatura, parcalar) ? parcalar : (() => {
+      const tahmin = !fatura.kaynakKdvDogrulanamadi && kdvOranTahminEt({ matrah, kdv, tutar: fatura.tutar })
       if (tahmin && tahmin.oran !== null) {
         tahminEdilen++
         return [{ oran: tahmin.oran, matrah: tahmin.matrah ?? matrah, kdv }]
@@ -576,26 +579,16 @@ export function faturaKdvOranlariniGrupla(faturalar, detaylar) {
       const anahtar = oran === null ? 'bilinmiyor' : String(oran)
       if (!gruplar.has(anahtar)) gruplar.set(anahtar, { oran, matrah: 0, kdv: 0 })
       const grup = gruplar.get(anahtar)
-      grup.matrah += kurus(tutar(satir.matrah) ?? 0)
-      grup.kdv += kurus(tutar(satir.kdv) ?? 0)
+      grup.matrah += kdvDokumKurusu(kdvDokumTutari(satir.matrah) ?? 0)
+      grup.kdv += kdvDokumKurusu(kdvDokumTutari(satir.kdv) ?? 0)
     }
   }
 
   const satirlar = [...gruplar.values()]
     .sort((ilk, ikinci) => ilk.oran === null ? 1 : ikinci.oran === null ? -1 : ilk.oran - ikinci.oran)
-    .map(grup => {
-      // Matrah her zaman KDV uzerinden: matrah = KDV / (oran/100).
-      // OTV / konaklama vergisi gibi diger vergiler matraha EKLENMEZ.
-      const kdv = grup.kdv / 100
-      const matrahKdvDen = grup.oran ? kdvDenMatrah(kdv, grup.oran) : null
-      return {
-        oran: grup.oran,
-        matrah: matrahKdvDen !== null ? matrahKdvDen : grup.matrah / 100,
-        kdv
-      }
-    })
+    .map(grup => ({ oran: grup.oran, matrah: grup.matrah / 100, kdv: grup.kdv / 100 }))
   const toplam = satirlar.reduce(
-    (t, satir) => ({ matrah: t.matrah + kurus(satir.matrah), kdv: t.kdv + kurus(satir.kdv) }),
+    (t, satir) => ({ matrah: t.matrah + kdvDokumKurusu(satir.matrah), kdv: t.kdv + kdvDokumKurusu(satir.kdv) }),
     { matrah: 0, kdv: 0 }
   )
   return {
@@ -612,13 +605,27 @@ export function faturaKdvOranlariniGrupla(faturalar, detaylar) {
   }
 }
 
+async function kdvDokumKaynaklariniTamamla(faturalar, detaylar) {
+  const adaylar = faturalar.filter(fatura => fatura.xml_url && !kdvDokumDetayiGecerli(fatura, detaylar[fatura.id] || []))
+  const kaynaklar = await faturaFisDetaylariniTamamla(adaylar)
+  for (const [sira, kaynak] of kaynaklar.entries()) {
+    const fatura = adaylar[sira]
+    if (kaynak === fatura) continue
+    if (kdvDokumDetayiGecerli(fatura, kaynak.kdvDetaylari || [])) {
+      detaylar[fatura.id] = kaynak.kdvDetaylari
+    } else {
+      fatura.kaynakKdvDogrulanamadi = true
+    }
+  }
+}
+
 export async function faturaKdvOranDokumu({ clientId, yil, ay }) {
   const baslangic = `${yil}-${String(ay).padStart(2, '0')}-01`
   const bitis = `${ay === 12 ? yil + 1 : yil}-${String(ay === 12 ? 1 : ay + 1).padStart(2, '0')}-01`
   const faturalar = []
   for (let from = 0; ; ) {
     const { data, error } = await supabase.from('efatura_faturalar')
-      .select('id, yon, tur, matrah, kdv, tutar')
+      .select('id, yon, tur, fatura_turu, fatura_no, tarih, matrah, kdv, tutar, xml_url')
       .eq('client_id', clientId)
       .in('tur', ['efatura', 'earsiv', 'esmm', 'utts'])
       .gte('tarih', baslangic).lt('tarih', bitis)
@@ -642,16 +649,10 @@ export async function faturaKdvOranDokumu({ clientId, yil, ay }) {
       from += data.length
     }
   }
+  await kdvDokumKaynaklariniTamamla(faturalar, detaylar)
   const sonuc = {}
   for (const [anahtar, yon] of [['alinan', 'gelen'], ['kesilen', 'giden']]) {
-    const grup = faturaKdvOranlariniGrupla(faturalar.filter(fatura => fatura.yon === yon), detaylar)
-    // Teshis: oran detayi olmayan kayitlardan kaci tahminle siniflandi,
-    // kaci hicbir adaya (%20/%10/%1) uymadi. Cozulemeyenler konsola yazilir.
-    if (grup.cozulemeyenler.length) {
-      console.log(`[fatura-kdv-oran] ${yil}-${ay} ${anahtar}: ${grup.cozulemeyenler.length} kayit siniflandirilamadi`, grup.cozulemeyenler)
-    }
-    console.log(`[fatura-kdv-oran] ${yil}-${ay} ${anahtar}: ${grup.tahminEdilen} kayit matrah/KDV'den tahminle siniflandi`)
-    sonuc[anahtar] = grup
+    sonuc[anahtar] = faturaKdvOranlariniGrupla(faturalar.filter(fatura => fatura.yon === yon), detaylar)
   }
   return sonuc
 }

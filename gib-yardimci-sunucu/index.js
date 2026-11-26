@@ -7736,12 +7736,12 @@ const ISLER = {
   // p: { lucaMember, lucaUsername, lucaPassword, shortName, fullName, vkn,
   //      yil, ay, turler: ['empty','unbalanced','passive'] }
   "fis-tarama": async (p) => {
-    const { fisFiltresi, fisTaramaSayfa, FIS_TURLERI } = require("./fis-tarama")
+    const { fisFiltresi, fisTaramaSayfa, FIS_TURLERI, fisTarihAnahtari, kdvTahakkukAdayi } = require("./fis-tarama")
     const etiket = "fis-tarama"
     const yil = String(p.yil || (/* @__PURE__ */ new Date()).getFullYear())
     const musteriAd = String(p.fullName || p.shortName || p.vkn || "").trim()
     if (!musteriAd) throw new Error("Musteri bilgisi eksik (shortName/fullName/vkn).")
-    const istenenTurler = (Array.isArray(p.turler) && p.turler.length ? p.turler : Object.keys(FIS_TURLERI))
+    const istenenTurler = (Array.isArray(p.turler) && p.turler.length ? p.turler : ["empty", "unbalanced", "passive"])
       .filter((t) => Object.prototype.hasOwnProperty.call(FIS_TURLERI, t))
     if (!istenenTurler.length) throw new Error("Tarama turu secilmedi.")
     console.log(`[${etiket}] basladi: ${musteriAd} [${yil}/${p.ay}] turler=${istenenTurler.join(",")}`)
@@ -7822,6 +7822,20 @@ const ISLER = {
         await durumBekle("filter", 20000)
       }
       await durumBekle("filter", 20000)
+      const kdvTaramasi = kind === 'kdv-tahakkuk'
+      let lucaFiltreDonemi = null
+      if (kdvTaramasi) {
+        const ekrandaki = await sayfa("period")
+        const baslangic = fisTarihAnahtari(ekrandaki?.start)
+        const bitis = fisTarihAnahtari(ekrandaki?.end)
+        if (baslangic && bitis && baslangic <= bitis && baslangic.startsWith(yil + '-') && bitis.startsWith(yil + '-')) {
+          lucaFiltreDonemi = { baslangic, bitis }
+          const goster = tarih => tarih.split('-').reverse().join('/')
+          filtre.start = goster(baslangic > fisTarihAnahtari(filtre.start) ? baslangic : fisTarihAnahtari(filtre.start))
+          filtre.end = goster(bitis < fisTarihAnahtari(filtre.end) ? bitis : fisTarihAnahtari(filtre.end))
+          if (fisTarihAnahtari(filtre.start) > fisTarihAnahtari(filtre.end)) throw new Error('Seçilen ay Luca filtre aralığı dışında.')
+        }
+      }
       await sayfa("filter", { filter: filtre })
       await sayfa("submit", { filter: filtre })
       await durumBekle("list", 90000)
@@ -7831,16 +7845,23 @@ const ISLER = {
       const gorulenSayfa = new Set()
       let sayfaNo = 0
       let bitti = false
+      let kapsamTam = false
       while (!bitti) {
         if (++sayfaNo > 300) throw new Error(kind + ": sayfa sinirina ulasildi; tarama tamamlandi sayilmadi.")
         const sayfaVeri = await sayfa("read")
         if (!Array.isArray(sayfaVeri.rows)) throw new Error("Fis listesi okunamadi.")
-        const anahtar = String(sayfaNo) + "|" + JSON.stringify(sayfaVeri.rows)
+        const anahtar = (kdvTaramasi ? "" : String(sayfaNo) + "|") + JSON.stringify(sayfaVeri.rows)
         if (gorulenSayfa.has(anahtar)) throw new Error("Fis listesi ilerlemedi.")
         gorulenSayfa.add(anahtar)
         for (const r of sayfaVeri.rows) {
           if (!r || !String(r.voucherNo || "").trim() || !String(r.id || "").trim()) {
             throw new Error("Fis kimligi okunamadi.")
+          }
+          if (kdvTaramasi) {
+            const tarih = fisTarihAnahtari(r.date)
+            if (!tarih || tarih < fisTarihAnahtari(filtre.start) || tarih > fisTarihAnahtari(filtre.end)) {
+              throw new Error('Fiş tarihi sorgulanan Luca aralığının dışında; tarama doğrulanamadı.')
+            }
           }
           const kodlanmis = JSON.stringify(r)
           if (gorulenKimlik.has(r.id)) {
@@ -7851,7 +7872,11 @@ const ISLER = {
           satirlar.push(r)
         }
         ilerle(`${FIS_TURLERI[kind]}: ${satirlar.length} fis okundu`)
-        if (sayfaVeri.end) { bitti = true; break }
+        if (sayfaVeri.end || (kdvTaramasi && sayfaVeri.nextDisabled)) {
+          kapsamTam = true
+          break
+        }
+        if (kdvTaramasi && !sayfaVeri.nextAvailable) break
         const token = "t" + Date.now() + "_" + Math.random().toString(36).slice(2, 7)
         try {
           await sayfa("next", { token })
@@ -7868,13 +7893,17 @@ const ISLER = {
         }
       }
 
+      const uygunFisler = kdvTaramasi ? satirlar.filter(kdvTahakkukAdayi) : satirlar
       sonuc.turler[kind] = {
         ad: FIS_TURLERI[kind],
         baslangic: filtre.start,
         bitis: filtre.end,
-        sayi: satirlar.length,
+        sayi: uygunFisler.length,
         sayfa: sayfaNo,
-        fisler: satirlar.slice(0, 300)
+        fisler: kdvTaramasi
+          ? uygunFisler.slice(0, 300).map(({ date, voucherNo, description }) => ({ date, voucherNo, description }))
+          : uygunFisler.slice(0, 300),
+        ...(kdvTaramasi ? { lucaFiltreDonemi, kapsamTam: !!lucaFiltreDonemi && kapsamTam && uygunFisler.length <= 300 } : {})
       }
       console.log(`[${etiket}] ${kind}: ${satirlar.length} fis, ${sayfaNo} sayfa`)
     }
@@ -17900,6 +17929,292 @@ const ISLER = {
       return { ok: acilan.length > 0, acilan: acilan.length, toplam: hesaplar.length, kodlar: acilan, hatalar };
     } catch (e) {
       return { ok: false, error: e && e.message || "hata" };
+    }
+  },
+  // ============================================================
+  // OKC AYLIK SATIS RAPOR BILDIRIMLERI (Yeni Nesil OKC)
+  // Dijital Vergi Dairesi -> Internet Vergi Dairesi -> OKC Islemleri
+  // -> Yeni Nesil OKC Aylik Satis Rapor Bildirimleri -> Bildirim Goruntuleme
+  // p: { kullaniciKodu, parola, yil, ay, detay: boolean }
+  // ============================================================
+  "okc-bildirim-getir": async (p) => {
+    const etiket = "okc-bildirim";
+    const log = (m) => console.log(`[${etiket}] ${m}`);
+    const bekle = (ms) => new Promise((r) => setTimeout(r, ms));
+    const kullanici = p.kullaniciKodu || p.dvs_username || CONFIG.dvs?.kullaniciKodu || CONFIG.gib?.kullaniciKodu || "";
+    const parola = p.parola || p.dvs_password || CONFIG.dvs?.parola || CONFIG.gib?.parola || "";
+    const yil = String(p.yil || new Date().getFullYear());
+    const ay = Number(p.ay || (new Date().getMonth() + 1));
+    if (!kullanici || !parola) throw new Error("Dijital Vergi Dairesi kullanici adi/parolasi eksik.");
+    const AYLAR_TR = ["OCAK", "ŞUBAT", "MART", "NİSAN", "MAYIS", "HAZİRAN", "TEMMUZ", "AĞUSTOS", "EYLÜL", "EKİM", "KASIM", "ARALIK"];
+    const ayAdi = AYLAR_TR[ay - 1];
+    log(`basladi: ${kullanici} ${ayAdi} ${yil}`);
+
+    let page = await sayfaAc("https://dijital.gib.gov.tr/portal/login");
+    try {
+      const giris = await efaturaPortalGirisYap(page, kullanici, parola, etiket, /dijital\.gib\.gov\.tr\/portal\/(?!login)/i);
+      if (!giris.ok) throw new Error(giris.hata || "Dijital Vergi Dairesi girisi tamamlanamadi.");
+      log("DVS girisi tamam");
+
+      // Tum sayfalarda gorunen metni tiklayan yardimci (frame'ler dahil)
+      const tikla = async (metinler, { sure = 8000, tamEslesme = false } = {}) => {
+        const bas = Date.now();
+        while (Date.now() - bas < sure) {
+          for (const f of page.frames()) {
+            try {
+              const bulundu = await f.evaluate(({ metinler, tamEslesme }) => {
+                const norm = (s) => String(s || "").replace(/\s+/g, " ").trim().toLocaleLowerCase("tr");
+                const hedefler = metinler.map(norm);
+                const adaylar = [...document.querySelectorAll("a, button, span, div, td, li, h3, h4, label, input[type=submit], input[type=button]")];
+                for (const el of adaylar) {
+                  if (el.getClientRects().length === 0) continue;
+                  const t = norm(el.tagName === "INPUT" ? el.value : el.textContent);
+                  if (!t || t.length > 80) continue;
+                  const eslesti = tamEslesme ? hedefler.includes(t) : hedefler.some((h) => t === h || t.includes(h));
+                  if (eslesti) {
+                    el.setAttribute("data-mubis-okc", "1");
+                    return true;
+                  }
+                }
+                return false;
+              }, { metinler, tamEslesme }).catch(() => false);
+              if (bulundu) {
+                const merkez = await f.evaluate(() => {
+                  const el = document.querySelector('[data-mubis-okc="1"]');
+                  if (!el) return null;
+                  el.removeAttribute("data-mubis-okc");
+                  const r = el.getBoundingClientRect();
+                  return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+                }).catch(() => null);
+                if (merkez && merkez.x > 0 && merkez.y > 0) {
+                  await page.mouse.click(merkez.x, merkez.y);
+                  return true;
+                }
+                // Merkez alinamadiysa DOM click dene
+                const domOk = await f.evaluate(() => {
+                  const el = document.querySelector('[data-mubis-okc="1"]');
+                  if (!el) return false;
+                  el.removeAttribute("data-mubis-okc");
+                  el.click();
+                  return true;
+                }).catch(() => false);
+                if (domOk) return true;
+              }
+            } catch { /* frame koptu */ }
+          }
+          await bekle(400);
+        }
+        return false;
+      };
+
+      // 1) Internet Vergi Dairesi uygulamasina gecis
+      log("Internet Vergi Dairesi gecisi araniyor...");
+      const gecisBulundu = await tikla(["İnternet Vergi Dairesi", "Internet Vergi Dairesi"]);
+      if (gecisBulundu) {
+        log("gecis karti tiklandi; onay bekleniyor");
+        await bekle(1200);
+        const onay = await tikla(["ONAYLA", "Onayla"]);
+        log("onay: " + onay);
+        // Yeni sekme acilabilir
+        await bekle(3000);
+        let intvrgSayfa = null;
+        try {
+          const sayfalar = await browser.pages();
+          intvrgSayfa = sayfalar.find((pg) => /intvrg\.gib\.gov\.tr/i.test(pg.url() || ""));
+        } catch { /* yoksay */ }
+        if (intvrgSayfa) {
+          log("intvrg sekmesi bulundu: " + intvrgSayfa.url().slice(0, 80));
+          await intvrgSayfa.bringToFront().catch(() => {});
+          // Sayfa referansini degistir
+          page = intvrgSayfa;
+        } else if (!/intvrg\.gib\.gov\.tr/i.test(page.url() || "")) {
+          log("intvrg sekmesi bulunamadi; dogrudan adres deneniyor");
+          await page.goto("https://intvrg.gib.gov.tr/intvrg_side/main.jsp", { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
+        }
+      } else {
+        log("gecis karti bulunamadi; zaten intvrg'de olabilir");
+        if (!/intvrg\.gib\.gov\.tr/i.test(page.url() || "")) {
+          await page.goto("https://intvrg.gib.gov.tr/intvrg_side/main.jsp", { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
+        }
+      }
+      await bekle(2500);
+      log("aktif sayfa: " + (page.url() || "").slice(0, 100));
+
+      // 2) OKC Islemleri -> Yeni Nesil OKC Aylik Satis Rapor Bildirimleri
+      log("OKC Islemleri menusu aciliyor...");
+      const okcMenu = await tikla(["ÖKC İşlemleri", "OKC Islemleri"]);
+      log("OKC menusu: " + okcMenu);
+      await bekle(1500);
+      const yeniNesil = await tikla(["Yeni Nesil ÖKC Aylık Satış Rapor Bildirimleri", "Yeni Nesil OKC Aylik Satis Rapor Bildirimleri"]);
+      log("Yeni Nesil menu: " + yeniNesil);
+      await bekle(1800);
+      const goruntuleme = await tikla(["ÖKC Bildirim Görüntüleme", "OKC Bildirim Goruntuleme"]);
+      log("Bildirim Goruntuleme: " + goruntuleme);
+      await bekle(2500);
+
+      // 3) Donem secimi: ay + yil + Donem Sorgula
+      log("donem seciliyor: " + ayAdi + " " + yil);
+      const secimSonuc = await page.evaluate(({ ayAdi, yil }) => {
+        const norm = (s) => String(s || "").replace(/\s+/g, " ").trim().toLocaleUpperCase("tr");
+        const yilStr = String(yil);
+        let aySecildi = false;
+        let yilSecildi = false;
+        for (const sel of document.querySelectorAll("select")) {
+          if (sel.getClientRects().length === 0) continue;
+          const opts = [...sel.options];
+          if (!aySecildi) {
+            const o = opts.find((x) => norm(x.textContent) === ayAdi || norm(x.textContent).includes(ayAdi));
+            if (o) {
+              sel.value = o.value;
+              sel.dispatchEvent(new Event("change", { bubbles: true }));
+              aySecildi = true;
+              continue;
+            }
+          }
+          if (!yilSecildi) {
+            const o = opts.find((x) => norm(x.textContent) === yilStr);
+            if (o) {
+              sel.value = o.value;
+              sel.dispatchEvent(new Event("change", { bubbles: true }));
+              yilSecildi = true;
+            }
+          }
+        }
+        return { aySecildi, yilSecildi, selectSayisi: document.querySelectorAll("select").length };
+      }, { ayAdi, yil });
+      log("secim: " + JSON.stringify(secimSonuc));
+      await bekle(600);
+
+      const sorgulaTik = await tikla(["Dönem Sorgula", "Donem Sorgula"]);
+      log("Donem Sorgula: " + sorgulaTik);
+      await bekle(4000);
+
+      // 4) Tabloyu oku
+      const satirlar = await page.evaluate(() => {
+        const temizle = (s) => String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+        const tablolar = [...document.querySelectorAll("table")].filter((t) => t.getClientRects().length > 0);
+        const sonuc = [];
+        for (const t of tablolar) {
+          const basliklar = [...t.querySelectorAll("thead tr th, tr:first-child th")].map((th) => temizle(th.textContent));
+          const baslikMetni = basliklar.join(" | ").toLocaleLowerCase("tr");
+          if (!/bildirim|ökc|okc|cihaz|firma/i.test(baslikMetni)) continue;
+          const govdeSatirlari = [...t.querySelectorAll("tbody tr")];
+          for (const tr of govdeSatirlari) {
+            const hucreler = [...tr.querySelectorAll("td")];
+            if (!hucreler.length) continue;
+            const metinler = hucreler.map((td) => temizle(td.textContent));
+            const gosterIdx = hucreler.findIndex((td) => /göster|goster|incele/i.test(td.textContent) || td.querySelector("img, button"));
+            sonuc.push({
+              hucreler: metinler,
+              basliklar,
+              gosterIndex: gosterIdx >= 0 ? gosterIdx : null
+            });
+          }
+          if (sonuc.length) break;
+        }
+        return sonuc;
+      });
+      log(`okunan satir: ${satirlar.length}`);
+      if (!satirlar.length) {
+        return { ok: false, error: "OKC bildirim tablosu okunamadi. Sayfada tablo bulunamadi ya da donem icin kayit yok.", url: page.url() };
+      }
+
+      // Baslik -> alan eslesmesi (Turkce basliklari anahtar yap)
+      const ANAHTARLAR = {
+        "firma kodu": "firmaKodu",
+        "firma adı": "firmaAdi",
+        "firma adi": "firmaAdi",
+        "ökc markası": "okcMarkasi",
+        "okc markasi": "okcMarkasi",
+        "ökc modeli": "okcModeli",
+        "okc modeli": "okcModeli",
+        "cihaz sicil no": "cihazSicilNo",
+        "cihaz sicil no'su": "cihazSicilNo",
+        "bildirim zamanı": "bildirimZamani",
+        "bildirim zamani": "bildirimZamani",
+        "bildirim yöntemi": "bildirimYontemi",
+        "bildirim yontemi": "bildirimYontemi",
+        "aylık satış raporu no": "raporNo",
+        "aylik satis raporu no": "raporNo"
+      };
+      const kayitlar = satirlar.map((s, i) => {
+        const kayit = { sira: i + 1 };
+        (s.basliklar || []).forEach((b, bi) => {
+          const anahtar = ANAHTARLAR[b.toLocaleLowerCase("tr").trim()];
+          if (anahtar) kayit[anahtar] = (s.hucreler[bi] || "").trim();
+        });
+        kayit.gosterIndex = s.gosterIndex;
+        kayit.hamHucreler = s.hucreler;
+        return kayit;
+      });
+
+      // 5) Istenirse her satirin detayini "Goster" ile ac ve oku
+      if (p.detay) {
+        log("detaylar okunacak (" + kayitlar.length + " kayit)");
+        for (let i = 0; i < kayitlar.length; i++) {
+          const k = kayitlar[i];
+          if (k.gosterIndex == null) continue;
+          try {
+            // Yeniden tablo satirini bul ve goster hucresine tikla
+            const tiklandi = await page.evaluate((idx) => {
+              const temizle = (s) => String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+              const tablolar = [...document.querySelectorAll("table")].filter((t) => t.getClientRects().length > 0);
+              for (const t of tablolar) {
+                const tr = [...t.querySelectorAll("tbody tr")][idx];
+                if (!tr) continue;
+                const td = [...tr.querySelectorAll("td")].find((x) => /göster|goster|incele/i.test(x.textContent) || x.querySelector("img, button, a"));
+                if (!td) continue;
+                const hedef = td.querySelector("img, button, a") || td;
+                const r = hedef.getBoundingClientRect();
+                hedef.setAttribute("data-mubis-okc-detay", "1");
+                return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+              }
+              return null;
+            }, i);
+            if (tiklandi && tiklandi.x > 0) {
+              await page.mouse.click(tiklandi.x, tiklandi.y);
+            } else {
+              await page.evaluate(() => { const el = document.querySelector('[data-mubis-okc-detay="1"]'); if (el) el.click(); }).catch(() => {});
+            }
+            await bekle(2500);
+            // Detay icerigini topla (acilan pencere/dialog ya da ayni sayfa)
+            const detaylar = [];
+            for (const f of page.frames()) {
+              try {
+                const d = await f.evaluate(() => {
+                  const temizle = (s) => String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+                  const sonuc = {};
+                  const tablolar = [...document.querySelectorAll("table")].filter((t) => t.getClientRects().length > 0);
+                  for (const t of tablolar) {
+                    const trs = [...t.querySelectorAll("tr")];
+                    for (const tr of trs) {
+                      const tds = [...tr.querySelectorAll("td, th")].map((c) => temizle(c.textContent));
+                      if (tds.length === 2 && tds[0] && tds[1] && tds[0].length < 70) sonuc[tds[0]] = tds[1];
+                    }
+                  }
+                  return sonuc;
+                }).catch(() => ({}));
+                if (d && Object.keys(d).length) detaylar.push(d);
+              } catch { /* yoksay */ }
+            }
+            k.detay = Object.assign({}, ...detaylar);
+            log(`detay ${i + 1}/${kayitlar.length}: ${Object.keys(k.detay).length} alan`);
+            // Detayi kapat: ESC
+            await page.keyboard.press("Escape").catch(() => {});
+            await bekle(800);
+          } catch (e) {
+            log("detay hatasi " + (i + 1) + ": " + (e && e.message));
+            try { await page.keyboard.press("Escape"); } catch { /* yoksay */ }
+            await bekle(600);
+          }
+        }
+      }
+
+      log("bitti: " + kayitlar.length + " kayit");
+      return { ok: true, yil, ay, ayAdi, kayitlar, url: page.url() };
+    } catch (e) {
+      log("HATA: " + (e && e.message));
+      return { ok: false, error: e && e.message || "OKC bildirim sorgulanamadi", url: page.url ? page.url() : "" };
     }
   },
   "luca-edefter-olustur": async (p) => {

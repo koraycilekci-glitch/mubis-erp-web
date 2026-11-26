@@ -17989,25 +17989,87 @@ const ISLER = {
       const oncekiSekmeler = new Set(await browser.pages());
       const acilanSekmeler = new Set();
       const popupKaydet = (sekme) => acilanSekmeler.add(sekme);
+      const yonlendirmeKontrolu = (adim) => {
+        const norm = (metin) => String(metin || '').toLocaleLowerCase('tr').normalize('NFD').replace(/\p{M}/gu, '').replace(/ı/g, 'i').replace(/\s+/g, ' ').trim();
+        const gorunur = (el) => el.getClientRects().length && el.getAttribute('aria-disabled') !== 'true' && !el.closest('[aria-hidden="true"], [inert]') && getComputedStyle(el).visibility === 'visible';
+        const metin = (el) => norm(el.value || el.innerText || el.textContent);
+        const kontroller = 'a, button, input[type="button"], input[type="submit"], [role="button"], [onclick]';
+        const yapraklar = (alan, secici, eslesir) => {
+          const adaylar = Array.from(alan.querySelectorAll(secici)).filter((el) => !el.disabled && gorunur(el) && eslesir(metin(el)));
+          return adaylar.filter((el) => !adaylar.some((diger) => diger !== el && el.contains(diger)));
+        };
+        const secici = kontroller + ', div, span, p, li, label, h1, h2, h3, h4, h5, h6';
+        const alanBasligi = adim === 'kart' ? 'gecis yapilabilecek uygulamalar' : 'yonlendirmeyi onayliyor musunuz';
+        for (const baslik of yapraklar(document, secici, (deger) => deger.replace(/[?:]$/, '') === alanBasligi)) {
+          for (let alan = baslik.parentElement; alan && alan !== document.body; alan = alan.parentElement) {
+            if (adim === 'onay' && !yapraklar(alan, secici, (deger) => deger === 'iptal et').length) continue;
+            const adaylar = yapraklar(alan, secici, (deger) => adim === 'onay' ? deger === 'onayla' : /^(?:www )?internet vergi dairesi$/.test(deger));
+            const hedefler = [...new Set(adaylar.map((el) => {
+              let hedef = el;
+              if (adim === 'kart') {
+                while (hedef.parentElement && hedef.parentElement !== alan && /^(?:www )?internet vergi dairesi$/.test(metin(hedef.parentElement))) hedef = hedef.parentElement;
+              }
+              const kontrol = hedef.closest(kontroller);
+              return kontrol && alan.contains(kontrol) ? kontrol : hedef;
+            }))];
+            if (hedefler.length === 1) return hedefler[0];
+          }
+        }
+        return null;
+      };
+      const yonlendirmeyeTikla = async (adim) => {
+        for (const frame of kaynak.frames()) {
+          const handle = await frame.evaluateHandle(yonlendirmeKontrolu, adim).catch(() => null);
+          if (!handle) continue;
+          try {
+            const hedef = handle.asElement();
+            if (!hedef) continue;
+            await hedef.click();
+            return true;
+          } catch {
+            continue;
+          } finally {
+            await handle.dispose().catch(() => {});
+          }
+        }
+        return false;
+      };
+      const intvrg = (sekme) => {
+        try {
+          const url = new URL(sekme.url());
+          return url.protocol === 'https:' && url.hostname === 'intvrg.gib.gov.tr';
+        } catch { return false; }
+      };
+      const oturumuBul = async () => intvrg(kaynak) ? kaynak : (await browser.pages()).find((sekme) => !oncekiSekmeler.has(sekme) && intvrg(sekme) && (acilanSekmeler.has(sekme) || sekme.target().opener() === kaynak.target()));
       kaynak.on('popup', popupKaydet);
       try {
-        if (!await tikla(['İnternet Vergi Dairesi', 'İnternet Vergi Dairesine Geçiş', 'İnternet Vergi Dairesi Uygulaması'])) {
-          throw new Error('Dijital Vergi Dairesinde İnternet Vergi Dairesi kartı bulunamadı.');
-        }
-        if (!await tikla(['Onayla'], 5000)) throw new Error('İnternet Vergi Dairesi yönlendirme onayı bulunamadı.');
-        const son = Date.now() + 15000;
-        const intvrg = (sekme) => {
-          try {
-            const url = new URL(sekme.url());
-            return url.protocol === 'https:' && url.hostname === 'intvrg.gib.gov.tr';
-          } catch { return false; }
-        };
-        let hedef;
+        const kartSonu = Date.now() + 12000;
+        let kartTiklandi = false;
         do {
-          hedef = intvrg(kaynak) ? kaynak : (await browser.pages()).find((sekme) => !oncekiSekmeler.has(sekme) && intvrg(sekme) && (acilanSekmeler.has(sekme) || sekme.target().opener() === kaynak.target()));
-          if (!hedef) await bekle(300);
-        } while (!hedef && Date.now() < son);
-        if (!hedef) throw new Error('İnternet Vergi Dairesi oturumu açılamadı.');
+          kartTiklandi = await yonlendirmeyeTikla('kart');
+          if (!kartTiklandi) await bekle(300);
+        } while (!kartTiklandi && Date.now() < kartSonu);
+        if (!kartTiklandi) throw new Error('Dijital Vergi Dairesinde Geçiş Yapılabilecek Uygulamalar bölümündeki İnternet Vergi Dairesi kartı bulunamadı.');
+        log('İnternet Vergi Dairesi kartı tıklandı');
+
+        const onaySonu = Date.now() + 12000;
+        let hedef;
+        let onaylandi = false;
+        do {
+          hedef = await oturumuBul();
+          if (hedef) break;
+          onaylandi = await yonlendirmeyeTikla('onay');
+          if (!onaylandi) await bekle(300);
+        } while (!onaylandi && Date.now() < onaySonu);
+        if (onaylandi) {
+          log('İnternet Vergi Dairesi yönlendirmesi onaylandı');
+          const oturumSonu = Date.now() + 18000;
+          do {
+            hedef = await oturumuBul();
+            if (!hedef) await bekle(300);
+          } while (!hedef && Date.now() < oturumSonu);
+        }
+        if (!hedef) throw new Error(onaylandi ? 'Yönlendirme onaylandı ancak İnternet Vergi Dairesi sekmesi açılamadı.' : 'İnternet Vergi Dairesi kartı açıldı ancak GİB yönlendirme penceresi veya yeni sekme doğrulanamadı.');
         page = hedef;
       } finally {
         kaynak.off('popup', popupKaydet);

@@ -13,7 +13,8 @@ function sayi(v) {
 export const TUR_ETIKET = {
   '109': 'Sorumlu Sıfatıyla Ödenen KDV (109)',
   '110': 'Gümrük İşlemleri KDV',
-  'pos': 'Kredi Kartı Hasılatı'
+  'pos': 'Kredi Kartı Hasılatı',
+  'okc': 'ÖKC Hasılatı'
 }
 
 // ---------- SORGULA (yerel MUBiS yardımcı program üzerinden) ----------

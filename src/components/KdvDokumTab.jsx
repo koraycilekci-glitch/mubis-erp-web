@@ -561,7 +561,7 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
           <select
             value={okcYil}
             disabled={okcYukleniyor}
-            onChange={(e) => setOkcYil(Number(e.target.value))}
+            onChange={(e) => okcDonemDegistir(Number(e.target.value), okcAy)}
             className="bg-blue-950/50 border border-blue-800/50 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
           >
             {[...Array(7)].map((_, i) => {
@@ -570,7 +570,7 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
             })}
           </select>
           <button
-            onClick={okcSorgula}
+            onClick={() => okcSorgula()}
             disabled={okcYukleniyor}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 disabled:opacity-50 transition-colors"
           >
@@ -657,21 +657,40 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
             <div className="flex items-center justify-between px-5 py-3 border-b border-blue-800/50">
               <h3 className="text-white font-semibold text-sm flex items-center gap-2">
                 <Receipt className="w-4 h-4 text-yellow-400" />
-                ÖKC Bildirim Detayı — {String(okcAy).padStart(2, '0')}.{okcYil}
+                ÖKC Hasılat Detayları — {String(okcAy).padStart(2, '0')}.{okcYil}
               </h3>
               <button onClick={() => setOkcDetay(null)} className="text-gray-400 hover:text-white p-1">
                 <X className="w-4 h-4" />
               </button>
             </div>
             <div className="p-5 overflow-y-auto">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                {OKC_BASLIKLAR.map(([a, b]) => (
-                  <div key={a} className="bg-blue-900/30 rounded-lg px-3 py-2">
-                    <div className="text-[10px] text-gray-500 mb-0.5">{b}</div>
-                    <div className="text-sm text-gray-200 break-words">{okcDetay[a] || '-'}</div>
-                  </div>
-                ))}
-              </div>
+              {okcKayitlar.length > 1 && (
+                <label className="flex flex-wrap items-center gap-2 mb-4 text-xs text-gray-300">
+                  Bildirim
+                  <select
+                    value={okcKayitlar.indexOf(okcDetay)}
+                    onChange={(e) => setOkcDetay(okcKayitlar[Number(e.target.value)])}
+                    className="min-w-0 max-w-full bg-blue-950 border border-blue-700/50 rounded-lg px-3 py-2 text-sm text-white"
+                  >
+                    {okcKayitlar.map((kayit, index) => (
+                      <option key={index} value={index}>
+                        {`Bildirim ${index + 1}${kayit.raporNo ? ` · ${kayit.raporNo}` : ''}${kayit.bildirimZamani ? ` · ${kayit.bildirimZamani}` : ''}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <details className="mb-4">
+                <summary className="cursor-pointer mb-2 text-xs text-blue-300">Bildirim bilgileri</summary>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {OKC_BASLIKLAR.map(([a, b]) => (
+                    <div key={a} className="bg-blue-900/30 rounded-lg px-3 py-2">
+                      <div className="text-[10px] text-gray-500 mb-0.5">{b}</div>
+                      <div className="text-sm text-gray-200 break-words">{okcDetay[a] || '-'}</div>
+                    </div>
+                  ))}
+                </div>
+              </details>
               {okcDetay.detay && Object.keys(okcDetay.detay).length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">

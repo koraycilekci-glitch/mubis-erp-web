@@ -67,22 +67,47 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
   const [okcHata, setOkcHata] = useState('')
   const [okcMesaj, setOkcMesaj] = useState('')
   const [okcDetay, setOkcDetay] = useState(null)
+  const okcIstek = useRef(0)
 
-  const okcSorgula = async (detay) => {
-    setOkcYukleniyor(true)
+  useEffect(() => {
+    setOkcKayitlar([])
+    setOkcDetay(null)
+    setOkcMesaj('')
     setOkcHata('')
-    setOkcMesaj(detay
-      ? 'ÖKC bildirimleri ve detaylar okunuyor... (her kayıt için birkaç saniye)'
-      : 'ÖKC bildirimleri sorgulanıyor...')
+    setOkcYukleniyor(false)
+    return () => { okcIstek.current += 1 }
+  }, [clientId])
+
+  const okcDonemDegistir = (yeniYil, yeniAy) => {
+    setOkcYil(yeniYil)
+    setOkcAy(yeniAy)
+    setOkcKayitlar([])
+    setOkcDetay(null)
+    setOkcMesaj('')
+    setOkcHata('')
+  }
+
+  const okcSorgula = async (sorguYili = okcYil, sorguAyi = okcAy) => {
+    if (okcYukleniyor) return
+    const istek = ++okcIstek.current
+    okcDonemDegistir(sorguYili, sorguAyi)
+    setOkcYukleniyor(true)
+    setOkcMesaj('ÖKC bildirimleri ve ayrıntıları okunuyor...')
     try {
-      const res = await okcBildirimGetir({ clientId, yil: okcYil, ay: okcAy, detay })
-      setOkcKayitlar(Array.isArray(res.kayitlar) ? res.kayitlar : [])
-      setOkcMesaj(`${res.kayitlar?.length || 0} kayıt bulundu.`)
+      const res = await okcBildirimGetir({ clientId, yil: sorguYili, ay: sorguAyi, detay: true })
+      if (istek !== okcIstek.current) return
+      const kayitlar = Array.isArray(res.kayitlar) ? res.kayitlar : []
+      setOkcKayitlar(kayitlar)
+      const okunan = kayitlar.filter(kayit => Object.keys(kayit.detay || {}).length > 0).length
+      setOkcMesaj(kayitlar.length
+        ? `${kayitlar.length} kayıt bulundu; ${okunan} kaydın ayrıntısı aktarıldı.`
+        : 'Seçilen dönem için ÖKC bildirimi bulunamadı.')
     } catch (e) {
+      if (istek !== okcIstek.current) return
       setOkcHata(e?.message || 'ÖKC bildirimleri alınamadı')
       setOkcMesaj('')
     } finally {
-      setOkcYukleniyor(false)
+      if (istek === okcIstek.current) setOkcYukleniyor(false)
     }
   }
 
@@ -337,6 +362,15 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
           <SorguBtn tur="pos" label="POS Sorgula" icon={<CreditCard className="w-4 h-4" />} yukleniyor={yukleniyor} onClick={() => sorgula('pos')} />
           <SorguBtn tur="109" label="KDV 109 Sorgula" icon={<Receipt className="w-4 h-4" />} yukleniyor={yukleniyor} onClick={() => sorgula('109')} />
           <SorguBtn tur="110" label="Gümrük Sorgula" icon={<Ship className="w-4 h-4" />} yukleniyor={yukleniyor} onClick={() => sorgula('110')} />
+          <button
+            onClick={() => okcSorgula(yil, ay)}
+            disabled={okcYukleniyor}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 disabled:opacity-50 transition-colors"
+            title="ÖKC Aylık Satış Rapor Bildirimlerini (hasılat) sorgular"
+          >
+            {okcYukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Receipt className="w-4 h-4" />}
+            ÖKC Hasılat Sorgula
+          </button>
         </div>
       </div>
 
@@ -502,12 +536,22 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
             <Receipt className="w-4 h-4 text-yellow-400" />
             Yeni Nesil ÖKC Aylık Satış Rapor Bildirimleri
           </h3>
+          <button
+            type="button"
+            onClick={() => setOkcDetay(okcKayitlar.find(kayit => Object.keys(kayit.detay || {}).length) || okcKayitlar[0])}
+            disabled={!okcKayitlar.length || okcYukleniyor}
+            title={!okcKayitlar.length ? 'Önce dönem sorgulaması yapın' : 'Seçili dönemin ÖKC hasılat ayrıntılarını aç'}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 disabled:opacity-50 transition-colors"
+          >
+            <Eye className="w-4 h-4" /> Detay
+          </button>
         </div>
         <div className="flex flex-wrap gap-2 items-center mb-3">
           <span className="text-xs text-gray-400">Dönem:</span>
           <select
             value={okcAy}
-            onChange={(e) => setOkcAy(Number(e.target.value))}
+            disabled={okcYukleniyor}
+            onChange={(e) => okcDonemDegistir(okcYil, Number(e.target.value))}
             className="bg-blue-950/50 border border-blue-800/50 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
           >
             {aylar.map((a, i) => (
@@ -516,6 +560,7 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
           </select>
           <select
             value={okcYil}
+            disabled={okcYukleniyor}
             onChange={(e) => setOkcYil(Number(e.target.value))}
             className="bg-blue-950/50 border border-blue-800/50 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
           >
@@ -525,19 +570,11 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
             })}
           </select>
           <button
-            onClick={() => okcSorgula(false)}
+            onClick={okcSorgula}
             disabled={okcYukleniyor}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 disabled:opacity-50 transition-colors"
           >
             {okcYukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Durum Sorgula
-          </button>
-          <button
-            onClick={() => okcSorgula(true)}
-            disabled={okcYukleniyor}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-green-600/20 text-green-300 hover:bg-green-600/30 disabled:opacity-50 transition-colors"
-            title="Her satırın detayını da okur (daha uzun sürer)"
-          >
-            {okcYukleniyor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />} Göster
           </button>
           {okcKayitlar.length > 0 && (
             <>
@@ -655,9 +692,8 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
                   </table>
                 </div>
               ) : (
-                <p className="text-xs text-gray-500">
-                  Detay alanları okunmadı. Üstteki <b>Göster</b> düğmesiyle sorgularsanız her kaydın tüm satış/Kdv
-                  dökümü burada listelenir.
+                <p className="text-xs text-yellow-300">
+                  {okcDetay.detayHatasi || 'Bu bildirimin ayrıntısı aktarılamadı. Dönemi yeniden sorgulayabilirsiniz.'}
                 </p>
               )}
             </div>

@@ -95,7 +95,6 @@ export const MENU = [
   },
   { to: '/admin/tax-calendar', icon: CalendarDays, label: 'Vergi Takvimi' },
   { to: '/admin/kdv-muavin-kontrol', icon: FileText, label: 'KDV Muavin Kontrol' },
-  { to: '/admin/kdv-tahakkuk-kontrol', icon: ClipboardCheck, label: 'KDV Tahakkuk Kontrolü' },
   {
     id: 'mevzuat-asistan', icon: Brain, label: 'Mevzuat & AI Asistan',
     children: [

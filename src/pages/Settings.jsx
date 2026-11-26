@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase'
 import { getSettings, saveSettings, getDefaultDocumentPermissions, parseDocumentPermissions, getDefaultDocumentFolders, parseDocumentFolders } from '../services/settingsService'
 import { getBankInfo, saveBankInfo, getBankAccounts, saveBankAccounts } from '../services/paymentService'
 import { yardimciFetch, yardimciIsYerel } from '../utils/gibOdemeHelper'
-import { Settings as SettingsIcon, Lock, Clock, Users, Eye, EyeOff, CheckCircle, AlertCircle, Save, RefreshCw, MessageCircle, Mail, FolderOpen, FolderTree, Plus, Minus, Trash2, Pencil, Volume2, Play, CreditCard, Building2, Link2, Bot, Landmark, Shield, KeyRound } from 'lucide-react'
+import { Settings as SettingsIcon, Lock, Clock, Users, Eye, EyeOff, CheckCircle, AlertCircle, Save, RefreshCw, MessageCircle, Mail, FolderOpen, FolderTree, Plus, Minus, Trash2, Pencil, Volume2, Play, CreditCard, Building2, Link2, Bot, Landmark, Shield, KeyRound, Receipt } from 'lucide-react'
 import FolderStructureEditor from '../components/FolderStructureEditor'
 import PlanDilimSatirlari from '../components/PlanDilimSatirlari'
 import LisansPaneli from '../components/LisansPaneli'
@@ -1165,6 +1165,94 @@ export default function Settings() {
     } catch { return '' }
   }
 
+  // ---- Otomatik ÖKC hasılat / bildirim sorgulama ----
+  const [okcCronYukleniyor, setOkcCronYukleniyor] = useState(true)
+  const [okcCronPlan, setOkcCronPlan] = useState(null)
+  const [okcCronAktif, setOkcCronAktif] = useState(true)
+  const [okcCronZamanlar, setOkcCronZamanlar] = useState([{ gunler_ay: [5], saat: '08:00' }])
+  const [okcCronDetay, setOkcCronDetay] = useState(true)
+  const [okcYenidenOku, setOkcYenidenOku] = useState(false)
+  const [okcCronKaydediliyor, setOkcCronKaydediliyor] = useState(false)
+  const [okcCronMesaj, setOkcCronMesaj] = useState(null)
+
+  const okcCronDilimEkle = () => setOkcCronZamanlar(prev => [...prev, { gunler_ay: [Math.min(31, Math.max(1, new Date().getDate()))], saat: '08:00' }])
+  const okcCronDilimSil = (idx) => setOkcCronZamanlar(prev => prev.filter((_, i) => i !== idx))
+  const okcCronDilimGuncelle = (idx, yeni) => setOkcCronZamanlar(prev => prev.map((z, i) => i === idx ? { ...z, ...yeni } : z))
+
+  const okcCronPlanDurumaUygula = (plan) => {
+    if (!plan) return false
+    setOkcCronPlan(plan)
+    setOkcCronAktif(plan.aktif !== false)
+    setOkcCronDetay(plan.detay !== false)
+    setOkcYenidenOku(plan.yenidenOku === true)
+    const liste = Array.isArray(plan.zamanlar) ? plan.zamanlar : []
+    const bolunmus = dilimleriGunlereBol(liste, '08:00')
+    setOkcCronZamanlar(bolunmus.length ? bolunmus : [{ gunler_ay: [5], saat: '08:00' }])
+    return true
+  }
+
+  const okcCronYukle = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch('/api/okc-cron', {
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
+      })
+      const j = await r.json()
+      if (j.ok && j.plan) okcCronPlanDurumaUygula(j.plan)
+      else if (j.ok) setOkcCronPlan(null)
+    } catch { /* yoksay */ }
+    finally { setOkcCronYukleniyor(false) }
+  }
+
+  useEffect(() => { if (adminMi) okcCronYukle() }, [adminMi])
+
+  const okcCronKaydet = async () => {
+    const liste = (okcCronZamanlar || []).map(z => dilimNormalize(z, '08:00')).filter(dilimGecerli)
+    if (!liste.length) {
+      setOkcCronMesaj({ ok: false, t: 'En az bir gün ve saat girin.' }); return
+    }
+    setOkcCronKaydediliyor(true)
+    setOkcCronMesaj(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch('/api/okc-cron', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
+        body: JSON.stringify({ aktif: okcCronAktif, zamanlar: liste, yenidenOku: okcYenidenOku, detay: okcCronDetay })
+      })
+      const j = await r.json()
+      if (j.ok) {
+        if (j.plan) okcCronPlanDurumaUygula(j.plan)
+        else await okcCronYukle()
+        setOkcCronMesaj({ ok: true, t: 'Otomatik ÖKC hasılat sorgulama planı kaydedildi. İstanbul sunucusu belirlediğiniz gün ve saatte tüm aktif müşterilerin ÖKC Aylık Satış Rapor Bildirimlerini okur; sonuçlar KDV Dökümleri sayfasındaki ÖKC bölümünde ve raporlarda görünür.' })
+      } else setOkcCronMesaj({ ok: false, t: j.error === 'yetkisiz' ? 'Yönetici yetkisi gerekir.' : (j.error || 'Kaydedilemedi.') })
+    } catch { setOkcCronMesaj({ ok: false, t: 'Bağlantı hatası.' }) }
+    finally { setOkcCronKaydediliyor(false) }
+  }
+
+  const okcCronIptal = async () => {
+    if (!window.confirm('Otomatik ÖKC hasılat planı silinecek. Emin misiniz?')) return
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch('/api/okc-cron', {
+        method: 'DELETE',
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
+      })
+      const j = await r.json()
+      if (j.ok) { setOkcCronPlan(null); setOkcCronMesaj({ ok: true, t: 'Plan iptal edildi.' }) }
+      else setOkcCronMesaj({ ok: false, t: j.error || 'Silinemedi.' })
+    } catch { setOkcCronMesaj({ ok: false, t: 'Bağlantı hatası.' }) }
+  }
+
+  const okcCronSonucOzet = () => {
+    if (!okcCronPlan?.son_calisma) return 'Henüz çalışmadı'
+    try {
+      const d = new Date(okcCronPlan.son_calisma)
+      const zaman = d.toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+      return `${zaman} — ${okcCronPlan.son_sonuc?.ozet || 'tamamlandı'}`
+    } catch { return '' }
+  }
+
   const tabs = [
     { id: 'password', label: 'Sifre / Guvenlik', icon: Lock },
     { id: 'communication', label: 'Iletisim Ayarlari', icon: MessageCircle },
@@ -1177,6 +1265,7 @@ export default function Settings() {
     ...(adminMi ? [{ id: 'kayit-klasorleri', label: 'Kayit Klasorleri', icon: FolderTree }] : []),
     ...(adminMi ? [{ id: 'borc-cron', label: 'Otomatik Borç Sorgu', icon: Clock }] : []),
     ...(adminMi ? [{ id: 'dvs-cron', label: 'Otomatik POS / KDV Döküm', icon: CreditCard }] : []),
+    ...(adminMi ? [{ id: 'okc-cron', label: 'Otomatik ÖKC Hasılat', icon: Receipt }] : []),
     { id: 'documents', label: 'Evrak Gorunurlugu', icon: FolderOpen },
     { id: 'folders', label: 'Evrak Klasor Yapisi', icon: FolderTree },
     ...(adminMi ? [{ id: 'assistant', label: 'Asistan Sesi', icon: Volume2 }] : []),
@@ -1418,6 +1507,113 @@ export default function Settings() {
                 {dvsCronMesaj && (
                   <div className={`mt-3 px-4 py-3 rounded-xl text-sm border ${dvsCronMesaj.ok ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-200' : 'bg-red-500/10 border-red-500/40 text-red-300'}`}>
                     {dvsCronMesaj.t}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* OTOMATIK OKC HASILAT (VPS cron plani) */}
+        {activeTab === 'okc-cron' && (
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Otomatik ÖKC Hasılat Sorgulama</h2>
+                <p className="text-gray-400 text-sm">
+                  Seçilen gün ve saatte İstanbul sunucusu tüm aktif müşterilerin GİB İnternet Vergi Dairesi
+                  ÖKC Aylık Satış Rapor Bildirimlerini okur (ÖKC İşlemleri → Yeni Nesil ÖKC Aylık Satış Rapor
+                  Bildirimleri → ÖKC Bildirim Görüntüleme). Sonuçlar KDV Dökümleri sayfasındaki ÖKC bölümünde görünür.
+                </p>
+              </div>
+              <button
+                onClick={() => setOkcCronAktif(p => !p)}
+                className={`relative w-11 h-6 rounded-full transition-colors ${okcCronAktif ? 'bg-cyan-500' : 'bg-blue-800/80'}`}
+                title={okcCronAktif ? 'Otomatik ÖKC sorgulama açık' : 'Otomatik ÖKC sorgulama kapalı'}
+              >
+                <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${okcCronAktif ? 'left-[22px]' : 'left-0.5'}`} />
+              </button>
+            </div>
+            {okcCronYukleniyor ? (
+              <p className="text-xs text-gray-500 mt-3">Yükleniyor…</p>
+            ) : (
+              <>
+                <div className="mt-4 space-y-3">
+                  <div className="rounded-xl border border-blue-800/50 bg-blue-950/40 p-3.5">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <p className="text-[11px] uppercase tracking-wide text-gray-500">Sorgulama Gün ve Saatleri</p>
+                      <button
+                        type="button"
+                        onClick={okcCronDilimEkle}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-cyan-600/15 border border-cyan-500/40 text-cyan-300 text-[10px] font-medium hover:bg-cyan-600/25"
+                      >
+                        <Plus className="w-3 h-3" /> Ekle
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-gray-400 mb-3">
+                      Aynı plana birden fazla gün/saat ekleyebilirsiniz. Her dilim ayrı çalışır.
+                    </p>
+                    <PlanDilimSatirlari
+                      dilimler={okcCronZamanlar}
+                      varsayilanSaat="08:00"
+                      onDegistir={okcCronDilimGuncelle}
+                      onSil={okcCronDilimSil}
+                    />
+                    <label className="flex items-start gap-2 mt-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={okcCronDetay}
+                        onChange={e => setOkcCronDetay(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 rounded border-blue-700/50 bg-blue-900/40 text-amber-500 focus:ring-amber-500"
+                      />
+                      <span className="text-[11px] text-gray-400 leading-relaxed">
+                        <strong className="text-gray-300">Her ÖKC kaydının detayını da oku</strong><br />
+                        Açıkken her bildirimin satış/KDV dökümü de okunur (daha uzun sürer, daha çok bilgi).
+                        Kapalıyken yalnız bildirim listesi (firma, ÖKC marka/model, cihaz sicil, bildirim zamanı) alınır.
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 mt-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={okcYenidenOku}
+                        onChange={e => setOkcYenidenOku(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 rounded border-blue-700/50 bg-blue-900/40 text-amber-500 focus:ring-amber-500"
+                      />
+                      <span className="text-[11px] text-gray-400 leading-relaxed">
+                        <strong className="text-gray-300">Daha önce okunmuş dönemleri yeniden oku</strong><br />
+                        Kapalıyken aynı müşteri/dönem tekrar sorgulanmaz (atlanır). Açarsanız üzerine yazar.
+                      </span>
+                    </label>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2.5 mt-4">
+                  <button
+                    onClick={okcCronKaydet}
+                    disabled={okcCronKaydediliyor}
+                    className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium disabled:opacity-50"
+                  >
+                    {okcCronKaydediliyor ? 'Kaydediliyor…' : (okcCronPlan ? 'Planı Güncelle' : 'Kaydet')}
+                  </button>
+                  {okcCronPlan && (
+                    <button
+                      onClick={okcCronIptal}
+                      className="px-4 py-2 rounded-xl bg-blue-900/60 border border-blue-700/50 text-gray-300 hover:text-white text-sm"
+                    >
+                      İptal Et
+                    </button>
+                  )}
+                  <span className="text-xs text-gray-500 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5" />
+                    Son çalışma: {okcCronSonucOzet()}
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-600 mt-2.5">
+                  Not: Sorgu bir önceki ayın dönemini kapsar (ör. 3 Aralık'ta çalışırsa Kasım ayı ÖKC bildirimleri).
+                  Her ay otomatik çalışır; birden fazla dilim eklenebilir. DVS şifresi eksik müşteriler atlanır.
+                </p>
+                {okcCronMesaj && (
+                  <div className={`mt-3 px-4 py-3 rounded-xl text-sm border ${okcCronMesaj.ok ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-200' : 'bg-red-500/10 border-red-500/40 text-red-300'}`}>
+                    {okcCronMesaj.t}
                   </div>
                 )}
               </>

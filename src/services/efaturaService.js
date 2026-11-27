@@ -509,12 +509,26 @@ export function faturaIlerlemeMetni(ilerleme) {
   return null
 }
 
+async function faturalariKdvleriyleKaydet(kayitlar, kdvParcaMap) {
+  let kaydedilen = 0
+  for (let index = 0; index < kayitlar.length; index += 100) {
+    const parti = kayitlar.slice(index, index + 100).map(kayit => {
+      const detay = kdvParcaMap[kayit.fatura_uuid]
+      return detay?.length ? { ...kayit, kdv_detay: detay } : kayit
+    })
+    const { data, error } = await supabase.rpc('efatura_kdvli_kaydet', { p_kayitlar: parti })
+    if (error || data !== parti.length) return { error: error || new Error('Kaydedilen fatura sayısı doğrulanamadı.'), kaydedilen }
+    kaydedilen += data
+  }
+  return { error: null, kaydedilen }
+}
+
 const dosyaImzasi = d => `${Number(d?.boyut) || 0}|${Number(d?.tarih) || 0}`
 const dosyaDegistiMi = (fotograf, d) => fotograf instanceof Map
   ? fotograf.get(d.ad) !== dosyaImzasi(d)
   : !fotograf?.has?.(d.ad)
 
-export async function efaturaSorgula({ client, yil, ay, sorguTip = 'efatura', yon = 'hepsi', mod = 'sorgula', baslangicTarih, bitisTarih, kaynak = 'luca', onDurum, onIlerleme, sadeceIndir = false, sadeceSorgu = false, iptalKontrol = null }) {
+export async function efaturaSorgula({ client, yil, ay, sorguTip = 'efatura', yon = 'hepsi', mod = 'sorgula', baslangicTarih, bitisTarih, kaynak = 'luca', onDurum, onIlerleme, sadeceIndir = false, sadeceSorgu = false, iptalKontrol = null, oncekiIsId, onIsBasladi }) {
   const durum = (m) => { try { onDurum?.(m) } catch { /* yoksay */ } }
   if (!client?.id) throw new Error('Musteri secili degil')
   // 2.7.574: kullanici "Durdur" bastiysa is baslatilmadan cik
@@ -622,12 +636,15 @@ export async function efaturaSorgula({ client, yil, ay, sorguTip = 'efatura', yo
     // dosyalar inmis olsa bile web'i bekletmeden patliyordu -> 25 dk.
       }, 25 * 60 * 1000, durum, {
         iptalKontrol,
+        oncekiIsId,
+        onIsBasladi,
         yerelYedek: false,
         yerelYedekKapaliMesaj: 'Luca islem takibi suresinde tamamlanmadi: VPS bağlantısı doğrulanamadı; fatura sorgusu yerel yardımcıda çalıştırılmadı. İşlem sunucuda devam ediyor olabilir; yeniden denemeden önce Durdur düğmesine basın.',
         adimZamanAsimlari: { 'akilli-entegrasyon-menusu': 2 * 60 * 1000 }
       })
       if (iptalKontrol?.()) throw new Error('KULLANICI_DURDURDU')
       if (isSonuc?.reason !== 'mevcut-sorgu-devam-ediyor') break
+      if (oncekiIsId || onIsBasladi) throw Object.assign(new Error('Önceki Luca işlemi sürüyor. İşlem bitmeden yeni sorgu gönderilmedi.'), { code: 'LUCA_BEKLENIYOR', isBitti: true })
       if (iptalKontrol?.()) throw new Error('KULLANICI_DURDURDU')
       // 2.8.34: Kilit bekleme suresi 25 dk -> 2 dk. Yardimcidaki 15 dk'lik
       // kilit Durdur ile artik temizleniyor; yine de takili kalirsa kullanici
@@ -648,22 +665,22 @@ export async function efaturaSorgula({ client, yil, ay, sorguTip = 'efatura', yo
       throw new Error('Luca islem takibi suresinde tamamlanmadi. İşlem arka planda devam ediyor olabilir; Durdur düğmesine basmadan yeniden sorgulamayın.')
     } else {
       if (!luca.username || !luca.password || !luca.member) throw new Error('Sorgulama icin Luca baglantisi eksik: Ayarlar > Luca Baglanti bolumunden uye numarasi, kullanici adi ve parola girin')
-      throw new Error(isSonuc?.error || isSonuc?.reason || 'Fatura sorgulama basarisiz')
+      throw Object.assign(new Error(isSonuc?.error || isSonuc?.reason || 'Fatura sorgulama başarısız'), { isBitti: isSonuc?.isBitti === true, code: sebep === 'VPS_IS_BULUNAMADI' ? sebep : undefined })
     }
   }
   // Portal girisi yapilamadiysa dosya beklemek anlamsiz (6 dk bosa gider):
   // portalin verdigi hata mesaji dogrudan kullaniciya gosterilir.
   if (isSonuc.girisOk === false) {
-    throw new Error(isSonuc.not || 'Portal girisi tamamlanamadi; yardimci program penceresinden elle giris yapip tekrar deneyin.')
+    throw Object.assign(new Error(isSonuc.girisReddedildi ? 'Luca girişi reddedildi. Ayarlar > Luca bağlantı bilgilerini kontrol edin.' : 'VPS’te Luca oturumu doğrulanamadı. Oturumu kontrol edip yeniden deneyin.'), { isBitti: true, code: 'LUCA_OTURUM' })
   }
   if (isSonuc.akisTamam === false || /akis ["“].+?["”] adiminda tamamlanamadi/i.test(isSonuc.not || '')) {
-    throw new Error(isSonuc.not || 'Luca sorgusu tamamlanamadı; belge durumu doğrulanamadı.')
+    throw Object.assign(new Error(isSonuc.not || 'Luca sorgusu tamamlanamadı; belge durumu doğrulanamadı.'), { isBitti: true })
   }
 
   // 2.7.461: sadeceSorgu — yalniz GİB'den Getir tetiklendi; dosya bekleme/
   // fark listesi YOK (indirme ayri 'indir' isiyla, tum sorgular bitince).
   if (sadeceSorgu) {
-    return { ok: true, sadeceSorgu: true, sayi: 0, dosyalar: [], not: isSonuc?.not || '', yerelYedek: isYereldeCalisti }
+    return { ok: true, sadeceSorgu: true, sorguDogrulandi: isSonuc.sorguDogrulandi === true, sayi: 0, dosyalar: [], not: isSonuc.not || '', yerelYedek: isYereldeCalisti }
   }
 
   const aktifKaynak = ilkKaynak
@@ -674,14 +691,15 @@ export async function efaturaSorgula({ client, yil, ay, sorguTip = 'efatura', yo
   // (bilgi amacli); gercek yukleme tum parcalar bitince dosyalariMubisYukle
   // ile KOMPLE yapilir. Dosyalar EDEFTER klasorune de kopyalanmadi
   // (klasorKopyala:false) — edefterTopluKopyala sonda toplu kopyalar.
+  const vpsDosyalari = (Array.isArray(isSonuc.dosyalar) ? isSonuc.dosyalar : []).filter(d => d?.ad && /\.(pdf|xml|xlsx|xls|html?)$/i.test(d.ad))
   if (sadeceIndir) {
-    const yeniListe = []
-    // 2.8.10: liste, isin calistigi makineden okunur (yerel yedekte dosyalar
-    // yerel diskte; sunucuda VPS diskinde).
-    ;(await gibDosyalariListele(aktifKaynak)).forEach(d => {
-      if (dosyaDegistiMi(aktifFotograf, d) && /\.(pdf|xml|xlsx|xls|html?)$/i.test(d.ad)) yeniListe.push(d)
-    })
-    return { ok: true, sadeceIndir: true, sayi: yeniListe.length, dosyalar: yeniListe, zipYoluIle: isSonuc?.zipYoluIle === true, not: isSonuc.not || '', yerelYedek: isYereldeCalisti, yardimciKaynak: aktifKaynak, oncekiSet: aktifFotograf }
+    const yeniListe = [...vpsDosyalari]
+    if (!yeniListe.length && !isSonuc.bosDogrulandi) {
+      ;(await gibDosyalariListele(aktifKaynak)).forEach(d => {
+        if (dosyaDegistiMi(aktifFotograf, d) && /\.(pdf|xml|xlsx|xls|html?)$/i.test(d.ad)) yeniListe.push(d)
+      })
+    }
+    return { ok: true, sadeceIndir: true, sayi: yeniListe.length, dosyalar: yeniListe, vpsDosyalari, bosDogrulandi: isSonuc.bosDogrulandi === true, zipYoluIle: isSonuc.zipYoluIle === true, not: isSonuc.not || '', yerelYedek: isYereldeCalisti, yardimciKaynak: aktifKaynak, oncekiSet: aktifFotograf }
   }
 
   // 2.7.460: eski davranis (tek cagri = bekle + yukle). Yeni toplu akista web
@@ -803,7 +821,7 @@ export async function yardimciDosyaFotografi(yardimciKaynak = 'otomatik') {
 // sadeceIndir modundaki toplu akista tum parcalar bittikten sonra cagrilir.
 // ilgiliTabanlar verildiyse yalnizca taban adi eslesen dosyalar islenir
 // (parcali indirmede tur/yon karismasin diye); verilmezse tum yeniler alinir.
-export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura', yon = 'hepsi', yardimciKaynak = 'otomatik', yerelYedek = false, oncekiSet = new Set(), zipYoluIle = false, notOnEk = '', ilgiliTabanlar = null, onarim = false, onDurum, onIlerleme }) {
+export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura', yon = 'hepsi', yardimciKaynak = 'otomatik', yerelYedek = false, oncekiSet = new Set(), zipYoluIle = false, notOnEk = '', ilgiliTabanlar = null, beklenenDosyalar = null, onarim = false, onDurum, onIlerleme }) {
   const durum = (m) => { try { onDurum?.(m) } catch { /* yoksay */ } }
   // 2.8.10: Indirme isi yerel yedekte calistiysa dosyalar YEREL diskte;
   // listeleme/indirme ayni makineden yapilir (yoksa "yeni dosya yok" + yanlis
@@ -824,7 +842,6 @@ export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura
   // hic islenmez: Storage'a tekrar yuklenmez, kayit tekrar yazilmaz.
   // Mukerrer yuklemeyi ve gereksiz bekleme/sureyi onler. URL'si olmayan
   // (yarim/metasiz) kayitlar atlanmaz — tekrar islenip tamamlanir.
-  let yukluAnahtarlar = new Set()
   const yukluUrlMap = new Map()
   // 2.7.483: ONARIM modu — zaten yuklu faturalar da yeniden islenir
   // (KDV tutarlari ve eslesmeler yenilenir); atlanmazlar.
@@ -838,7 +855,6 @@ export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura
       if (!r.fatura_uuid) return
       if (!(r.pdf_url || r.xml_url || r.html_url)) return
       const uuid = String(r.fatura_uuid).toLowerCase()
-      yukluAnahtarlar.add(`${r.yon}|${r.tur}|${uuid}`)
       for (const [uzanti, url] of [['pdf', r.pdf_url], ['xml', r.xml_url], ['xlsx', r.xml_url], ['html', r.html_url]]) {
         if (url) yukluUrlMap.set(`${r.yon}|${r.tur}|${uuid}|${uzanti}`, url)
       }
@@ -848,11 +864,12 @@ export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura
   const uuidDesenDosya = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
   const dosyaZatenYuklu = (ad) => {
     const m = uuidDesenDosya.exec(String(ad || ''))
-    if (!m) return false // uuid okunamayan dosyalar her zaman islenir
+    const uzanti = String(ad || '').match(/\.(pdf|xml|xlsx|html?)$/i)?.[1]?.toLowerCase().replace(/^htm$/, 'html')
+    if (!m || !uzanti) return false
     const u = m[1].toLowerCase()
-    const yonler = yon === 'hepsi' ? ['alis', 'satis'] : [yon]
+    const yonler = yon === 'hepsi' ? ['gelen', 'giden', 'alis', 'satis'] : yon === 'satis' ? ['giden', 'satis'] : ['gelen', 'alis']
     const turlar2 = sorguTip === 'hepsi' ? ['efatura', 'earsiv', 'esmm', 'utts'] : [sorguTip]
-    return yonler.some(y => turlar2.some(t => yukluAnahtarlar.has(`${y}|${t}|${u}`)))
+    return yonler.some(y => turlar2.some(t => yukluUrlMap.has(`${y}|${t}|${u}|${uzanti}`)))
   }
   let atlananDosya = 0
 
@@ -869,7 +886,17 @@ export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura
   // 8 ust uste hata (~1 dk) sonrasinda beklemeyi birak; dosya yoksa 20 hata
   // (~2 dk) sonrasinda vazgec.
   let listeleHata = 0
-  while (Date.now() - baslangic < 6 * 60 * 1000) {
+  if (beklenenDosyalar) {
+    const mevcut = new Map((await gibDosyalariListele(etkilenenKaynak)).map(d => [d.ad, d]))
+    for (const beklenen of beklenenDosyalar) {
+      const dosya = mevcut.get(beklenen.ad)
+      if (!dosya || dosyaImzasi(dosya) !== dosyaImzasi(beklenen)) {
+        return { ok: false, sayi: 0, manifestGecersiz: true, not: 'VPS’teki indirme dosyası eksik veya değişmiş. Sorguyu değil, indirmeyi yeniden çalıştırın.' }
+      }
+      yeniDosyalar.push(dosya)
+    }
+  }
+  while (!beklenenDosyalar && Date.now() - baslangic < 6 * 60 * 1000) {
     await new Promise(r => setTimeout(r, 6000))
     let simdi = []
     try {
@@ -914,7 +941,7 @@ export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura
     !yeniDosyalar.some(p => p.ad === d.ad.replace(/\.(xml|html?)$/i, '.pdf')))
   // 2.7.430: GIB ZIP yolu (isSonuc.zipYoluIle) PDF uretmez — XML'ler dogrudan
   // islenir; PDF karsiligi bekleme 3 dakika gecikme yaratirdi, atlanir.
-  if (zipYoluIle !== true && pdfBekleyenVar()) {
+  if (!beklenenDosyalar && zipYoluIle !== true && pdfBekleyenVar()) {
     const bekBaslangic = Date.now()
     let pdfBeklemeHata = 0
     while (Date.now() - bekBaslangic < 180 * 1000 && pdfBekleyenVar()) {
@@ -960,6 +987,7 @@ export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura
       const ext = /\.html?$/i.test(ad) ? 'html' : (/\.xlsx?$/i.test(ad) ? 'xlsx' : (/\.xml$/i.test(ad) ? 'xml' : 'pdf'))
       kayit.tur = ext
       const blob = await gibDosyaGetir(ad, etkilenenKaynak)
+      if (!blob?.size || (beklenenDosyalar && blob.size !== Number(d.boyut))) throw new Error('VPS dosya boyutu doğrulanamadı.')
       const temel = ad.replace(/\.(pdf|xml|xlsx|xls|html?)$/i, '')
 
       if (ext === 'html') {
@@ -985,7 +1013,10 @@ export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura
         return kayit
       }
 
-      const xmlSatir = ext === 'pdf' ? satirlar[uuidAdlandan(temel)] : null
+      const dosyaUuid = uuidAdlandan(temel)
+      const xmlSatir = ext === 'pdf' ? satirlar[dosyaUuid] : null
+      const kayitliXml = ext === 'pdf' && ['gelen', 'giden'].some(y =>
+        yukluUrlMap.has(`${y}|${sorguTip}|${dosyaUuid}|xml`))
       let meta = null
       if (ext === 'xml') {
         try {
@@ -997,7 +1028,7 @@ export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura
         } catch (e) {
           console.warn('XML okunamadi:', ad, e)
         }
-      } else if (ext === 'pdf' && !xmlSatir?.xml_url) {
+      } else if (ext === 'pdf' && !xmlSatir?.xml_url && !kayitliXml) {
         try {
           // 2.7.395: XML olmayan PDF'lerden de fatura no/unvan/tarih cikar
           meta = await faturaMetadatasiPdf(blob, client.vkn || client.tc || '', yon)
@@ -1097,7 +1128,7 @@ export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura
         tutar: pdfMi ? (onceki.tutar ?? meta?.tutar ?? null) : (meta?.tutar ?? onceki.tutar ?? null),
         matrah: pdfMi ? (onceki.matrah ?? meta?.matrah ?? null) : (meta?.matrah ?? onceki.matrah ?? null),
         kdv: pdfMi ? (onceki.kdv ?? meta?.kdv ?? null) : (meta?.kdv ?? onceki.kdv ?? null),
-        para_birimi: pdfMi ? (onceki.para_birimi || meta?.paraBirimi || 'TRY') : (meta?.paraBirimi || onceki.para_birimi || 'TRY'),
+        para_birimi: pdfMi ? (onceki.para_birimi || meta?.paraBirimi || null) : (meta?.paraBirimi || onceki.para_birimi || 'TRY'),
         doviz_kur: pdfMi ? (onceki.doviz_kur ?? meta?.dovizKur ?? null) : (meta?.dovizKur ?? onceki.doviz_kur ?? null),
         pdf_url: ext === 'pdf' ? url : (onceki.pdf_url || ''),
         xml_url: (ext === 'xml' || ext === 'xlsx') ? url : (onceki.xml_url || ''),
@@ -1125,7 +1156,7 @@ export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura
   const atlananDurum = (d) => {
     const uuid = uuidDesenDosya.exec(String(d.ad || ''))?.[1]?.toLowerCase()
     const uzanti = String(d.ad || '').match(/\.(pdf|xml|xlsx|html?)$/i)?.[1]?.toLowerCase().replace(/^htm$/, 'html')
-    const yonler = yon === 'hepsi' ? ['alis', 'satis'] : [yon]
+    const yonler = yon === 'hepsi' ? ['gelen', 'giden', 'alis', 'satis'] : yon === 'satis' ? ['giden', 'satis'] : ['gelen', 'alis']
     const turlar2 = sorguTip === 'hepsi' ? ['efatura', 'earsiv', 'esmm', 'utts'] : [sorguTip]
     let url = ''
     for (const y of yonler) for (const t of turlar2) url = url || yukluUrlMap.get(`${y}|${t}|${uuid}|${uzanti}`) || ''
@@ -1200,14 +1231,11 @@ export async function dosyalariMubisYukle({ client, yil, ay, sorguTip = 'efatura
         r.html_url = r.html_url || m.html_url || ''
       }
     } catch (e) { console.warn('Mevcut fatura kayitlari birlestirilemedi:', e) }
-    const { error } = await supabase
-      .from('efatura_faturalar')
-      .upsert(kayitlar, { onConflict: 'client_id,yon,tur,fatura_uuid' })
+    const { error, kaydedilen } = await faturalariKdvleriyleKaydet(kayitlar, kdvParcaMap)
     if (error) {
       console.warn('Fatura kayitlari yazilamadi:', error.message)
-      return { ok: false, sayi: 0, not: 'Fatura kayitlari buluta yazilamadi: ' + (error.message || 'bilinmeyen hata') }
+      return { ok: false, sayi: kaydedilen, not: `Fatura yüklemesi tamamlanamadı (${kaydedilen}/${kayitlar.length} kaydedildi): ${error.message}` }
     }
-    await kdvDetayKaydet(client.id, kdvParcaMap)
     // 2.7.384: uuid'i bozuk eski kayitlari temizle — yardimcinin eski
     // benzersiz adlandirmasi dosya adindaki uuid'i sildigi icin pdf'ler
     // metasiz (tarih/no/unvan/tutar bos) kayit olmustu; gercek uuid'li
@@ -1479,11 +1507,8 @@ export async function klasordekiFaturalariAktar({ client, yil, onDurum }) {
   if (!kayitlar.length && !htmlEklenen) return { ok: true, sayi: 0, not: 'Yeni aktarilacak dosya yok (hepsi zaten kayitli).' }
   if (kayitlar.length) {
     durum(`${kayitlar.length} kayit yaziliyor`)
-    const { error } = await supabase
-      .from('efatura_faturalar')
-      .upsert(kayitlar, { onConflict: 'client_id,yon,tur,fatura_uuid' })
-    if (error) return { ok: false, sayi: 0, not: 'Fatura kayitlari buluta yazilamadi: ' + (error.message || '') }
-    await kdvDetayKaydet(client.id, kdvParcaMap)
+    const { error, kaydedilen } = await faturalariKdvleriyleKaydet(kayitlar, kdvParcaMap)
+    if (error) return { ok: false, sayi: kaydedilen, not: `Fatura yüklemesi tamamlanamadı (${kaydedilen}/${kayitlar.length} kaydedildi): ${error.message}` }
   }
   const kdv2Aylar = await kdv2AktifEtGerekirse(client, kayitlar)
   return { ok: true, sayi: kayitlar.length, not: (htmlEklenen ? `${htmlEklenen} faturaya e-Belge HTML'i eklendi.` : '') + kdv2Notu(kdv2Aylar) }
@@ -2087,11 +2112,8 @@ export async function manuelFaturaYukle({ client, yil, dosyalar = [], onDurum })
     return { ok: true, sayi: 0, not: 'Yeni yüklenecek belge yok (hepsi zaten kayıtlı).' }
   }
   if (kayitlar.length) {
-    const { error } = await supabase
-      .from('efatura_faturalar')
-      .upsert(kayitlar, { onConflict: 'client_id,yon,tur,fatura_uuid' })
-    if (error) return { ok: false, sayi: 0, not: 'Fatura kayıtları buluta yazılamadı: ' + (error.message || '') }
-    await kdvDetayKaydet(client.id, kdvParcaMap)
+    const { error, kaydedilen } = await faturalariKdvleriyleKaydet(kayitlar, kdvParcaMap)
+    if (error) return { ok: false, sayi: kaydedilen, not: `Fatura yüklemesi tamamlanamadı (${kaydedilen}/${kayitlar.length} kaydedildi): ${error.message}` }
   }
   const ekNot = htmlEklenen ? `${htmlEklenen} faturaya e-Belge HTML'i eklendi.` : ''
   const kdv2Aylar = await kdv2AktifEtGerekirse(client, kayitlar)
@@ -2374,20 +2396,11 @@ export async function kdvDetayKaydet(clientId, parcaMap) {
         .select('id,fatura_uuid').eq('client_id', clientId).in('fatura_uuid', parti)
       if (data) yazilan.push(...data)
     }
-    const satirlar = []
-    for (const k of yazilan) {
-      for (const p of (parcaMap[k.fatura_uuid] || [])) {
-        satirlar.push({ fatura_id: k.id, oran: p.oran, matrah: p.matrah, kdv: p.kdv })
-      }
-    }
-    if (!satirlar.length) return
-    // Silme de partilerde
-    const faturaIdler = [...new Set(satirlar.map(s => s.fatura_id))]
-    for (let i = 0; i < faturaIdler.length; i += 100) {
-      await supabase.from('efatura_kdv_detay').delete().in('fatura_id', faturaIdler.slice(i, i + 100))
-    }
-    for (let i = 0; i < satirlar.length; i += 500) {
-      await supabase.from('efatura_kdv_detay').insert(satirlar.slice(i, i + 500))
+    for (const fatura of yazilan) {
+      const detay = parcaMap[fatura.fatura_uuid]
+      if (!detay?.length) continue
+      const { error } = await supabase.rpc('efatura_kdv_yenile', { p_fatura_id: fatura.id, p_detay: detay })
+      if (error) throw error
     }
   } catch (e) { console.warn('KDV detay yazilamadi:', e) }
 }

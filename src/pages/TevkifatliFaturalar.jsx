@@ -32,6 +32,7 @@ export default function TevkifatliFaturalar() {
   const [ay, setAy] = useState(new Date().getMonth() + 1)
   const [yonSecim, setYonSecim] = useState('hepsi') // hepsi | gelen | giden
   const [iade, setIade] = useState(false)
+  const [sadeceKdv2, setSadeceKdv2] = useState(false) // KDV 2 beyani olan firmalar filtresi
   const [loading, setLoading] = useState(false)
   const [faturalar, setFaturalar] = useState([])
   const [mesaj, setMesaj] = useState('')
@@ -136,6 +137,7 @@ export default function TevkifatliFaturalar() {
         if (!tev && String(faturaTuru || '').trim() !== '') return false
         if (yonSecim === 'gelen') return gelenMi
         if (yonSecim === 'giden') return gidenMi
+        if (sadeceKdv2 && !tevkifatUyariIds.includes(String(f.client_id))) return false
         return true
       })
       setFaturalar(liste)
@@ -150,7 +152,7 @@ export default function TevkifatliFaturalar() {
     }
   }
 
-  useEffect(() => { yukle() }, [seciliClient, yil, ay, yonSecim, iade])
+  useEffect(() => { yukle() }, [seciliClient, yil, ay, yonSecim, iade, sadeceKdv2])
 
   const musteriAdi = (id) => {
     const c = (clients || []).find(x => String(x.id) === String(id))
@@ -286,6 +288,7 @@ export default function TevkifatliFaturalar() {
             </select>
           </div>
           <label className="flex items-center gap-2 text-sm text-white pb-2"><input type="checkbox" checked={iade} onChange={e => setIade(e.target.checked)} /> Tevkifat iade</label>
+          <label className="flex items-center gap-2 text-sm text-white pb-2"><input type="checkbox" checked={sadeceKdv2} onChange={e => setSadeceKdv2(e.target.checked)} /> Sadece KDV 2 beyanı olan firmalar</label>
         </div>
       </div>
 

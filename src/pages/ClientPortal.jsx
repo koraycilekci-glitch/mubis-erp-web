@@ -1827,7 +1827,9 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
       setGosterilenFatura({ f, src: null, tip: 'xml', yukleniyor: true })
       try {
         const metin = await (await fetchDocument(f.xml_url)).text()
-        const html = faturaHtmlOlustur(ublAyikla(metin))
+        const ayik = ublAyikla(metin)
+        ayik.uyari = 'Bu faturada orijinal e-Belge (PDF veya GİB e-Belge HTML) bulunamadı. Aşağıdaki görünüm MUBiS tarafından XML verisinden üretilmiştir — resmî belgenin birebir kopyası değildir.'
+        const html = faturaHtmlOlustur(ayik)
         setGosterilenFatura({ f, src: URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' })), tip: 'xml' })
         return
       } catch { /* okunamadiysa ham xml'e dus */ }
@@ -2497,7 +2499,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
                 <span className="text-blue-400 font-semibold">{fmt(borcOzeti.defterTasdik)} TL</span>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-blue-700/20">
-                <span className="text-gray-400">Aylık Ücret ({borcOzeti.gecenAy} ay x {fmt(borcOzeti.aylikUcret)}):</span>
+                <span className="text-gray-400">Aylık Ücret ({borcOzeti.gecenAy} ay):</span>
                 <span className="text-yellow-400 font-semibold">{fmt(borcOzeti.aylikToplam)} TL</span>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-blue-700/30">

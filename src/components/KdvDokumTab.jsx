@@ -1,6 +1,6 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useId } from 'react'
 import {
-  CreditCard, Receipt, RefreshCw, Loader2, Calendar, ArrowRightLeft, ChevronDown, ChevronUp, Ship, FileText, Eye, Download, X, Copy
+  CreditCard, Receipt, RefreshCw, Loader2, Calendar, ArrowRightLeft, ChevronDown, ChevronUp, Ship, FileText, Download, Copy
 } from 'lucide-react'
 import {
   dvsSorgula,
@@ -15,6 +15,7 @@ import {
 } from '../services/dvsSorguService'
 import { kdvOzelDokumler, tevkifatDurumOku, tevkifatOdendiYaz } from '../services/tevkifatService'
 import { okcBildirimGetir } from '../services/okcSorguService'
+import { okcHasilatOzeti } from '../utils/okcHasilat'
 
 function paraYaz(v) {
   const n = Number(v)
@@ -25,6 +26,14 @@ function paraYaz(v) {
 function sayi(v) {
   const n = Number(v)
   return isFinite(n) ? n : 0
+}
+
+function okcDonemOku(anahtar, varsayilan) {
+  try {
+    const { y, m } = JSON.parse(sessionStorage.getItem(anahtar)) || {}
+    if (Number.isInteger(y) && y >= 2000 && y <= 2100 && Number.isInteger(m) && m >= 1 && m <= 12) return { y, m }
+  } catch { /* sessionStorage may be unavailable */ }
+  return varsayilan
 }
 
 export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
@@ -60,29 +69,49 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
   const pollingRef = useRef(null)
 
   // OKC bildirimleri
-  const [okcAy, setOkcAy] = useState(varsayilanDonem.m)
-  const [okcYil, setOkcYil] = useState(varsayilanDonem.y)
+  const okcDonemAnahtari = `mubis:okc-donem:${clientId}`
+  const [okcDonem, setOkcDonem] = useState(() => ({ anahtar: okcDonemAnahtari, ...okcDonemOku(okcDonemAnahtari, varsayilanDonem) }))
+  const { y: okcYil, m: okcAy } = okcDonem.anahtar === okcDonemAnahtari ? okcDonem : okcDonemOku(okcDonemAnahtari, varsayilanDonem)
   const [okcKayitlar, setOkcKayitlar] = useState([])
   const [okcYukleniyor, setOkcYukleniyor] = useState(false)
   const [okcHata, setOkcHata] = useState('')
   const [okcMesaj, setOkcMesaj] = useState('')
-  const [okcDetay, setOkcDetay] = useState(null)
+  const [okcDetayAcik, setOkcDetayAcik] = useState(false)
+  const okcDetayId = useId()
   const okcIstek = useRef(0)
 
   useEffect(() => {
     setOkcKayitlar([])
-    setOkcDetay(null)
+    setOkcDetayAcik(false)
     setOkcMesaj('')
     setOkcHata('')
     setOkcYukleniyor(false)
     return () => { okcIstek.current += 1 }
   }, [clientId])
 
+  useEffect(() => {
+    if (!clientId) return
+    let iptal = false
+    const istek = okcIstek.current
+    kdvDokumGetir({ clientId, yil: okcYil, ay: okcAy, tur: 'okc' }).then(dokum => {
+      if (iptal || istek !== okcIstek.current || !dokum.sorgu_tarihi) return
+      const kayitlar = Array.isArray(dokum.detaylar) ? dokum.detaylar : []
+      setOkcKayitlar(kayitlar)
+      const sorguTarihi = dokum.sorgu_tarihi.split('-').reverse().join('.')
+      setOkcMesaj(kayitlar.length ? `Kayıtlı ÖKC sorgusu · ${sorguTarihi}` : `Kayıtlı ÖKC sorgusu · ${sorguTarihi} · Bildirim bulunamadı.`)
+    }).catch(() => {
+      if (!iptal && istek === okcIstek.current) setOkcHata('Kayıtlı ÖKC sonuçları okunamadı. Dönemi yeniden sorgulayabilirsiniz.')
+    })
+    return () => { iptal = true }
+  }, [clientId, okcYil, okcAy])
+
   const okcDonemDegistir = (yeniYil, yeniAy) => {
-    setOkcYil(yeniYil)
-    setOkcAy(yeniAy)
+    const donem = { y: yeniYil, m: yeniAy }
+    try { sessionStorage.setItem(okcDonemAnahtari, JSON.stringify(donem)) } catch { /* sessionStorage may be unavailable */ }
+    if (yeniYil === okcYil && yeniAy === okcAy) return
+    setOkcDonem({ anahtar: okcDonemAnahtari, ...donem })
     setOkcKayitlar([])
-    setOkcDetay(null)
+    setOkcDetayAcik(false)
     setOkcMesaj('')
     setOkcHata('')
   }
@@ -92,16 +121,22 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
     const istek = ++okcIstek.current
     okcDonemDegistir(sorguYili, sorguAyi)
     setOkcYukleniyor(true)
+    setOkcHata('')
     setOkcMesaj('ÖKC bildirimleri ve ayrıntıları okunuyor...')
     try {
       const res = await okcBildirimGetir({ clientId, yil: sorguYili, ay: sorguAyi, detay: true })
       if (istek !== okcIstek.current) return
-      const kayitlar = Array.isArray(res.kayitlar) ? res.kayitlar : []
+      const kayitlar = res.kayitlar
+      if (res.kayitHatasi) {
+        setOkcKayitlar(mevcut => mevcut.length ? mevcut : kayitlar)
+        setOkcMesaj('')
+        setOkcHata(res.kayitHatasi)
+        return
+      }
       setOkcKayitlar(kayitlar)
-      const okunan = kayitlar.filter(kayit => Object.keys(kayit.detay || {}).length > 0).length
       setOkcMesaj(kayitlar.length
-        ? `${kayitlar.length} kayıt bulundu; ${okunan} kaydın ayrıntısı aktarıldı.`
-        : 'Seçilen dönem için ÖKC bildirimi bulunamadı.')
+        ? `${kayitlar.length} ÖKC bildirimi ayrıntılarıyla kaydedildi.`
+        : 'Seçilen dönem için bildirim bulunmadığı kaydedildi.')
     } catch (e) {
       if (istek !== okcIstek.current) return
       setOkcHata(e?.message || 'ÖKC bildirimleri alınamadı')
@@ -162,8 +197,7 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
     setOkcMesaj('CSV indirildi (Excel ile açabilirsiniz).')
   }
 
-  const okcDetayKopyala = async () => {
-    if (!okcDetay) return
+  const okcDetayKopyala = async (okcDetay) => {
     const d = okcDetay.detay || {}
     const satirlar = [
       `ÖKC Aylık Satış Rapor Bildirimi — ${String(okcAy).padStart(2, '0')}.${okcYil}`,
@@ -538,12 +572,15 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
           </h3>
           <button
             type="button"
-            onClick={() => setOkcDetay(okcKayitlar.find(kayit => Object.keys(kayit.detay || {}).length) || okcKayitlar[0])}
+            onClick={() => setOkcDetayAcik(acik => !acik)}
+            aria-expanded={okcDetayAcik}
+            aria-controls={okcDetayId}
             disabled={!okcKayitlar.length || okcYukleniyor}
             title={!okcKayitlar.length ? 'Önce dönem sorgulaması yapın' : 'Seçili dönemin ÖKC hasılat ayrıntılarını aç'}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 disabled:opacity-50 transition-colors"
           >
-            <Eye className="w-4 h-4" /> Detay
+            {okcDetayAcik ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            {okcDetayAcik ? 'Detayı Gizle' : 'Detay'}
           </button>
         </div>
         <div className="flex flex-wrap gap-2 items-center mb-3">
@@ -606,133 +643,54 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-left text-gray-400 border-b border-blue-800/30">
-                  <th className="pb-2 pr-2">#</th>
-                  <th className="pb-2 pr-2">Firma Kodu</th>
-                  <th className="pb-2 pr-2">Firma Adı</th>
-                  <th className="pb-2 pr-2">ÖKC Markası</th>
-                  <th className="pb-2 pr-2">ÖKC Modeli</th>
-                  <th className="pb-2 pr-2">Cihaz Sicil No'su</th>
-                  <th className="pb-2 pr-2">Bildirim Zamanı</th>
-                  <th className="pb-2 pr-2">Bildirim Yöntemi</th>
-                  <th className="pb-2 text-right">Göster</th>
-                </tr>
-              </thead>
-              <tbody>
-                {okcKayitlar.map((k, i) => (
-                  <tr key={i} className="border-b border-blue-800/20 last:border-0">
-                    <td className="py-2 pr-2 text-gray-500">{i + 1}</td>
-                    <td className="py-2 pr-2 text-gray-300 whitespace-nowrap">{k.firmaKodu || '-'}</td>
-                    <td className="py-2 pr-2 text-gray-300">{k.firmaAdi || '-'}</td>
-                    <td className="py-2 pr-2 text-gray-400 whitespace-nowrap">{k.okcMarkasi || '-'}</td>
-                    <td className="py-2 pr-2 text-gray-400 whitespace-nowrap">{k.okcModeli || '-'}</td>
-                    <td className="py-2 pr-2 text-gray-400 whitespace-nowrap">{k.cihazSicilNo || '-'}</td>
-                    <td className="py-2 pr-2 text-gray-300 whitespace-nowrap">{k.bildirimZamani || '-'}</td>
-                    <td className="py-2 pr-2 text-gray-400 whitespace-nowrap">{k.bildirimYontemi || '-'}</td>
-                    <td className="py-2 text-right">
-                      <button
-                        onClick={() => setOkcDetay(k)}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-blue-600/20 text-blue-300 hover:bg-blue-600/30"
-                      >
-                        <Eye className="w-3 h-3" /> Göster
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="text-[11px] text-gray-500 mt-2">
-              Toplam {okcKayitlar.length} kayıt · {String(okcAy).padStart(2, '0')}.{okcYil}
-            </p>
+          <div className="space-y-3">
+            <OkcHasilatTablosu kayitlar={okcKayitlar} baslik="Kesilen ÖKC Fişleri" />
+            <div id={okcDetayId} hidden={!okcDetayAcik}>
+              {okcDetayAcik && (
+                <ul className="space-y-2" aria-label="ÖKC bildirim detayları">
+                  {okcKayitlar.map((kayit, index) => (
+                    <li key={kayit.sira ?? index}>
+                      <details className="rounded-lg border border-blue-800/30 bg-blue-950/50 p-3">
+                        <summary className="cursor-pointer text-sm text-blue-300">
+                          Bildirim {index + 1}{kayit.raporNo && ` · Rapor No: ${kayit.raporNo}`}{kayit.bildirimZamani && ` · ${kayit.bildirimZamani}`}
+                        </summary>
+                        <div className="mt-3 space-y-3 text-xs">
+                          <dl className="grid gap-2 sm:grid-cols-2">
+                            {OKC_BASLIKLAR.filter(([alan]) => kayit[alan]).map(([alan, etiket]) => (
+                              <div key={alan} className="flex flex-wrap gap-2">
+                                <dt className="text-gray-400">{etiket}:</dt>
+                                <dd className="text-gray-200">{kayit[alan]}</dd>
+                              </div>
+                            ))}
+                          </dl>
+                          {Object.keys(kayit.detay || {}).length > 0 ? (
+                            <>
+                              <OkcHasilatTablosu kayitlar={[kayit]} baslik="Bildirim Hasılatı" />
+                              <dl className="divide-y divide-blue-800/30">
+                                {Object.entries(kayit.detay).map(([alan, deger]) => (
+                                  <div key={alan} className="flex justify-between gap-4 py-2">
+                                    <dt className="text-gray-400">{alan}</dt>
+                                    <dd className="text-right text-gray-200">{String(deger ?? '—')}</dd>
+                                  </div>
+                                ))}
+                              </dl>
+                            </>
+                          ) : (
+                            <p className="text-yellow-300">{kayit.detayHatasi || 'Bu bildirimin ayrıntısı aktarılamadı.'}</p>
+                          )}
+                          <button type="button" onClick={() => okcDetayKopyala(kayit)} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600/20 text-blue-300 hover:bg-blue-600/30">
+                            <Copy className="w-3.5 h-3.5" /> Bilgileri Kopyala
+                          </button>
+                        </div>
+                      </details>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
         )}
       </div>
-      {/* ÖKC detay modalı */}
-      {okcDetay && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setOkcDetay(null)}>
-          <div className="bg-blue-950 border border-blue-700/60 rounded-2xl max-w-3xl w-full max-h-[86vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-3 border-b border-blue-800/50">
-              <h3 className="text-white font-semibold text-sm flex items-center gap-2">
-                <Receipt className="w-4 h-4 text-yellow-400" />
-                ÖKC Hasılat Detayları — {String(okcAy).padStart(2, '0')}.{okcYil}
-              </h3>
-              <button onClick={() => setOkcDetay(null)} className="text-gray-400 hover:text-white p-1">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="p-5 overflow-y-auto">
-              {okcKayitlar.length > 1 && (
-                <label className="flex flex-wrap items-center gap-2 mb-4 text-xs text-gray-300">
-                  Bildirim
-                  <select
-                    value={okcKayitlar.indexOf(okcDetay)}
-                    onChange={(e) => setOkcDetay(okcKayitlar[Number(e.target.value)])}
-                    className="min-w-0 max-w-full bg-blue-950 border border-blue-700/50 rounded-lg px-3 py-2 text-sm text-white"
-                  >
-                    {okcKayitlar.map((kayit, index) => (
-                      <option key={index} value={index}>
-                        {`Bildirim ${index + 1}${kayit.raporNo ? ` · ${kayit.raporNo}` : ''}${kayit.bildirimZamani ? ` · ${kayit.bildirimZamani}` : ''}`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <details className="mb-4">
-                <summary className="cursor-pointer mb-2 text-xs text-blue-300">Bildirim bilgileri</summary>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {OKC_BASLIKLAR.map(([a, b]) => (
-                    <div key={a} className="bg-blue-900/30 rounded-lg px-3 py-2">
-                      <div className="text-[10px] text-gray-500 mb-0.5">{b}</div>
-                      <div className="text-sm text-gray-200 break-words">{okcDetay[a] || '-'}</div>
-                    </div>
-                  ))}
-                </div>
-              </details>
-              {okcDetay.detay && Object.keys(okcDetay.detay).length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-left text-gray-400 border-b border-blue-800/30">
-                        <th className="pb-2 pr-3">Alan</th>
-                        <th className="pb-2">Değer</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.entries(okcDetay.detay).map(([k, v]) => (
-                        <tr key={k} className="border-b border-blue-800/20 last:border-0">
-                          <td className="py-1.5 pr-3 text-gray-400">{k}</td>
-                          <td className="py-1.5 text-gray-200">{String(v ?? '-')}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="text-xs text-yellow-300">
-                  {okcDetay.detayHatasi || 'Bu bildirimin ayrıntısı aktarılamadı. Dönemi yeniden sorgulayabilirsiniz.'}
-                </p>
-              )}
-            </div>
-            <div className="px-5 py-3 border-t border-blue-800/50 flex justify-end gap-2">
-              <button
-                onClick={okcDetayKopyala}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium bg-blue-600/20 text-blue-300 hover:bg-blue-600/30"
-              >
-                <Copy className="w-3.5 h-3.5" /> Bilgileri Kopyala
-              </button>
-              <button
-                onClick={() => setOkcDetay(null)}
-                className="px-3 py-2 rounded-lg text-xs font-medium bg-blue-900/60 text-gray-300 hover:bg-blue-800/60"
-              >
-                Kapat
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* KDV Beyanına Etkisi */}
       <div className="bg-blue-950/30 border border-blue-800/30 rounded-xl p-4">
@@ -849,7 +807,52 @@ export default function KdvDokumTab({ clientId, oranDokumuGoster = false }) {
   )
 }
 
-function FaturaOranTablosu({ baslik, data }) {
+function OkcHasilatTablosu({ kayitlar, baslik }) {
+  const ozet = okcHasilatOzeti(kayitlar)
+  return (
+    <div className="space-y-2">
+      <div className="rounded-lg border border-blue-800/30 bg-blue-950/50 p-3">
+        <h4 className="text-sm font-semibold text-white">{baslik} · GİB Bildirim Toplamları</h4>
+        <dl className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {[[ 'satis', 'Toplam Satış (KDV dâhil)' ], [ 'kdv', 'Bildirilen Toplam KDV' ], [ 'matrah', 'Matrah (Satış − Bildirilen KDV)' ]].map(([alan, etiket]) => (
+            <div key={alan}>
+              <dt className="text-xs text-gray-400">{etiket}</dt>
+              <dd className="mt-1 text-sm font-semibold text-white">{ozet.bildirilen[alan] === null ? 'Bilgi alınamadı' : `${paraYaz(ozet.bildirilen[alan])} TL`}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+      {ozet.satirlar.length ? (
+        <>
+          <FaturaOranTablosu baslik="KDV Oranlarına Göre Satışlar" data={ozet} brutGoster />
+          <p className="text-xs text-gray-400">
+            Satış tutarları GİB bildiriminden alınır; oran bazındaki matrah ve KDV hesaplanır.
+            {ozet.kdvFarki !== null && ozet.kdvFarki !== 0 && ` Hesaplanan KDV ile bildirilen toplam KDV arasındaki fark: ${paraYaz(Math.abs(ozet.kdvFarki))} TL. Fark oranlara dağıtılmadı.`}
+          </p>
+        </>
+      ) : (
+        <p className="text-xs text-yellow-300">KDV oranlarına göre hasılat bilgisi alınamadı.</p>
+      )}
+      {ozet.oranliKayit > 0 && ozet.oranliKayit < kayitlar.length && (
+        <p className="text-xs text-yellow-300">KDV dökümü kısmi: {ozet.oranliKayit}/{kayitlar.length} bildirim hesaplamaya dâhil edildi.</p>
+      )}
+      <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {[[ 'nakit', 'Toplam Nakit' ], [ 'kart', 'Toplam Banka / Kredi Kartı' ]].map(([tur, etiket]) => {
+          const { tutar, sayi } = ozet.odemeler[tur]
+          return (
+            <div key={tur} className="rounded-lg border border-blue-800/30 bg-blue-950/50 p-3">
+              <dt className="text-xs text-gray-400">{etiket}</dt>
+              <dd className="mt-1 text-sm font-semibold text-white">{tutar === null ? 'Bilgi alınamadı' : `${paraYaz(tutar)} TL`}</dd>
+              {sayi > 0 && sayi < kayitlar.length && <p className="mt-1 text-xs text-yellow-300">Kısmi toplam · {sayi}/{kayitlar.length} bildirim</p>}
+            </div>
+          )
+        })}
+      </dl>
+    </div>
+  )
+}
+
+function FaturaOranTablosu({ baslik, data, brutGoster = false }) {
   return (
     <div className="bg-blue-950/50 rounded-lg p-3 border border-blue-800/30">
       <h4 className="text-sm font-semibold text-white mb-3">{baslik}</h4>
@@ -858,24 +861,27 @@ function FaturaOranTablosu({ baslik, data }) {
           <thead>
             <tr className="text-left text-gray-400 border-b border-blue-800/30">
               <th className="pb-2 pr-2">KDV Oranı</th>
-              <th className="pb-2 pr-2 text-right">Matrah</th>
-              <th className="pb-2 text-right">KDV</th>
+              {brutGoster && <th className="pb-2 pr-2 text-right">KDV Dâhil Satış</th>}
+              <th className="pb-2 pr-2 text-right">{brutGoster ? 'Hesaplanan Matrah' : 'Matrah'}</th>
+              <th className="pb-2 text-right">{brutGoster ? 'Hesaplanan KDV' : 'KDV'}</th>
             </tr>
           </thead>
           <tbody>
             {data.satirlar.length ? data.satirlar.map(satir => (
               <tr key={satir.oran ?? 'bilinmiyor'} className="border-b border-blue-800/20">
                 <td className="py-2 pr-2 text-gray-300">{satir.oran === null ? 'Oran belirlenemedi' : `%${satir.oran.toLocaleString('tr-TR')}`}</td>
+                {brutGoster && <td className="py-2 pr-2 text-right text-gray-200 whitespace-nowrap">{paraYaz(satir.matrah + satir.kdv)} TL</td>}
                 <td className="py-2 pr-2 text-right text-gray-200 whitespace-nowrap">{paraYaz(satir.matrah)} TL</td>
                 <td className="py-2 text-right text-gray-200 whitespace-nowrap">{paraYaz(satir.kdv)} TL</td>
               </tr>
             )) : (
-              <tr><td colSpan={3} className="py-3 text-gray-500 text-center">Bu dönemde kayıt yok.</td></tr>
+              <tr><td colSpan={brutGoster ? 4 : 3} className="py-3 text-gray-500 text-center">Bu dönemde kayıt yok.</td></tr>
             )}
           </tbody>
           <tfoot>
             <tr className="border-t border-blue-800/40 font-semibold text-white">
-              <td className="pt-2 pr-2">Toplam</td>
+              <td className="pt-2 pr-2">{brutGoster ? 'Oran Satırları Toplamı' : 'Toplam'}</td>
+              {brutGoster && <td className="pt-2 pr-2 text-right whitespace-nowrap">{paraYaz(data.toplam.matrah + data.toplam.kdv)} TL</td>}
               <td className="pt-2 pr-2 text-right whitespace-nowrap">{paraYaz(data.toplam.matrah)} TL</td>
               <td className="pt-2 text-right whitespace-nowrap">{paraYaz(data.toplam.kdv)} TL</td>
             </tr>

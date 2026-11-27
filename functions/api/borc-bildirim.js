@@ -14,7 +14,7 @@
 //   E-posta  -> nodemailer (app_settings SMTP)
 import nodemailer from 'nodemailer'
 import { json, supabaseAdmin, normalizePhone } from './_lib.js'
-import { kapanisSonrasiAy, acilisOncesiAy } from '../../src/utils/beyanKapanis.js'
+import { hesaplaBorcOzeti } from '../../src/utils/muhasebeUcretleri.js'
 
 const PLAN_KEY = 'borc_bildirim_plan'
 const AY_ADLARI = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
@@ -215,68 +215,25 @@ function mesajHtmlUret(musteriAdi, tarih, sgk, vergi, muhasebe = null) {
 </body></html>`
 }
 
-// Muhasebe (mesleki) borcu: accounting_fees + payments üzerinden kalan borç.
-// Frontend hesaplaBorcOzeti ile aynı mantığın sunucu tarafı sadeleştirilmiş
-// hâli: yalnızca "kalan borç > 0" bilgisi ve tutarı gerekir.
 async function muhasebeBorclari(supabase, clients) {
   const musteriIdleri = clients.map(client => client.id)
   const sonuc = new Map()
-  try {
-    const [{ data: fees }, { data: payments }] = await Promise.all([
-      supabase.from('accounting_fees').select('*').in('client_id', musteriIdleri),
-      supabase.from('payments').select('client_id, tutar, durum, donem, odeme_kanali').in('client_id', musteriIdleri)
-    ])
-    for (const fee of (fees || [])) {
-      const cid = String(fee.client_id)
-      const client = clients.find(item => String(item.id) === cid)
-      const odemeler = (payments || []).filter(p => String(p.client_id) === cid)
-      const aylik = sayi(fee.aylik_ucret)
-      // 2.8.46: GECMIS / GUNCEL DONEM AYRIMI (muhasebe borcu)
-      //  - gecmisDonem: onceki donem borcu + defter tasdik + onceki yillarin
-      //    odenmemis aylik ucretleri
-      //  - guncelDonem: icinde bulunulan yilin odenmemis aylik ucretleri
-      //  - toplam: ikisinin toplami - tahsilat (en az 0)
-      const oncekiDonem = sayi(fee.onceki_donem_borc)
-      const defterTasdik = sayi(fee.defter_tasdik_ucreti)
-      const now = new Date()
-      const basYil = Number(fee.baslangic_yil) || now.getFullYear()
-      const basAy = Number(fee.baslangic_ay) || 1
-      const buYil = now.getFullYear()
-      const buAy = now.getMonth() + 1
-
-      // Odemeleri donem bazli topla (YYYY-AA)
-      const donemTahsil = (yil, ay) => {
-        const anahtar = `${yil}-${String(ay).padStart(2, '0')}`
-        return odemeler
-          .filter(p => p.durum !== 'reddedildi' && (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel'))
-          .filter(p => String(p.donem || '').startsWith(anahtar))
-          .reduce((s, p) => s + sayi(p.tutar), 0)
-      }
-
-      let gecmisAylik = 0
-      let guncelAylik = 0
-      for (let y = basYil; y <= buYil; y++) {
-        const ilkAy = y === basYil ? basAy : 1
-        const sonAy = y === buYil ? buAy : 12
-        for (let m = ilkAy; m <= sonAy; m++) {
-          if (acilisOncesiAy(client, y, m) || kapanisSonrasiAy(client, y, m)) continue
-          const kalan = Math.max(0, aylik - donemTahsil(y, m))
-          if (y < buYil) gecmisAylik += kalan
-          else guncelAylik += kalan
-        }
-      }
-      // Dönem etiketi olmayan/eski ödemeler toplamdan düşülür
-      const donemsizTahsil = odemeler
-        .filter(p => p.durum !== 'reddedildi' && (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel'))
-        .filter(p => !/^\d{4}-\d{2}/.test(String(p.donem || '')))
-        .reduce((s, p) => s + sayi(p.tutar), 0)
-
-      const gecmisDonem = oncekiDonem + defterTasdik + gecmisAylik
-      const guncelDonem = Math.max(0, guncelAylik - donemsizTahsil)
-      const kalanBorc = Math.max(0, gecmisDonem + guncelDonem)
-      if (kalanBorc > 0) sonuc.set(cid, { kalanBorc, gecmisDonem, guncelDonem })
-    }
-  } catch { /* yoksay */ }
+  if (!musteriIdleri.length) return sonuc
+  const [fees, payments] = await Promise.all([
+    supabase.from('accounting_fees').select('*').in('client_id', musteriIdleri),
+    supabase.from('payments').select('client_id, tutar, durum, donem, odeme_kanali, odeme_tarihi').in('client_id', musteriIdleri)
+  ])
+  if (fees.error) throw fees.error
+  if (payments.error) throw payments.error
+  const simdi = new Date()
+  for (const fee of fees.data || []) {
+    if (fee.muhasebe_ucreti_var === false) continue
+    const cid = String(fee.client_id)
+    const client = clients.find(item => String(item.id) === cid)
+    const odemeler = (payments.data || []).filter(p => String(p.client_id) === cid)
+    const ozet = hesaplaBorcOzeti(fee, odemeler, simdi, client)
+    if (ozet.kalanBorc > 0) sonuc.set(cid, { kalanBorc: ozet.kalanBorc, gecmisDonem: ozet.oncekiKalan, guncelDonem: ozet.aylikKalan + ozet.defterKalan })
+  }
   return sonuc
 }
 

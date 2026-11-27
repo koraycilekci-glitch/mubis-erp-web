@@ -797,12 +797,13 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
     if (f.xml_url) {
       if (f.tur !== 'utts') {
         try {
-          setMesaj('Fatura okunabilir biçimde hazırlanıyor...')
+          setMesaj('Orijinal e-Belge (PDF/HTML) bulunamadı — MUBiS görünümü hazırlanıyor...')
           const metin = await (await fetchDocument(f.xml_url)).text()
-          const html = faturaHtmlOlustur(ublAyikla(metin))
+          const ayik = ublAyikla(metin)
+          ayik.uyari = 'Bu faturada orijinal e-Belge (PDF veya GİB e-Belge HTML) bulunamadı. Aşağıdaki görünüm MUBiS tarafından XML verisinden üretilmiştir — resmî belgenin birebir kopyası değildir.'
+          const html = faturaHtmlOlustur(ayik)
           const objUrl = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }))
           window.open(objUrl, '_blank', 'noreferrer')
-          setMesaj('')
           return
         } catch { /* okunamadıysa ham XML'e düşer */ }
       }

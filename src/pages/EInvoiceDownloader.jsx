@@ -195,6 +195,7 @@ ${b.kalemler.map((k, i) => `<tr><td>${i + 1}</td><td>${k.ad}</td><td>${k.miktar}
 <table><tr><td>Matrah (vergi hariç)</td><td class="sag">${tl(b.matrah)} ${b.paraBirimi}</td></tr>
 <tr><td>KDV</td><td class="sag">${tl(b.kdv)} ${b.paraBirimi}</td></tr>
 <tr class="toplam"><td>Genel Toplam</td><td class="sag">${tl(b.tutar)} ${b.paraBirimi}</td></tr></table>
+<p style="margin-top:14px;font-size:11px;color:#92400e;border:2px solid #b45309;background:#fffbeb;padding:8px 12px;border-radius:6px;font-weight:600">Bu faturada orijinal e-Belge (PDF / GİB e-Belge HTML) bulunamadı. Bu görünüm MUBiS tarafından XML verisinden üretilmiştir; resmî belgenin birebir kopyası değildir.</p>
 <button onclick="window.print()">Yazdır / PDF olarak kaydet</button>
 </body></html>`
   }

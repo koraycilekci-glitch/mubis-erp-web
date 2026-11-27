@@ -15,7 +15,7 @@ import {
   FolderOpen, FileSearch, Inbox, MessageSquare, Smartphone, Copy
 } from 'lucide-react'
 import { getAccountPlans, saveAccountPlans, getEmployees, addEmployee, updateEmployee, deleteEmployee, saveEmployeesFromExcel, getPartners, addPartner, updatePartner, deletePartner, setEdevletAktifPartner, updateClient as updateClientDb, addClient, findClientByTcVkn } from '../services/clientService'
-import { getAccountingFee, saveAccountingFee, getPayments, addPayment, deletePayment, updatePayment, hesaplaBorcOzeti, openReceipt, applyPaymentToDebt, rejectPayment, normalizeDonem } from '../services/paymentService'
+import { getAccountingFee, saveAccountingFee, getPayments, addPayment, deletePayment, updatePayment, hesaplaBorcOzeti, openReceipt, applyPaymentToDebt, rejectPayment } from '../services/paymentService'
 import { createNotification } from '../services/notificationService'
 import { uploadGelirBeyanDocument, uploadGeciciVergiDocument, uploadVergiLevhasi, uploadMaliEvrak, uploadAdminDocument, uploadMakbuz, uploadPaymentMakbuz, analyzePersonnelDocument } from '../services/documentService'
 import { etebligatlariGetirVeYukle } from '../services/gibIndirmeService'
@@ -26,7 +26,7 @@ import { ASGARI_UCRET, nettenBrute } from '../data/defaults'
 import { formatTurkishInput, parseTurkishNumber, parseMoneyInput, formatMoney, hamTutarGirdisi } from '../utils/numberFormat'
 import { formatDateTR } from '../utils/dateUtils'
 import { normalizeClientDate, normalizeRentalDates } from '../utils/clientForm'
-import { kapanisSonrasiAy, acilisOncesiAy } from '../utils/beyanKapanis'
+import { aylikUcretGetir, defterTasdikUcretiGetir, odemeDonemi, tahsilEdildi, tasdikDonemi } from '../utils/muhasebeUcretleri'
 import { supabase } from '../lib/supabase'
 import KiraTalepOnay from '../components/KiraTalepOnay'
 import PortalErisimKarti from '../components/PortalErisimKarti'
@@ -87,7 +87,7 @@ export default function ClientDetail() {
   const istenCikisBildirgeRef = useRef(null)
   // Muhasebe ucreti
   const [accountingFee, setAccountingFee] = useState(null)
-  const [feeForm, setFeeForm] = useState({ onceki_donem_borc: '', defter_tasdik_ucreti: '', aylik_ucret: '', baslangic_ay: '1', baslangic_yil: '2025', notlar: '', muhasebe_ucreti_var: true })
+  const [feeForm, setFeeForm] = useState({ onceki_donem_borc: '', defter_tasdik_ucreti: '', aylik_ucret: '', baslangic_ay: '1', baslangic_yil: String(new Date().getFullYear()), tasdik_yili: String(new Date().getFullYear()), notlar: '', muhasebe_ucreti_var: true })
   const [clientPayments, setClientPayments] = useState([])
   const [showPaymentForm, setShowPaymentForm] = useState(false)
   const [paymentForm, setPaymentForm] = useState({ tutar: '', odeme_tipi: 'eft', donem: '', aciklama: '', odeme_tarihi: new Date().toISOString().split('T')[0] })
@@ -560,10 +560,11 @@ export default function ClientDetail() {
       if (fee) {
         setFeeForm({
           onceki_donem_borc: fee.onceki_donem_borc || '',
-          defter_tasdik_ucreti: fee.defter_tasdik_ucreti || '',
-          aylik_ucret: fee.aylik_ucret || '',
-          baslangic_ay: String(fee.baslangic_ay || 1),
-          baslangic_yil: String(fee.baslangic_yil || 2025),
+          defter_tasdik_ucreti: '',
+          aylik_ucret: '',
+          baslangic_ay: String(new Date().getMonth() + 1),
+          baslangic_yil: String(new Date().getFullYear()),
+          tasdik_yili: String(new Date().getFullYear()),
           notlar: fee.notlar || '',
           muhasebe_ucreti_var: fee.muhasebe_ucreti_var !== false
         })
@@ -1583,14 +1584,9 @@ export default function ClientDetail() {
     if (!seciliBorcKalemler.length) return alert('En az bir borç kalemi seçin!')
     if (seciliBorcKalemler.some(kalem => !getBorcKalemleri().some(secenek => secenek.value === kalem))) return alert('Kapalı dönem için ödeme kaydı oluşturulamaz.')
     try {
-      const fee = accountingFee
-      const toplandi = (p) => p.durum !== 'reddedildi' && (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel')
-      const odenmis = (kalem) => (clientPayments || []).filter(p => normalizeDonem(p.donem) === kalem && toplandi(p)).reduce((s, p) => s + (Number(p.tutar) || 0), 0)
-      const kalemTutar = (kalem) => {
-        if (kalem === 'Onceki Donem') return Number(fee?.onceki_donem_borc) || 0
-        if (kalem === 'Defter Tasdik') return Number(fee?.defter_tasdik_ucreti) || 0
-        return /^(\d{4})-(\d{2})$/.test(kalem) ? (Number(fee?.aylik_ucret) || 0) : 0
-      }
+      const odenmis = (kalem) => (clientPayments || []).filter(p => odemeDonemi(p) === kalem && tahsilEdildi(p)).reduce((s, p) => s + (Number(p.tutar) || 0), 0)
+      const kalemler = getBorcKalemleri()
+      const kalemTutar = (kalem) => kalemler.find(borc => borc.value === kalem)?.tutar || 0
       let bakiye = tutarSayi
       let paySayisi = 0
       for (const kalem of seciliBorcKalemler) {
@@ -1640,7 +1636,7 @@ export default function ClientDetail() {
 
   // Borc kalemini duzeltme modalini ac (mevcut donem onay kutusuna alinir)
   const openDuzeltme = (payment) => {
-    setDuzeltmeSecim(normalizeDonem(payment.donem || ''))
+    setDuzeltmeSecim(odemeDonemi(payment))
     setDuzeltmeDuzenlenen({ payment })
   }
 
@@ -1684,28 +1680,16 @@ export default function ClientDetail() {
 
   // Borc kalemleri: onceki donem, defter tasdik ve aylik donemler
   const getBorcKalemleri = () => {
-    const secenekler = []
-    const fee = accountingFee
-    if (Number(fee?.onceki_donem_borc) > 0) {
-      secenekler.push({ value: 'Onceki Donem', label: `Onceki Donem Borcu (${Number(fee.onceki_donem_borc).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} TL)` })
-    }
-    if (Number(fee?.defter_tasdik_ucreti) > 0) {
-      secenekler.push({ value: 'Defter Tasdik', label: `Defter Tasdik Ucreti (${Number(fee.defter_tasdik_ucreti).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} TL)` })
-    }
-    if (fee) {
-      const basYil = Number(fee.baslangic_yil) || new Date().getFullYear()
-      const basAy = Number(fee.baslangic_ay) || 1
-      const simdi = new Date()
-      for (let y = simdi.getFullYear(); y >= basYil; y--) {
-        const ayUst = y === simdi.getFullYear() ? simdi.getMonth() + 1 : 12
-        const ayAlt = y === basYil ? basAy : 1
-        for (let a = ayUst; a >= ayAlt; a--) {
-          if (acilisOncesiAy(client, y, a) || kapanisSonrasiAy(client, y, a)) continue
-          secenekler.push({ value: `${y}-${String(a).padStart(2, '0')}`, label: `${y}-${String(a).padStart(2, '0')} Muhasebe Ucreti` })
-        }
-      }
-    }
-    return secenekler
+    const ozet = hesaplaBorcOzeti(accountingFee, clientPayments, new Date(), client)
+    const tasdik = { donem: tasdikDonemi(ozet.yil), borc: ozet.defterTasdik }
+    const onceki = { donem: 'Onceki Donem', borc: Number(accountingFee?.onceki_donem_borc) || 0 }
+    return [onceki, tasdik, ...ozet.ayKalemleri.toReversed(), ...ozet.gecmisKalemler.toReversed()]
+      .filter(kalem => kalem.borc > 0)
+      .map(({ donem, borc }) => ({
+        value: donem,
+        tutar: borc,
+        label: (donem.startsWith('Defter Tasdik') || donem === 'Onceki Donem' ? donem : donem + ' Muhasebe Ücreti') + ' (' + formatMoney(borc) + ' TL)'
+      }))
   }
 
   // Yesil ✓: pencere acar — hangi borc kalemlerinden dusulecegi coklu secilir
@@ -1721,14 +1705,9 @@ export default function ClientDetail() {
     if (!odemeOnaySecimler.length) return alert('En az bir borç kalemi seçin!')
     if (odemeOnaySecimler.some(kalem => !getBorcKalemleri().some(secenek => secenek.value === kalem))) return alert('Kapalı dönem için ödeme uygulanamaz.')
     try {
-      const fee = accountingFee
-      const toplandi = (p) => p.durum !== 'reddedildi' && (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel')
-      const odenmis = (kalem) => (clientPayments || []).filter(p => p.id !== payment.id && normalizeDonem(p.donem) === kalem && toplandi(p)).reduce((s, p) => s + (Number(p.tutar) || 0), 0)
-      const kalemTutar = (kalem) => {
-        if (kalem === 'Onceki Donem') return Number(fee?.onceki_donem_borc) || 0
-        if (kalem === 'Defter Tasdik') return Number(fee?.defter_tasdik_ucreti) || 0
-        return /^(\d{4})-(\d{2})$/.test(kalem) ? (Number(fee?.aylik_ucret) || 0) : 0
-      }
+      const odenmis = (kalem) => (clientPayments || []).filter(p => p.id !== payment.id && odemeDonemi(p) === kalem && tahsilEdildi(p)).reduce((s, p) => s + (Number(p.tutar) || 0), 0)
+      const kalemler = getBorcKalemleri()
+      const kalemTutar = (kalem) => kalemler.find(borc => borc.value === kalem)?.tutar || 0
       let bakiye = Number(payment.tutar) || 0
       let ilklendi = false
       for (const kalem of odemeOnaySecimler) {
@@ -3933,7 +3912,7 @@ export default function ClientDetail() {
                     <p className="text-lg font-bold text-blue-400">{fmt(ozet.defterTasdik)} TL</p>
                   </div>
                   <div className="bg-blue-900/30 rounded-xl p-3 text-center">
-                    <p className="text-xs text-gray-400">Aylik ({ozet.gecenAy} ay x {fmt(ozet.aylikUcret)})</p>
+                    <p className="text-xs text-gray-400">Aylık Ücret ({ozet.gecenAy} ay)</p>
                     <p className="text-lg font-bold text-yellow-400">{fmt(ozet.aylikToplam)} TL</p>
                   </div>
                   <div className="bg-blue-900/30 rounded-xl p-3 text-center">
@@ -3961,7 +3940,7 @@ export default function ClientDetail() {
                  {/* Kesin teşhis: odemelerin db'deki ham durum/donem degerleri */}
                  {clientPayments.length > 0 && (
                    <p className="text-[10px] text-gray-500 mt-2 break-words">
-                     Teşhis: {clientPayments.map(p => `${Number(p.tutar).toLocaleString('tr-TR')} TL · ${p.durum || '(durum yok)'} · dönem: ${p.donem || '(boş)'}`).join(' | ')} | Beklenen kalem dönemleri: Onceki Donem / Defter Tasdik / 2026-MM
+                     Teşhis: {clientPayments.map(p => `${Number(p.tutar).toLocaleString('tr-TR')} TL · ${p.durum || '(durum yok)'} · dönem: ${p.donem || '(boş)'}`).join(' | ')} | Beklenen kalem dönemleri: Onceki Donem / Defter Tasdik YYYY / YYYY-AA
                    </p>
                  )}
               </div>
@@ -3976,21 +3955,23 @@ export default function ClientDetail() {
                 <label className="block text-sm text-gray-400 mb-1">Onceki Donem Borc (TL)</label>
                 <input type="text" inputMode="decimal" value={feeForm.onceki_donem_borc}
                   onChange={(e) => setFeeForm({...feeForm, onceki_donem_borc: e.target.value})}
-                  onBlur={(e) => setFeeForm(f => ({...f, onceki_donem_borc: formatTurkishInput(e.target.value)}))}
+                  onBlur={(e) => setFeeForm(f => ({...f, onceki_donem_borc: parseMoneyInput(e.target.value) === null ? e.target.value : formatMoney(parseMoneyInput(e.target.value))}))}
                   className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400" />
               </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Defter Tasdik Ucreti (TL)</label>
                 <input type="text" inputMode="decimal" value={feeForm.defter_tasdik_ucreti}
+                  placeholder={formatMoney(defterTasdikUcretiGetir(accountingFee, Number(feeForm.tasdik_yili)))}
                   onChange={(e) => setFeeForm({...feeForm, defter_tasdik_ucreti: e.target.value})}
-                  onBlur={(e) => setFeeForm(f => ({...f, defter_tasdik_ucreti: formatTurkishInput(e.target.value)}))}
+                  onBlur={(e) => setFeeForm(f => ({...f, defter_tasdik_ucreti: parseMoneyInput(e.target.value) === null ? e.target.value : formatMoney(parseMoneyInput(e.target.value))}))}
                   className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400" />
               </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Aylik Muhasebe Ucreti (TL)</label>
                 <input type="text" inputMode="decimal" value={feeForm.aylik_ucret}
+                  placeholder={formatMoney(aylikUcretGetir(accountingFee, Number(feeForm.baslangic_yil), Number(feeForm.baslangic_ay)))}
                   onChange={(e) => setFeeForm({...feeForm, aylik_ucret: e.target.value})}
-                  onBlur={(e) => setFeeForm(f => ({...f, aylik_ucret: formatTurkishInput(e.target.value)}))}
+                  onBlur={(e) => setFeeForm(f => ({...f, aylik_ucret: parseMoneyInput(e.target.value) === null ? e.target.value : formatMoney(parseMoneyInput(e.target.value))}))}
                   className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400" />
               </div>
               <div>
@@ -4006,7 +3987,14 @@ export default function ClientDetail() {
                 <label className="block text-sm text-gray-400 mb-1">Baslangic Yil</label>
                 <select value={feeForm.baslangic_yil} onChange={(e) => setFeeForm({...feeForm, baslangic_yil: e.target.value})}
                   className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400">
-                  {[2020,2021,2022,2023,2024,2025,2026,2027,2028,2029,2030].map(y => <option key={y} value={y}>{y}</option>)}
+                  {Array.from({ length: 16 }, (_, index) => 2020 + index).map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Defter Tasdik Yılı</label>
+                <select value={feeForm.tasdik_yili} onChange={(e) => setFeeForm({...feeForm, tasdik_yili: e.target.value})}
+                  className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:border-yellow-400">
+                  {Array.from({ length: 16 }, (_, index) => 2020 + index).map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
               </div>
               <div>
@@ -4026,6 +4014,7 @@ export default function ClientDetail() {
                 </span>
               </div>
             </div>
+            <p className="mt-3 text-xs text-gray-400">Aylık ücret başlangıç ayından itibaren, defter tasdik ücreti yalnızca seçilen yılda geçerlidir. Tarifeyi değiştirmemek için tutarı boş bırakın.</p>
             <button onClick={handleSaveFee}
               className="mt-4 bg-yellow-500 text-blue-950 px-6 py-2.5 rounded-lg font-semibold hover:bg-yellow-400 transition-colors flex items-center space-x-2">
               <Save className="w-4 h-4" /><span>Kaydet</span>

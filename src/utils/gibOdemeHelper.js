@@ -313,25 +313,30 @@ async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 100
   // atlanir: VPS yeni bir istekle yeniden denenir, aksi halde 60 sn boyunca
   // sorgu hatali gorunur.
   if (sunucuBeklemede() && yerelYedekAktif) return yerelYedek()
-  let r0
-  try {
-    r0 = await yardimciFetch('/api/yardimci/is', {
-      method: 'POST',
-      headers: sunucuZorunluBasliklar(),
-      body: JSON.stringify({ is: isAdi, asenkron: true, ...params }),
-      signal: AbortSignal.timeout(20000)
-    })
-  } catch (err) {
-    sunucuHataIsaretle()
-    return yerelYedek()
-  }
-  const j0 = await r0.json().catch(() => ({}))
-  if (!j0?.success || !j0?.isId) {
-    if (!r0.ok && r0.status >= 500) {
+  let isId = secenekler.oncekiIsId
+  if (!isId) {
+    let ilkYaniti
+    try {
+      ilkYaniti = await yardimciFetch('/api/yardimci/is', {
+        method: 'POST',
+        headers: sunucuZorunluBasliklar(),
+        body: JSON.stringify({ is: isAdi, asenkron: true, ...params, ...(secenekler.onIsBasladi ? { kaliciTakip: true } : {}) }),
+        signal: AbortSignal.timeout(20000)
+      })
+    } catch {
       sunucuHataIsaretle()
       return yerelYedek()
     }
-    return { ok: false, reason: j0?.error || 'servis-hatasi' }
+    const sonuc = await ilkYaniti.json().catch(() => ({}))
+    if (!sonuc?.success || !sonuc?.isId) {
+      if (!ilkYaniti.ok && ilkYaniti.status >= 500) {
+        sunucuHataIsaretle()
+        return yerelYedek()
+      }
+      return { ok: false, reason: sonuc?.error || 'servis-hatasi' }
+    }
+    isId = sonuc.isId
+    await secenekler.onIsBasladi?.(isId)
   }
   sunucuHataTemizle()
   let yerelYedegeDus = false
@@ -350,8 +355,9 @@ async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 100
     if (iptalEdildiMi()) return iptalSonucu()
     let j1 = null
     try {
-      const r1 = await yardimciFetch(`/api/yardimci/is-sonuc?id=${encodeURIComponent(j0.isId)}`, { headers: sunucuZorunluBasliklar(), signal: AbortSignal.timeout(15000) })
+      const r1 = await yardimciFetch(`/api/yardimci/is-sonuc?id=${encodeURIComponent(isId)}`, { headers: sunucuZorunluBasliklar(), signal: AbortSignal.timeout(15000) })
       j1 = await r1.json().catch(() => null)
+      if (r1.status === 404) return { ok: false, reason: 'VPS_IS_BULUNAMADI' }
       if ([401, 403, 503].includes(r1.status)) return { ok: false, reason: j1?.error || `HTTP ${r1.status}` }
     } catch (error) {
       if (error?.message === 'Sunucu yardımcısı için oturum açın') return { ok: false, reason: error.message }
@@ -372,12 +378,12 @@ async function sunucuyaIsGonder(isAdi, params = {}, zamanAsimiMs = 10 * 60 * 100
       // Luca yurtdisi IP engeli: yerel yardimci varsa onunla dene
       // (yerel yedek kapali islerde bu yol da kapalidir)
       if (LUCA_ENGEL_DESEN.test(String(j1.error || ''))) {
-        if (!yerelYedekAktif) return { ok: false, reason: secenekler?.yerelYedekKapaliMesaj || SUNUCU_KAPALI_MESAJ }
+        if (!yerelYedekAktif) return { ok: false, reason: secenekler?.yerelYedekKapaliMesaj || SUNUCU_KAPALI_MESAJ, isBitti: true }
         const yerelVar = await yerelYardimciUygunMu()
         if (yerelVar) { yerelYedegeDus = true; break }
         return { ok: false, reason: 'Sunucudan Luca\'ya erisilemiyor (yurtdisi IP engeli) ve yerel yardimci program da kapali. Luca isleri icin yardimci programi acin.' }
       }
-      return { ok: false, reason: j1.error || 'is-hatasi' }
+      return { ok: false, reason: j1.error || 'is-hatasi', isBitti: true }
     }
   }
   if (iptalEdildiMi()) return iptalSonucu()

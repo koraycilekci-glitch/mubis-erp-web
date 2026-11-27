@@ -127,6 +127,7 @@ export function faturaHtmlOlustur(ay) {
   table.toplar tr.son td { background: #111827; color: #fff; font-weight: 800 }
   table.toplar td:last-child { text-align: right; font-variant-numeric: tabular-nums }
   .kur { font-size: 10px; color: #6b7280; text-align: right; margin-top: 4px }
+  .uyari { margin: 0 0 12px; padding: 8px 12px; border: 2px solid #b45309; background: #fffbeb; color: #92400e; font-size: 11.5px; font-weight: 600; border-radius: 6px }
   .not { margin-top: 18px; font-size: 10px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 8px }
   .imza { margin-top: 40px; display: flex; justify-content: space-between; font-size: 11px }
   .imza .k { width: 40%; text-align: center; color: #6b7280 }
@@ -148,6 +149,7 @@ export function faturaHtmlOlustur(ay) {
       ${ay.uuid ? `<div class="no" style="margin-top:2px">UUID: ${ay.uuid.substring(0, 18)}…</div>` : ''}
     </div>
   </div>
+  ${ay.uyari ? `<div class="uyari">${ay.uyari}</div>` : ''}
   <div class="taraflar">
     <div class="taraf">
       <h3>Satıcı</h3>
@@ -173,7 +175,8 @@ export function faturaHtmlOlustur(ay) {
   <div class="sonlar">
     <div>${kurTablosu}${kurSatiri}</div>
   </div>
-  <div class="not">Bu belge MUBiS tarafından e-Fatura / e-Arşiv UBL verisinden oluşturulmuştur; resmî belgenin birebir görüntüsüdür.</div>
+  ${ay.uyari ? `<div class="uyari">${ay.uyari}</div>` : ''}
+  <div class="not">Bu görünüm MUBiS tarafından e-Fatura / e-Arşiv UBL (XML) verisinden üretilmiştir. Orijinal e-Belge (PDF veya GİB e-Belge HTML) bu faturada bulunmadığı için resmî belgenin birebir kopyası DEĞİLDİR; yalnızca okuma/önizleme amaçlıdır.</div>
   <div class="imza">
     <div class="k"><div class="cizgi">Satıcı</div></div>
     <div class="k"><div class="cizgi">Alıcı</div></div>

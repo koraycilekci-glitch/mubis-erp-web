@@ -1,8 +1,10 @@
 import { supabase } from '../lib/supabase'
-import { requireMoneyInput, parseMoneyInput } from '../utils/numberFormat'
+import { requireMoneyInput } from '../utils/numberFormat'
 import { getMyOfficeId } from './officeService'
 import { getSettings } from './settingsService'
-import { kapanisSonrasiAy, acilisOncesiAy } from '../utils/beyanKapanis'
+import { aylikDonem } from '../utils/muhasebeUcretleri'
+export { hesaplaBorcOzeti } from '../utils/muhasebeUcretleri'
+export { normalizeDonem } from '../utils/muhasebeUcretleri'
 
 export async function getActivePaymentProvider() {
   try {
@@ -46,22 +48,21 @@ export async function getAccountingFee(clientId) {
 }
 
 export async function saveAccountingFee(clientId, feeData) {
-  const { data, error } = await supabase
-    .from('accounting_fees')
-    .upsert({
-      client_id: clientId,
-      // Turkce formatli girisleri ("12.500,00") numeric'e cevir
-      onceki_donem_borc: parseMoneyInput(feeData.onceki_donem_borc) || 0,
-      defter_tasdik_ucreti: parseMoneyInput(feeData.defter_tasdik_ucreti) || 0,
-      aylik_ucret: parseMoneyInput(feeData.aylik_ucret) || 0,
-      baslangic_ay: feeData.baslangic_ay || 1,
-      baslangic_yil: feeData.baslangic_yil || 2025,
-      notlar: feeData.notlar || '',
-      muhasebe_ucreti_var: feeData.muhasebe_ucreti_var !== false,
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'client_id' })
-    .select()
-    .single()
+  const args = { p_client_id: clientId }
+  if (feeData.aylik_ucret !== undefined && feeData.aylik_ucret !== '') {
+    args.p_aylik_donem = aylikDonem(Number(feeData.baslangic_yil), Number(feeData.baslangic_ay))
+    args.p_aylik = requireMoneyInput(feeData.aylik_ucret, 'Aylık ücret')
+  }
+  if (feeData.defter_tasdik_ucreti !== undefined && feeData.defter_tasdik_ucreti !== '') {
+    args.p_tasdik_yili = Number(feeData.tasdik_yili)
+    args.p_tasdik = requireMoneyInput(feeData.defter_tasdik_ucreti, 'Defter tasdik ücreti')
+  }
+  if (feeData.onceki_donem_borc !== undefined) {
+    args.p_onceki = feeData.onceki_donem_borc === '' ? 0 : requireMoneyInput(feeData.onceki_donem_borc)
+  }
+  if (feeData.notlar !== undefined) args.p_notlar = feeData.notlar
+  if (feeData.muhasebe_ucreti_var !== undefined) args.p_ucret_var = feeData.muhasebe_ucreti_var
+  const { data, error } = await supabase.rpc('muhasebe_tarifesi_kaydet', args)
   if (error) throw error
   return data
 }
@@ -177,121 +178,13 @@ export async function updatePayment(id, updates = {}) {
   return data && data[0]
 }
 
-// ============ BORC HESAPLAMA ============
-
-// Donem girisini tekil kanonik bicime cevirir: "2026/12", "12/2026", "2026 12",
-// "2026.12" -> "2026-12". Birebir eslesmeyen eski kayitlarin da borctan dusmesi icin.
-export function normalizeDonem(d) {
-  const s = String(d || '').trim()
-  if (!s) return s
-  // Turkce/ASCII donem adlari -> kanonik borc kalemleri
-  if (/önceki|onceki/i.test(s)) return 'Onceki Donem'
-  if (/defter|ta%C5%9F|ta%C5%9F|tasdik/i.test(s)) return 'Defter Tasdik'
-  let m = s.match(/^(\d{4})[\s\/.\-](\d{1,2})$/)
-  if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}`
-  m = s.match(/^(\d{1,2})[\s\/.\-](\d{4})$/)
-  if (m) return `${m[2]}-${String(m[1]).padStart(2, '0')}`
-  return s
-}
-
-export function hesaplaBorcOzeti(fee, payments, referansTarih = new Date(), client = null) {
-  const bos = { oncekiDonem: 0, defterTasdik: 0, aylikUcret: 0, gecenAy: 0, aylikToplam: 0, toplamBorc: 0, toplamOdeme: 0, kalanBorc: 0, alindiOdeme: 0, bekleyenOdeme: 0, reddedilenOdeme: 0, sonOdeme: null, odenenAylar: [], odenmeyenAylar: [] }
-  if (!fee) return bos
-
-  const oncekiDonem = Number(fee.onceki_donem_borc) || 0
-  const defterTasdik = Number(fee.defter_tasdik_ucreti) || 0
-  const aylikUcret = Number(fee.aylik_ucret) || 0
-
-  const refYil = referansTarih.getFullYear()
-  const refAy = referansTarih.getMonth() + 1
-  const basYil = Number(fee.baslangic_yil) || refYil
-  const basAy = Number(fee.baslangic_ay) || 1
-
-  if (refYil < basYil) return { ...bos, oncekiDonem, defterTasdik, aylikUcret }
-
-  // Tahsil edilen odemeler (red edilmisler haric)
-  const toplandi = (p) => p.durum !== 'reddedildi' &&
-    (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel')
-  const toplam = (liste) => (liste || []).reduce((s, p) => s + (Number(p.tutar) || 0), 0)
-  const donemToplam = (d) => toplam((payments || []).filter(p => normalizeDonem(p.donem) === d && toplandi(p)))
-
-  // Odemelerin basladigi ay (baslangictan once odeme varsa faturalama oradan baslar)
-  const odenenAyListesi = Array.from({ length: 12 }, (_, i) => i + 1)
-    .filter(m => !acilisOncesiAy(client, refYil, m) && !kapanisSonrasiAy(client, refYil, m) && donemToplam(`${refYil}-${String(m).padStart(2, '0')}`) > 0)
-
-  // Faturalanan ay sayisi: baslangictan (veya ilk odemeden) bu aya kadar
-  let basAyNo = basYil === refYil ? basAy : 1
-  if (odenenAyListesi.length > 0) basAyNo = Math.min(basAyNo, Math.min(...odenenAyListesi))
-  const faturalananAylar = Array.from({ length: Math.max(0, refAy - basAyNo + 1) }, (_, i) => basAyNo + i)
-    .filter(m => !acilisOncesiAy(client, refYil, m) && !kapanisSonrasiAy(client, refYil, m))
-  const gecenAy = faturalananAylar.length
-
-  const aylikToplam = aylikUcret * gecenAy
-  // Onceki yillarin odenmemis aylik ucretleri: referans yilindan onceki her yil icin
-  // faturalanan borc - o yila ait tahsilat. Yil degisince (orn. 2027'ye girince)
-  // gecen yilin kalan borcu "önceki dönem"e otomatik eklenir (admin tarafıyla aynı mantık).
-  const simdiYil = new Date().getFullYear()
-  const simdiAy = new Date().getMonth() + 1
-  const gecmisKalan = (() => {
-    if (aylikUcret <= 0) return 0
-    const odemeYillari = (payments || [])
-      .filter(p => /^\d{4}-/.test(normalizeDonem(p.donem) || ''))
-      .map(p => Number(normalizeDonem(p.donem).slice(0, 4)))
-    const gecmisBasYil = Number(fee.baslangic_yil) || (odemeYillari.length ? Math.min(...odemeYillari) : refYil)
-    if (refYil <= gecmisBasYil) return 0
-    let t = 0
-    for (let Y = gecmisBasYil; Y <= refYil - 1; Y++) {
-      if (Y > simdiYil) break
-      const sonAy = Y === simdiYil ? simdiAy : 12
-      let odendiTutar = 0
-      let acikAySayisi = 0
-      for (let m = Y === gecmisBasYil ? basAy : 1; m <= sonAy; m++) {
-        if (acilisOncesiAy(client, Y, m) || kapanisSonrasiAy(client, Y, m)) continue
-        acikAySayisi++
-        odendiTutar += Math.min(donemToplam(`${Y}-${String(m).padStart(2, '0')}`), aylikUcret)
-      }
-      t += Math.max(0, aylikUcret * acikAySayisi - odendiTutar)
-    }
-    return t
-  })()
-  const oncekiDonemToplam = oncekiDonem + gecmisKalan
-
-  const toplamBorc = oncekiDonemToplam + defterTasdik + aylikToplam
-
-  // Tahsilat her borc kaleminde kendi tutariyla sinirli (cift/eski kayitlar fazla sayilmaz)
-  const odOdenen = Math.min(donemToplam('Onceki Donem'), oncekiDonemToplam)
-  const dtOdenen = Math.min(donemToplam('Defter Tasdik'), defterTasdik)
-  const ayOdenen = odenenAyListesi.reduce((s, m) => s + Math.min(donemToplam(`${refYil}-${String(m).padStart(2, '0')}`), aylikUcret), 0)
-  const toplamOdeme = odOdenen + dtOdenen + ayOdenen
-
-  const alindiOdeme = toplam((payments || []).filter(p => p.durum === 'alindi'))
-  const bekleyenOdeme = toplam((payments || []).filter(p => p.durum === 'bekliyor'))
-  const reddedilenOdeme = toplam((payments || []).filter(p => p.durum === 'reddedildi'))
-
-  const tamOdenenAylar = faturalananAylar.filter(m => aylikUcret > 0 && donemToplam(`${refYil}-${String(m).padStart(2, '0')}`) >= aylikUcret)
-  const odenmeyenAylar = faturalananAylar.filter(m => !tamOdenenAylar.includes(m))
-  const aylikKalan = faturalananAylar.reduce((s, m) => s + Math.max(0, aylikUcret - Math.min(donemToplam(`${refYil}-${String(m).padStart(2, '0')}`), aylikUcret)), 0)
-
-  const uygulanan = (payments || []).filter(p => toplandi(p))
-  const sonOdeme = uygulanan.length > 0 ? uygulanan[0].odeme_tarihi : null
-
-  return {
-    oncekiDonem: oncekiDonemToplam, oncekiDonemToplam, defterTasdik, aylikUcret, gecenAy, aylikToplam, toplamBorc, toplamOdeme,
-    kalanBorc: toplamBorc - toplamOdeme, alindiOdeme, bekleyenOdeme, reddedilenOdeme, sonOdeme,
-    odenenAylar: tamOdenenAylar, odenmeyenAylar,
-    aylikKalan,
-    defterKalan: Math.max(0, defterTasdik - donemToplam('Defter Tasdik')),
-    oncekiKalan: Math.max(0, oncekiDonemToplam - donemToplam('Onceki Donem'))
-  }
-}
-
 // ============ BORC BILDIRIM MESAJI ============
 // Odeme linki aciklamasi ve toplu borc bildirimi icin ortak detayli mesaj
 const AY_ADLARI = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
 
-export function buildBorcMesaji({ clientName = '', fee = null, ozet = {}, bankInfo = null, bankAccounts = null, linkUrl = '' }) {
+export function buildBorcMesaji({ clientName = '', ozet = {}, bankInfo = null, bankAccounts = null, linkUrl = '' }) {
   const fmtTL = (n) => Number(n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 })
-  const yil = new Date().getFullYear()
+  const yil = ozet.yil ?? new Date().getFullYear()
   const aylikKalan = Number(ozet?.aylikKalan) || 0
   const defterKalan = Number(ozet?.defterKalan) || 0
   const oncekiKalan = Number(ozet?.oncekiKalan) || 0
@@ -302,10 +195,8 @@ export function buildBorcMesaji({ clientName = '', fee = null, ozet = {}, bankIn
 
   // Yalniz odenmeyen kisimlar yazilir; odenenler mesaja girmez
   if (aylikKalan > 0) {
-    const aylikUcret = Number(ozet?.aylikUcret ?? fee?.aylik_ucret) || 0
     const ayListesi = odenmeyenAylar.map(m => AY_ADLARI[m - 1]).join(', ')
-    const aylikBilgi = aylikUcret > 0 ? `Aylık: ${fmtTL(aylikUcret)} TL - ` : ''
-    satirlar.push(`${yil} Yılı Muhasebe Ücreti (${aylikBilgi}Ödenmeyen Aylar: ${ayListesi}): ${fmtTL(aylikKalan)} TL`)
+    satirlar.push(`${yil} Yılı Muhasebe Ücreti (Ödenmeyen Aylar: ${ayListesi}): ${fmtTL(aylikKalan)} TL`)
   }
   if (defterKalan > 0) satirlar.push(`Defter Tasdik: ${fmtTL(defterKalan)} TL`)
   if (oncekiKalan > 0) satirlar.push(`Önceki Yıldan Kalan: ${fmtTL(oncekiKalan)} TL`)

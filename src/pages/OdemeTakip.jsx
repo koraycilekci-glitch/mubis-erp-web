@@ -8,10 +8,11 @@ import {
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { parseTurkishNumber, formatTurkishInput, hamTutarGirdisi } from '../utils/numberFormat'
+import { parseTurkishNumber, parseMoneyInput, formatTurkishInput, hamTutarGirdisi } from '../utils/numberFormat'
 import { sendEmail, sendShareDocumentsViaWhatsApp, logWhatsAppWebSend, getWhatsAppChannel, openWhatsAppWeb } from '../services/whatsappService'
 import { getSettings } from '../services/settingsService'
 import { sendBulkDebtNotifications, buildDebtPayload } from '../services/debtNotificationService'
+import { aylikDonem, aylikUcretGetir, defterTasdikUcretiGetir, odemeDonemi, tahsilEdildi, tasdikDonemi } from '../utils/muhasebeUcretleri'
 import { kapanisSonrasiAy, acilisOncesiAy } from '../utils/beyanKapanis'
 
 const AYLER = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
@@ -134,31 +135,31 @@ export default function OdemeTakip() {
     onceki_donem_borc: { etiket: 'Önceki Dönem Borcu', alan: 'onceki_donem_borc' }
   }
 
+  const feeDonemiSec = (fee, alan, secilenYil, secilenAy) => {
+    const bedel = alan === 'aylik_ucret' ? aylikUcretGetir(fee, secilenYil, secilenAy)
+      : alan === 'defter_tasdik_ucreti' ? defterTasdikUcretiGetir(fee, secilenYil) : Number(fee?.onceki_donem_borc) || 0
+    setFeeYil(secilenYil)
+    setFeeAy(secilenAy)
+    setFeeTutar(bedel ? formatTurkishInput(bedel) : '')
+  }
+
   const openFeeModal = (row, alan) => {
-    const fee = fees.find(f => f.client_id === row.id) || null
-    const deger = Number(fee?.[alan]) || 0
-    setFeeTutar(deger ? formatTurkishInput(String(deger)) : '')
-    setFeeAy(Number(fee?.baslangic_ay) || new Date().getMonth() + 1)
-    setFeeYil(Number(fee?.baslangic_yil) || new Date().getFullYear())
+    feeDonemiSec(row.fee, alan, yil, yil === nowY ? nowM : 1)
     setFeeError('')
-    setFeeModal({ clientId: row.id, name: row.name || row.company || 'Müşteri', alan, etiket: FEE_ALANLARI[alan]?.etiket || alan })
+    setFeeModal({ clientId: row.id, name: row.name || row.company || 'Müşteri', fee: row.fee, alan, etiket: FEE_ALANLARI[alan]?.etiket || alan })
   }
 
   const saveFee = async (e) => {
     e.preventDefault()
     if (!feeModal) return
-    const mevcut = fees.find(f => f.client_id === feeModal.clientId) || {}
-    const aylikDegisiyor = feeModal.alan === 'aylik_ucret'
     setFeeSaving(true)
     setFeeError('')
     try {
       await saveAccountingFee(feeModal.clientId, {
-        onceki_donem_borc: feeModal.alan === 'onceki_donem_borc' ? feeTutar : (mevcut.onceki_donem_borc ?? 0),
-        defter_tasdik_ucreti: feeModal.alan === 'defter_tasdik_ucreti' ? feeTutar : (mevcut.defter_tasdik_ucreti ?? 0),
-        aylik_ucret: feeModal.alan === 'aylik_ucret' ? feeTutar : (mevcut.aylik_ucret ?? 0),
-        baslangic_ay: aylikDegisiyor ? (Number(feeAy) || mevcut.baslangic_ay || 1) : (mevcut.baslangic_ay || 1),
-        baslangic_yil: aylikDegisiyor ? (Number(feeYil) || mevcut.baslangic_yil || new Date().getFullYear()) : (mevcut.baslangic_yil || new Date().getFullYear()),
-        notlar: mevcut.notlar || ''
+        [feeModal.alan]: feeTutar,
+        baslangic_ay: feeAy,
+        baslangic_yil: feeYil,
+        tasdik_yili: feeYil
       })
       setFeeModal(null)
       await loadData()
@@ -228,72 +229,10 @@ export default function OdemeTakip() {
     const fee = fees.find(f => f.client_id === c.id) || null
     if (fee && fee.muhasebe_ucreti_var === false) return null
     const clientPayments = payments.filter(p => p.client_id === c.id)
-    const aylikUcret = Number(fee?.aylik_ucret) || 0
-    const defterTasdik = Number(fee?.defter_tasdik_ucreti) || 0
+    const ozet = hesaplaBorcOzeti(fee, clientPayments, simdi, c, yil)
+    const defterTasdik = defterTasdikUcretiGetir(fee, yil)
     const oncekiDonem = Number(fee?.onceki_donem_borc) || 0
-
-    // Tahsil edilen: her borc kalemi kendi tutariyla sinirli (cift/eski kayitlar fazla sayilmaz)
-    const tahsilEden = (d) => clientPayments
-      .filter(p => p.donem === d && p.durum !== 'reddedildi' &&
-        (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel'))
-      .reduce((s, p) => s + (Number(p.tutar) || 0), 0)
-
-    // Faturalanan ay sayisi: baslangictan (veya ilk odemenin yapildigi aydan) bugune
-    const odenenAyListesi = Array.from({ length: 12 }, (_, i) => i + 1)
-      .filter(m => !acilisOncesiAy(c, yil, m) && !kapanisSonrasiAy(c, yil, m) && tahsilEden(`${yil}-${String(m).padStart(2, '0')}`) > 0)
-    const faturalananAy = (() => {
-      if (yil > nowY) return 0
-      const sonAy = yil === nowY ? nowM : 12
-      let basA = 1
-      if (fee) {
-        const basY = Number(fee.baslangic_yil)
-        if (basY && yil < basY) return 0
-        if (basY === yil) basA = Number(fee.baslangic_ay) || 1
-      }
-      if (odenenAyListesi.length > 0) basA = Math.min(basA, Math.min(...odenenAyListesi))
-      return Array.from({ length: Math.max(0, sonAy - basA + 1) }, (_, i) => basA + i)
-        .filter(m => !acilisOncesiAy(c, yil, m) && !kapanisSonrasiAy(c, yil, m)).length
-    })()
-
-    // Onceki yillarin odenmemis aylik ucretleri: secili yildan onceki her yil icin
-    // faturalanan ay borcu - o yila ait tahsilatlar. Yil degisince (orn. 2027'ye girince)
-    // gecen yilin kalan borcu "Önceki Dönem"e otomatik eklenir.
-    const gecmisKalan = (() => {
-      if (aylikUcret <= 0) return 0
-      // Baslangic yili: fee kaydindan; yoksa ilk ödemenin yilindan; o da yoksa önceki yıl yok
-      const odemeYillari = clientPayments
-        .filter(p => /^\d{4}-/.test(p.donem || ''))
-        .map(p => Number(p.donem.slice(0, 4)))
-      const basY = Number(fee?.baslangic_yil) || (odemeYillari.length ? Math.min(...odemeYillari) : yil)
-      if (yil <= basY) return 0
-      let toplam = 0
-      for (let Y = basY; Y <= yil - 1; Y++) {
-        if (Y > nowY) break
-        const sonAy = Y === nowY ? nowM : 12
-        let odendiTutar = 0
-        let acikAySayisi = 0
-        for (let m = Y === basY ? (Number(fee?.baslangic_ay) || 1) : 1; m <= sonAy; m++) {
-          if (acilisOncesiAy(c, Y, m) || kapanisSonrasiAy(c, Y, m)) continue
-          acikAySayisi++
-          odendiTutar += Math.min(tahsilEden(`${Y}-${String(m).padStart(2, '0')}`), aylikUcret)
-        }
-        toplam += Math.max(0, aylikUcret * acikAySayisi - odendiTutar)
-      }
-      return toplam
-    })()
-
-    // Gostermekte oldugumuz önceki dönem: kayitli borç + önceki yillarin kalanı
-    const oncekiDonemToplam = oncekiDonem + gecmisKalan
-
-    const toplamBorc = aylikUcret * faturalananAy + defterTasdik + oncekiDonemToplam
-
-    const odenen =
-      Math.min(tahsilEden('Onceki Donem'), oncekiDonemToplam) +
-      Math.min(tahsilEden('Defter Tasdik'), defterTasdik) +
-      odenenAyListesi
-        .reduce((s, m) => s + Math.min(tahsilEden(`${yil}-${String(m).padStart(2, '0')}`), aylikUcret), 0)
-
-    return { ...c, fee, clientPayments, aylikUcret, defterTasdik, oncekiDonem, oncekiDonemToplam, faturalananAy, toplamBorc, odenen, kalan: toplamBorc - odenen }
+    return { ...c, ...ozet, fee, clientPayments, defterTasdik, oncekiDonem, odenen: ozet.toplamOdeme, kalan: ozet.kalanBorc }
   }).filter(Boolean)
 
   const rows = tumSatirlar
@@ -315,44 +254,31 @@ export default function OdemeTakip() {
     })
     .sort((a, b) => (a.name || a.company || '').localeCompare(b.name || b.company || '', 'tr'))
 
-  // Ayin odeme durumu (manuel kayitlar ve alinan online odemeler = tahsil edildi)
-  const monthStatus = (row, m) => {
-    if (acilisOncesiAy(row, yil, m)) return 'acilmadi'
-    if (kapanisSonrasiAy(row, yil, m)) return 'kapali'
-    const key = `${yil}-${String(m).padStart(2, '0')}`
-    const odedi = row.clientPayments.some(p => p.donem === key &&
-      (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel'))
-    if (odedi) return 'odendi'
-    const bekliyor = row.clientPayments.some(p => p.donem === key && p.durum === 'bekliyor')
-    if (bekliyor) return 'bekliyor'
-    if (yil > nowY) return 'yok'
-    if (row.aylikUcret > 0) {
-      if (yil === nowY && m === nowM) return 'bekliyor'
-      if (yil < nowY || m < nowM) return 'geciken'
-    }
-    return 'yok'
+  const donemAnahtari = (kalem) => typeof kalem === 'number' ? aylikDonem(yil, kalem)
+    : kalem === 'Defter Tasdik' ? tasdikDonemi(yil) : kalem
+  const donemOdemeleri = (liste, donem) => liste.filter(p => odemeDonemi(p) === donem && p.durum !== 'reddedildi')
+  const monthStatus = (row, ay) => {
+    if (acilisOncesiAy(row, yil, ay)) return 'acilmadi'
+    if (kapanisSonrasiAy(row, yil, ay)) return 'kapali'
+    const kalem = row.ayKalemleri.find(kayit => kayit.ay === ay)
+    if (kalem && kalem.kalan === 0) return 'odendi'
+    if (donemOdemeleri(row.clientPayments, aylikDonem(yil, ay)).some(p => p.durum === 'bekliyor')) return 'bekliyor'
+    if (!kalem) return 'yok'
+    return yil === nowY && ay === nowM ? 'bekliyor' : 'geciken'
   }
 
-  // Defter Tasdik / Onceki Donem odeme durumu
-  const kalemDurum = (row, kalemAd) => {
-    const kayit = row.clientPayments.filter(p => p.donem === kalemAd && p.durum !== 'reddedildi')
-    if (kayit.some(p => p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel')) return 'odendi'
-    if (kayit.length > 0) return 'bekliyor'
-    return 'yok'
+  const kalemDurum = (row, kalem) => {
+    const bedel = kalem === 'Defter Tasdik' ? row.defterTasdik : row.oncekiDonemToplam
+    const kayitlar = donemOdemeleri(row.clientPayments, donemAnahtari(kalem))
+    const tahsilat = kayitlar.filter(tahsilEdildi).reduce((toplam, p) => toplam + Math.round(Number(p.tutar) * 100), 0)
+    if (bedel > 0 && tahsilat >= Math.round(bedel * 100)) return 'odendi'
+    return kayitlar.length ? 'bekliyor' : 'yok'
   }
 
-  // Ozet kartlari (yillik)
   const yillikTahsilat = tumSatirlar.reduce((s, r) => s + r.toplamBorc, 0)
   const odenenToplam = tumSatirlar.reduce((s, r) => s + r.odenen, 0)
-  const gecikenToplam = tumSatirlar.reduce((s, r) => {
-    if (r.aylikUcret <= 0 || yil > nowY) return s
-    const sonAy = yil < nowY ? 12 : nowM - 1
-    let odenmemisAy = 0
-    for (let m = 1; m <= sonAy; m++) {
-      if (monthStatus(r, m) === 'geciken') odenmemisAy++
-    }
-    return s + odenmemisAy * r.aylikUcret
-  }, 0)
+  const gecikenToplam = tumSatirlar.reduce((s, r) => s + r.ayKalemleri
+    .filter(kalem => yil < nowY || kalem.ay < nowM).reduce((toplam, kalem) => toplam + kalem.kalan, 0), 0)
   const bekleyenToplam = Math.max(0, yillikTahsilat - odenenToplam - gecikenToplam)
   const yuzde = (bolen) => yillikTahsilat > 0 ? `${((bolen / yillikTahsilat) * 100).toFixed(1).replace('.', ',')}` : '0,0'
 
@@ -362,7 +288,7 @@ export default function OdemeTakip() {
   const aylikTahsilatlar = AYLER.map((_, mi) => {
     const key = `${yil}-${String(mi + 1).padStart(2, '0')}`
     return payments
-      .filter(p => !kapananMusteriIds.has(p.client_id) && !acilisOncesiAy(musteriById.get(String(p.client_id)), yil, mi + 1) && p.donem === key && (p.durum === 'onaylandi' || p.durum === 'uygulandi' || p.durum === 'alindi' || !p.durum || p.odeme_kanali === 'manuel'))
+      .filter(p => !kapananMusteriIds.has(p.client_id) && !acilisOncesiAy(musteriById.get(String(p.client_id)), yil, mi + 1) && !kapanisSonrasiAy(musteriById.get(String(p.client_id)), yil, mi + 1) && odemeDonemi(p) === key && tahsilEdildi(p))
       .reduce((s, p) => s + (Number(p.tutar) || 0), 0)
   })
   const aylikTahsilatToplam = aylikTahsilatlar.reduce((s, n) => s + n, 0)
@@ -380,18 +306,20 @@ export default function OdemeTakip() {
   // ============ ODEME KAYDI MODAL ============
   // kalem: 1-12 (ay) veya 'Onceki Donem' / 'Defter Tasdik'
   const openOdemeModal = (row, kalem) => {
-    const varsayilanTutar = kalem === 'Onceki Donem' ? row.oncekiDonemToplam
+    const donemKey = donemAnahtari(kalem)
+    const mevcut = donemOdemeleri(row.clientPayments, donemKey)
+    const bedel = kalem === 'Onceki Donem' ? row.oncekiDonemToplam
       : kalem === 'Defter Tasdik' ? row.defterTasdik
-      : row.aylikUcret
+      : row.aylikTutarlar[kalem] || 0
+    const tahsilat = mevcut.filter(tahsilEdildi).reduce((toplam, p) => toplam + Math.round(Number(p.tutar) * 100), 0)
+    const varsayilanTutar = Math.max(0, Math.round(bedel * 100) - tahsilat) / 100
     setOdemeForm({
       tutar: varsayilanTutar > 0 ? formatTurkishInput(varsayilanTutar.toFixed(2)) : '',
       odeme_tipi: 'nakit',
       odeme_tarihi: new Date().toISOString().split('T')[0],
       aciklama: ''
     })
-    const donemKey = typeof kalem === 'number' ? `${yil}-${String(kalem).padStart(2, '0')}` : kalem
-    const mevcut = row.clientPayments.filter(p => p.donem === donemKey && p.durum !== 'reddedildi')
-    setOdemeModal({ clientId: row.id, name: row.name || row.company || 'Musteri', kalem, varsayilanTutar, mevcut })
+    setOdemeModal({ clientId: row.id, name: row.name || row.company || 'Musteri', kalem, varsayilanTutar, mevcut, donemKey })
     setFormError('')
   }
 
@@ -404,15 +332,14 @@ export default function OdemeTakip() {
       setPayments(p)
       setOdemeModal(m => {
         if (!m) return m
-        const donemKey = typeof m.kalem === 'number' ? `${yil}-${String(m.kalem).padStart(2, '0')}` : m.kalem
-        return { ...m, mevcut: p.filter(x => x.client_id === m.clientId && x.donem === donemKey && x.durum !== 'reddedildi') }
+        return { ...m, mevcut: donemOdemeleri(p.filter(x => x.client_id === m.clientId), m.donemKey) }
       })
     } catch (err) {
       alert('Ödeme silinemedi: ' + (err.message || 'Bilinmeyen hata'))
     }
   }
 
-  const kalemBaslik = (kalem) => typeof kalem === 'number' ? `${AYLER[kalem - 1]} ${yil}` : kalem
+  const kalemBaslik = (kalem) => typeof kalem === 'number' ? `${AYLER[kalem - 1]} ${yil}` : kalem === 'Defter Tasdik' ? tasdikDonemi(yil) : kalem
   const kalemEtiket = (kalem) => kalem === 'Onceki Donem' ? 'Önceki Dönem Borcu' : kalem === 'Defter Tasdik' ? 'Defter Tasdik' : 'Aylık Ücret'
 
   const saveOdeme = async (event) => {
@@ -427,7 +354,7 @@ export default function OdemeTakip() {
     setFormError('')
     try {
       const kalem = odemeModal.kalem
-      const donem = typeof kalem === 'number' ? `${yil}-${String(kalem).padStart(2, '0')}` : kalem
+      const donem = odemeModal.donemKey
       const aciklamaDefault = typeof kalem === 'number' ? `${AYLER[kalem - 1]} ${yil} Muhasebe Ucreti` : `${kalem} Odemesi`
       await addPayment({
         client_id: odemeModal.clientId,
@@ -1008,6 +935,7 @@ export default function OdemeTakip() {
                           >
                             <HucreIkon durum={durum} />
                           </button>}
+                          {r.aylikTutarlar[m] > 0 && <div className="mt-0.5 whitespace-nowrap text-[10px] text-gray-400">{fmt(r.aylikTutarlar[m])}</div>}
                         </td>
                       )
                     })}
@@ -1108,6 +1036,34 @@ export default function OdemeTakip() {
                 <p className="text-xs text-gray-400">Müşteri</p>
                 <p className="text-white font-medium">{kisaAd(feeModal.name)}</p>
               </div>
+              {feeModal.alan !== 'onceki_donem_borc' && (
+                <div className="grid grid-cols-2 gap-2">
+                  {feeModal.alan === 'aylik_ucret' && <label className="block space-y-1">
+                    <span className="text-xs text-gray-400">Başlangıç Ayı</span>
+                    <select
+                      value={feeAy}
+                      onChange={(e) => feeDonemiSec(feeModal.fee, feeModal.alan, feeYil, Number(e.target.value))}
+                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
+                    >
+                      {['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'].map((ad, i) => (
+                        <option key={i + 1} value={i + 1}>{i + 1} - {ad}</option>
+                      ))}
+                    </select>
+                  </label>}
+                  <label className="block space-y-1">
+                    <span className="text-xs text-gray-400">{feeModal.alan === 'aylik_ucret' ? 'Başlangıç Yılı' : 'Tasdik Yılı'}</span>
+                    <input
+                      type="number"
+                      min={2020}
+                      max={2035}
+                      required
+                      value={feeYil}
+                      onChange={(e) => feeDonemiSec(feeModal.fee, feeModal.alan, e.target.value ? Number(e.target.value) : '', feeAy)}
+                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
+                    />
+                  </label>
+                </div>
+              )}
               <label className="block space-y-1">
                 <span className="text-xs text-gray-400">{feeModal.etiket} (TL)</span>
                 <input
@@ -1115,43 +1071,16 @@ export default function OdemeTakip() {
                   inputMode="decimal"
                   value={feeTutar}
                   onChange={(e) => setFeeTutar(hamTutarGirdisi(e.target.value))}
-                  onBlur={(e) => { const h = hamTutarGirdisi(e.target.value); if (h && h !== ',') setFeeTutar(formatTurkishInput(h)) }}
+                  onBlur={(e) => { const h = hamTutarGirdisi(e.target.value); const sayi = parseMoneyInput(h); if (sayi !== null) setFeeTutar(formatTurkishInput(sayi)) }}
                   placeholder="0,00"
                   required
                   className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
                 />
               </label>
-              {feeModal.alan === 'aylik_ucret' && (
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="block space-y-1">
-                    <span className="text-xs text-gray-400">Başlangıç Ayı</span>
-                    <select
-                      value={feeAy}
-                      onChange={(e) => setFeeAy(Number(e.target.value))}
-                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
-                    >
-                      {['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'].map((ad, i) => (
-                        <option key={i + 1} value={i + 1}>{i + 1} - {ad}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="block space-y-1">
-                    <span className="text-xs text-gray-400">Başlangıç Yılı</span>
-                    <input
-                      type="number"
-                      min={2020}
-                      max={2035}
-                      value={feeYil}
-                      onChange={(e) => setFeeYil(Number(e.target.value) || new Date().getFullYear())}
-                      className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-400"
-                    />
-                  </label>
-                </div>
-              )}
               <p className="text-[11px] text-gray-500">
                 {feeModal.alan === 'aylik_ucret'
-                  ? 'Aylık ücret bu ay/yıldan itibaren faturalanır; borç/ödeme takibi buna göre hesaplanır.'
-                  : 'Tutar kaydedilir; ödeme takibi güncellenir.'}
+                  ? 'Bu ücret seçilen aydan itibaren geçerlidir. Önceki aylar değişmez.'
+                  : feeModal.alan === 'defter_tasdik_ucreti' ? 'Bu ücret yalnızca seçilen yıla bir kez eklenir.' : 'Tutar kaydedilir; ödeme takibi güncellenir.'}
               </p>
               {feeError && <p className="text-red-400 text-xs">{feeError}</p>}
               <div className="flex justify-end gap-2 pt-2">

@@ -17957,28 +17957,47 @@ const ISLER = {
       if (!giris.ok) throw new Error(giris.hata || "Dijital Vergi Dairesi girisi tamamlanamadi.");
       log("DVS girisi tamam");
 
-      const tikla = async (metinler, sure = 5000, kare = null) => {
+      const tikla = async (metinler, sure = 5000, kare = null, genislet = false) => {
         const son = Date.now() + sure;
         do {
           for (const frame of kare ? [kare] : page.frames()) {
-            const secildi = await frame.evaluate((etiketler) => {
+            const handle = await frame.evaluateHandle(({ etiketler, genislet }) => {
               const norm = (metin) => String(metin || '').toLocaleLowerCase('tr').normalize('NFD').replace(/\p{M}/gu, '').replace(/ı/g, 'i').replace(/\s+/g, ' ').trim();
               const hedefler = etiketler.map(norm);
+              const gorunur = (el) => !el.disabled && el.getAttribute('aria-disabled') !== 'true' && !el.closest('[aria-hidden="true"], [inert]') && el.getClientRects().length && getComputedStyle(el).visibility === 'visible';
+              const metinOku = (el) => norm(el.value || el.innerText || el.textContent).replace(/\s*arrow_(?:forward|back|drop)_(?:ios|down|up)\b/g, '').trim();
+              if (genislet) {
+                const acicilar = Array.from(document.querySelectorAll('.accordion-expand, .panel-tool-expand, [aria-expanded="false"]')).filter((el) => {
+                  if (!gorunur(el)) return false;
+                  const baslik = el.closest('.accordion-header, .panel-header') || el;
+                  const etiket = baslik.querySelector('.panel-title, .accordion-title') || baslik;
+                  return hedefler.includes(metinOku(etiket)) || hedefler.includes(norm(baslik.getAttribute('aria-label')));
+                });
+                return acicilar.find((el) => !acicilar.some((diger) => diger !== el && el.contains(diger))) || null;
+              }
               const secici = 'a, button, [role="button"], [role="menuitem"], [onclick], input[type="button"], input[type="submit"], span, label, li, td, div';
               const adaylar = Array.from(document.querySelectorAll(secici)).flatMap((el) => {
-                if (el.disabled || el.getAttribute('aria-disabled') === 'true' || !el.getClientRects().length || getComputedStyle(el).visibility !== 'visible') return [];
-                const metin = norm(el.value || el.innerText || el.textContent).replace(/\s*arrow_(?:forward|back|drop)_(?:ios|down|up)\b/g, '').trim();
+                if (!gorunur(el)) return [];
+                const metin = metinOku(el);
                 const tam = hedefler.includes(metin);
                 if (!tam && !hedefler.some((hedef) => metin.startsWith(hedef + ' ') && metin.length <= hedef.length + 22)) return [];
                 const kontrol = el.closest('a, button, [role="button"], [role="menuitem"], [onclick], input');
                 return [{ el, kontrol, puan: (tam ? 4 : 0) + (kontrol ? 2 : 0), uzunluk: metin.length }];
               }).sort((ilk, ikinci) => ikinci.puan - ilk.puan || ilk.uzunluk - ikinci.uzunluk);
               const hedef = adaylar[0];
-              if (!hedef) return false;
-              (hedef.kontrol || hedef.el).click();
+              return hedef ? hedef.kontrol || hedef.el : null;
+            }, { etiketler: metinler, genislet }).catch(() => null);
+            if (!handle) continue;
+            try {
+              const hedef = handle.asElement();
+              if (!hedef) continue;
+              await hedef.click();
               return true;
-            }, metinler).catch(() => false);
-            if (secildi) return true;
+            } catch {
+              continue;
+            } finally {
+              await handle.dispose().catch(() => {});
+            }
           }
           await bekle(300);
         } while (Date.now() < son);
@@ -18079,7 +18098,11 @@ const ISLER = {
         await tikla(['ÖKC İşlemleri'], 2500);
         if (!await tikla(raporMenusu, 6000)) throw new Error('Yeni Nesil ÖKC Aylık Satış Rapor Bildirimleri menüsü bulunamadı.');
       }
-      if (!await tikla(['ÖKC Bildirim Görüntüleme'], 8000)) throw new Error('ÖKC Bildirim Görüntüleme menüsü bulunamadı.');
+      const bildirimMenusu = ['ÖKC Bildirim Görüntüleme', 'ÖKC Bildirimi Görüntüleme'];
+      if (!await tikla(bildirimMenusu, 3500)) {
+        if (await tikla(raporMenusu, 3500, null, true)) log('ÖKC rapor alt menüsü genişletildi');
+        if (!await tikla(bildirimMenusu, 10000)) throw new Error('ÖKC rapor bölümü açıldı ancak Bildirim Görüntüleme alt menüsü bulunamadı.');
+      }
       await tikla(['Dönem Sorgulama'], 2000);
       log('ÖKC bildirim ekranına ulaşıldı');
 
@@ -18132,12 +18155,13 @@ const ISLER = {
               const basliklar = Array.from(satirlar[baslikSirasi].cells, (hucre) => temizle(hucre.textContent));
               const govde = satirlar.slice(baslikSirasi + 1);
               const gosterIndex = basliklar.findIndex((baslik) => /^goster(?:\b|$)/.test(norm(baslik)));
+              const gosterAlan = gosterIndex < 0 ? null : satirlar[baslikSirasi].cells[gosterIndex].getAttribute('field');
               const kayitlar = govde.flatMap((satir, sira) => {
                 if (satir.cells.length !== basliklar.length || !satir.getClientRects().length || Array.from(satir.cells).some((hucre) => hucre.colSpan !== 1 || hucre.tagName !== 'TD')) return [];
                 const hucreler = Array.from(satir.cells, (hucre) => temizle(hucre.textContent));
                 if (!hucreler.some(Boolean)) return [];
                 satir.setAttribute('data-mubis-okc-satir', String(sira));
-                return [{ hucreler, basliklar, gosterIndex: gosterIndex < 0 ? null : gosterIndex, sira }];
+                return [{ hucreler, basliklar, gosterIndex: gosterIndex < 0 ? null : gosterIndex, gosterAlan, sira }];
               });
               if (kayitlar.length) return { satirlar: kayitlar, bos: false };
               if (govde.some((satir) => bosMesaj.test(norm(satir.textContent)))) return { satirlar: [], bos: true };
@@ -18200,43 +18224,64 @@ const ISLER = {
           const temizle = (metin) => String(metin ?? '').replace(/\s+/g, ' ').trim();
           const norm = (metin) => temizle(metin).toLocaleLowerCase('tr').normalize('NFD').replace(/\p{M}/gu, '').replace(/ı/g, 'i');
           const gorunur = (el) => el.getClientRects().length && getComputedStyle(el).visibility === 'visible';
-          const baslikMi = (el) => gorunur(el) && norm(el.textContent).startsWith(baslik);
-          const modal = Array.from(document.querySelectorAll(secici)).find((el) => gorunur(el) && (baslikMi(el) || Array.from(el.querySelectorAll('.x-window-header, .x-title, .ui-dialog-title, .modal-title, .panel-title, [role="heading"]')).some(baslikMi)));
-          const tabloBasligi = Array.from(document.querySelectorAll('td, th')).find((el) => !el.querySelector('table') && baslikMi(el));
-          if (!modal && !tabloBasligi) return null;
+          const baslikMi = (el) => gorunur(el) && (norm(el.innerText || el.textContent).includes(baslik) || /okc aylik satis raporu? bildirim (?:girisi|detayi|goruntuleme)/.test(norm(el.innerText || el.textContent)));
+          const baslikSecici = 'td, th, legend, h1, h2, h3, h4, .panel-title, [role="heading"], [class*="dialog-title"], [class*="window-title"], [class*="modal-title"]';
+          const tabloBasligi = Array.from(document.querySelectorAll(baslikSecici)).find((el) => !el.querySelector('table') && baslikMi(el));
+          const modal = tabloBasligi?.closest(secici) || Array.from(document.querySelectorAll(secici)).find((el) => gorunur(el) && baslikMi(el));
+          const govdeMetni = norm(document.body?.innerText);
+          const formImzasi = /aylik satis raporu[^\n]{0,28}no/.test(govdeMetni) && govdeMetni.includes('toplam satis tutari') && govdeMetni.includes('toplam kdv tutari');
+          if (!modal && !tabloBasligi && !formImzasi) return null;
           if (kapat === 'açık') return true;
           if (kapat) {
             const kontrol = modal?.querySelector('.x-tool-close, .ui-dialog-titlebar-close, .panel-tool-close, .btn-close, [data-dismiss="modal"], [data-bs-dismiss="modal"], [aria-label="Kapat"], [aria-label="Close"], [title="Kapat"]');
             if (kontrol && gorunur(kontrol)) kontrol.click();
             return true;
           }
-          const kapsam = modal || tabloBasligi.closest('table');
-          const detay = {};
-          let raporNo = '';
-          const degerOku = (hucre) => {
-            const alan = hucre.querySelector('input:not([type="hidden"]):not([type="button"]):not([type="submit"]), textarea, select');
-            return temizle(alan ? alan.value : hucre.innerText || hucre.textContent);
-          };
-          for (const satir of kapsam.querySelectorAll('tr')) {
-            if (!gorunur(satir)) continue;
-            const hucreler = Array.from(satir.cells).filter((hucre) => gorunur(hucre) && !hucre.querySelector('table'));
-            const degerler = hucreler.map(degerOku).filter(Boolean);
-            for (const deger of degerler) {
-              const cihaz = deger.match(/^((?:Cihazın Firma Kodu|Cihazın Sicil No[^:]*)):\s*(.+)$/i);
-              if (cihaz) detay[cihaz[1]] = cihaz[2];
-            }
-            if (degerler.length < 2 || degerler.length > 4) continue;
-            const [alan, ...deger] = degerler;
-            const anahtar = norm(alan);
-            if (!/(?:aylik satis raporu.*no|^%\s*\d+.*kdv|toplam|tutar[ıi]?|\badedi?\b)/.test(anahtar) || !/[\d]/.test(deger[0])) continue;
-            detay[alan] = deger.join(' / ');
-            if (/aylik satis raporu.*no/.test(anahtar)) raporNo = deger[0];
+          const kapsamlari = modal ? [modal] : [];
+          if (!modal && tabloBasligi) {
+            for (let kapsam = tabloBasligi.parentElement; kapsam && kapsam !== document.body; kapsam = kapsam.parentElement) kapsamlari.push(kapsam);
           }
-          const alanlar = Object.keys(detay).map(norm);
-          return raporNo && alanlar.some((alan) => /^toplam satis tutari\b/.test(alan)) && alanlar.some((alan) => /^toplam kdv tutari\b/.test(alan)) ? { raporNo, detay } : null;
+          if (formImzasi) kapsamlari.push(document.body);
+          const degerOku = (hucre) => {
+            const alan = Array.from(hucre.querySelectorAll('input:not([type="hidden"]):not([type="button"]):not([type="submit"]), textarea, select')).find(gorunur);
+            return temizle((alan?.value || hucre.innerText) ?? hucre.textContent);
+          };
+          const sayisal = /^-?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d+)?(?:\s*(?:TL|₺))?$/i;
+          for (const kapsam of kapsamlari) {
+            const detay = {};
+            let raporNo = '';
+            const bulunanToplamlar = new Set();
+            for (const satir of kapsam.querySelectorAll('tr')) {
+              if (!gorunur(satir)) continue;
+              const hucreler = Array.from(satir.cells).filter((hucre) => gorunur(hucre) && !hucre.querySelector('table'));
+              const degerler = hucreler.map(degerOku).filter(Boolean);
+              for (const [sira, metin] of degerler.entries()) {
+                const [alan, satirIci] = metin.split(/:\s*(?=\S)/, 2);
+                const anahtar = norm(alan).replace(/[:*\s]+$/, '');
+                const deger = satirIci || degerler.slice(sira + 1).find((aday) => !/^[:*]+$/.test(aday));
+                if (!deger) continue;
+                if (/^cihazin (?:firma kodu|sicil no)/.test(anahtar)) {
+                  if (!/^[-\s]+$/.test(deger)) detay[alan] = deger;
+                } else if (/aylik satis raporu.*no/.test(anahtar)) {
+                  if (/^[\p{L}\d][\p{L}\d._/ -]*$/u.test(deger) && /\d/.test(deger)) {
+                    raporNo = deger;
+                    detay[alan] = deger;
+                  }
+                } else if (sayisal.test(deger) && /(?:^%\s*\d+.*kdv|toplam|tutar[ıi]?|\badedi?\b)/.test(anahtar)) {
+                  detay[alan.replace(/[:*\s]+$/, '')] = deger;
+                  if (/^toplam (?:satis|kdv) tutari$/.test(anahtar)) bulunanToplamlar.add(anahtar);
+                }
+              }
+            }
+            if (raporNo && bulunanToplamlar.size === 2) return { raporNo, detay };
+          }
+          return null;
         };
+        const detaySekmeleri = new Set();
+        const popupEkle = (sekme) => detaySekmeleri.add(sekme);
+        const detayKareleri = () => [...page.frames(), ...Array.from(detaySekmeleri).filter(sekme => intvrg(sekme) && !sekme.isClosed()).flatMap(sekme => sekme.frames())];
         const modalAcik = async () => {
-          for (const frame of page.frames()) {
+          for (const frame of detayKareleri()) {
             if (await frame.evaluate(modalOku, modalSecici, modalBasligi, 'açık').catch(() => false)) return true;
           }
           return false;
@@ -18249,34 +18294,50 @@ const ISLER = {
           while (Date.now() < son && await modalAcik()) await bekle(150);
         };
         for (const [i, kayit] of kayitlar.entries()) {
+          page.on('popup', popupEkle);
           try {
             if (await modalAcik()) throw new Error('Önceki ÖKC ayrıntı penceresi kapanmadı.');
             if (kayit.gosterIndex == null) throw new Error('Göster sütunu bulunamadı.');
-            const tiklandi = await sonuc.frame.evaluate(({ sira, kolon }) => {
+            const gosterHandle = await sonuc.frame.evaluateHandle(({ sira, kolon, alan }) => {
               const satir = document.querySelector('[data-mubis-okc-satir="' + sira + '"]');
-              const hucre = satir?.cells[kolon];
-              const hedef = hucre?.querySelector('button, a, input[type="button"], input[type="image"], [role="button"], [onclick], img, svg') || hucre;
-              if (!hedef?.getClientRects().length) return false;
-              hedef.click ? hedef.click() : hedef.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-              return true;
-            }, { sira: satirlar[i].sira, kolon: kayit.gosterIndex });
-            if (!tiklandi) throw new Error('Göster düğmesi açılamadı.');
-            const detaySonu = Date.now() + 9000;
+              const hucre = alan ? Array.from(satir?.cells || []).find(el => el.getAttribute('field') === alan) : satir?.cells[kolon];
+              const gorunur = (el) => el?.getClientRects().length && getComputedStyle(el).visibility === 'visible';
+              if (!gorunur(hucre)) return null;
+              const sec = (secici) => Array.from(hucre.querySelectorAll(secici)).find(gorunur);
+              return sec('[onclick], button, a, input[type="button"], input[type="image"], [role="button"]') ||
+                Array.from(hucre.querySelectorAll('*')).find(el => gorunur(el) && getComputedStyle(el).cursor === 'pointer') ||
+                sec('img, svg, .icon, [class*="icon-"]') || hucre;
+            }, { sira: satirlar[i].sira, kolon: kayit.gosterIndex, alan: satirlar[i].gosterAlan });
+            try {
+              const hedef = gosterHandle.asElement();
+              if (!hedef) throw new Error('Göster düğmesi bulunamadı.');
+              await hedef.click();
+            } finally {
+              await gosterHandle.dispose().catch(() => {});
+            }
+            const detaySonu = Date.now() + 14000;
             let veri;
+            let pencereAcildi = false;
             do {
-              for (const frame of page.frames()) {
+              for (const frame of detayKareleri()) {
                 veri = await frame.evaluate(modalOku, modalSecici, modalBasligi, false).catch(() => null);
                 if (veri) break;
               }
-              if (!veri) await bekle(250);
+              if (!veri) {
+                pencereAcildi ||= await modalAcik();
+                await bekle(250);
+              }
             } while (!veri && Date.now() < detaySonu);
-            if (!veri) throw new Error('ÖKC rapor numarası ve satış/KDV toplamları doğrulanamadı.');
+            if (!veri) throw new Error(pencereAcildi ? 'ÖKC ayrıntısı açıldı ancak rapor numarası ve satış/KDV toplamları doğrulanamadı.' : 'Göster düğmesine basıldı ancak ÖKC ayrıntı penceresi bulunamadı.');
             Object.assign(kayit, veri);
             log(`detay ${i + 1}/${kayitlar.length}: ${Object.keys(kayit.detay).length} alan`);
           } catch (e) {
             kayit.detayHatasi = e?.message || 'Bildirim detayı okunamadı.';
-            log(`detay ${i + 1}/${kayitlar.length} okunamadı`);
+            log(`detay ${i + 1}/${kayitlar.length} okunamadı; pencere=${await modalAcik() ? 'var' : 'yok'}, ek sekme=${detaySekmeleri.size}`);
           } finally {
+            page.off('popup', popupEkle);
+            for (const sekme of detaySekmeleri) if (!sekme.isClosed()) await sekme.close().catch(() => {});
+            detaySekmeleri.clear();
             await modalKapat();
           }
         }

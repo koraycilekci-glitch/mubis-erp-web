@@ -1,0 +1,18 @@
+const fs = require('node:fs')
+const vm = require('node:vm')
+const assert = require('node:assert/strict')
+
+const service = fs.readFileSync('src/services/faturaAktarimService.js', 'utf8')
+const start = service.indexOf('const mesajAnahtari =')
+const end = service.indexOf('export function faturaAktarimAsamaMetni', start)
+assert.ok(start >= 0 && end > start)
+const classify = vm.runInNewContext(service.slice(start, end).replace('export function', 'function') + '\nlucaIslemiBelirsiz')
+assert.equal(classify('Luca GİB işlem takibi süresinde tamamlanmadı; sorgu devam ediyor olabilir. Durdur düğmesine basmadan yeniden sorgulamayın.'), true)
+assert.equal(classify('Luca islem takibi suresinde tamamlanmadi (akilli-entegrasyon-menusu).'), true)
+assert.equal(classify('Arşiv kopyası tamamlanamadı.'), false)
+
+const page = fs.readFileSync('src/pages/FaturaSorgulama.jsx', 'utf8')
+assert.match(page, /lucaIslemiBelirsiz\(topluMesaj\).*kayit\.durum\?\.sorun === 'bekliyor'/)
+assert.match(page, /tekSorguluyor \|\| topluSorguluyor \|\| bekleyenLucaIslemi/)
+assert.match(page, /!topluSorguluyor && !window\.confirm/)
+console.log('PASS: timed-out Luca jobs retain an accessible stop action with confirmation')

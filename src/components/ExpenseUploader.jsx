@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Camera, Upload, Trash2, Save, X, Eye, CheckCircle, AlertTriangle, FileText, Download, Receipt, FileSpreadsheet } from 'lucide-react'
+import BelgeSeriKamera from './BelgeSeriKamera'
+import { belgeExcelIndir, belgeSatirlari } from '../utils/belgeTarama'
 import { supabase } from '../lib/supabase'
 import { processExpenseImage, convertToAccountingEntry } from '../services/expenseOCRService'
 import { pdfIlkSayfaResmi } from '../services/zReportOCRService'
@@ -11,6 +13,10 @@ export default function ExpenseUploader({ clientId, clientName }) {
   const [uploading, setUploading] = useState(false)
   const [selectedFiles, setSelectedFiles] = useState([])
   const [previewUrls, setPreviewUrls] = useState([])
+  const [seriKamera, setSeriKamera] = useState(false)
+  const seriKamerayiKapat = useCallback(() => setSeriKamera(false), [])
+  const [okunanFisler, setOkunanFisler] = useState([])
+  const [fisInceleme, setFisInceleme] = useState(false)
   const [msg, setMsg] = useState('')
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth())
@@ -70,13 +76,18 @@ export default function ExpenseUploader({ clientId, clientName }) {
     }
   }
 
-  const handleFileSelect = async (e) => {
+  const handleFileSelect = (event) => {
+    const files = Array.from(event.currentTarget.files)
+    event.currentTarget.value = ''
+    return dosyalariEkle(files)
+  }
+
+  const dosyalariEkle = async (files) => {
     if (!clientId) {
       setMsg('Musteri ID bulunamadi. Lutfen tekrar giris yapin.')
       setTimeout(() => setMsg(''), 3000)
       return
     }
-    const files = Array.from(e.target.files)
     if (!files.length) return
 
     // Resim + PDF kabul edilir; PDF'ler OCR icin ilk sayfadan resme cevrilir
@@ -119,11 +130,11 @@ export default function ExpenseUploader({ clientId, clientName }) {
     }
 
     setSelectedFiles(allFiles)
+    setOkunanFisler([])
     setPreviewUrls(prev => [...prev, ...yeniUrler])
     setMsg('')
   }
 
-  const pdfMi = (f) => f && (/\.pdf$/i.test(f.name) || f.type === 'application/pdf')
 
   // Excel ile yukleme: her satir bir gider fisi
   const giderExcelYukle = async (e) => {
@@ -218,6 +229,7 @@ export default function ExpenseUploader({ clientId, clientName }) {
           .select()
           .single()
         if (expenseError) throw expenseError
+        kaydedilen++
         const entries = convertToAccountingEntry('individual', parsed)
         for (const entry of entries) {
           await supabase.from('expense_lines').insert({
@@ -242,6 +254,25 @@ export default function ExpenseUploader({ clientId, clientName }) {
     }
   }
 
+  const fisleriIncele = async () => {
+    setProcessingOCR(true)
+    setMsg('')
+    try {
+      const sonuclar = []
+      for (const [index, url] of previewUrls.entries()) {
+        setMsg((index + 1) + '/' + previewUrls.length + ' fiş okunuyor...')
+        sonuclar.push(await processExpenseImage(url))
+      }
+      setOkunanFisler(sonuclar)
+      setFisInceleme(true)
+      setMsg('')
+    } catch (error) {
+      setMsg(error.message || 'Fiş okunamadı. Görseli kontrol edin.')
+    } finally {
+      setProcessingOCR(false)
+    }
+  }
+
   const handleSave = async () => {
     if (!clientId) {
       setMsg('Musteri ID bulunamadi. Lutfen tekrar giris yapin.')
@@ -252,7 +283,9 @@ export default function ExpenseUploader({ clientId, clientName }) {
       return
     }
     
+    if (okunanFisler.length !== selectedFiles.length) return
     setUploading(true)
+    let kaydedilen = 0
     try {
       for (let i = 0; i < selectedFiles.length; i++) {
         const file = selectedFiles[i]
@@ -263,7 +296,6 @@ export default function ExpenseUploader({ clientId, clientName }) {
         //    OCR icin yerel blob/sayfa onizlemesi kullanilir (Drive dosyasi
         //    herkese acik olmadigi icin public URL gerekmez).
         let imageUrl = ''
-        let driveFileId = ''
         setMsg(`${i + 1}/${selectedFiles.length} Drive'a yukleniyor...`)
         try {
           const { uploadExpenseToDrive } = await import('../services/googleDriveService')
@@ -279,7 +311,6 @@ export default function ExpenseUploader({ clientId, clientName }) {
           }
           if (drive?.success) {
             imageUrl = drive.web_view_link || ''
-            driveFileId = drive.drive_file_id || ''
           }
         } catch (e) {
           if (e.driveUploaded) throw e
@@ -299,10 +330,7 @@ export default function ExpenseUploader({ clientId, clientName }) {
           imageUrl = urlData.publicUrl
         }
 
-        // OCR islemi — PDF'ler tesseract ile okunamaz, resme cevrilmis
-        // onizlemeyi (dataURL) kullan; resimlerde yuklenen dosya okunur.
-        setMsg(`${i + 1}/${selectedFiles.length} OCR isleniyor...`)
-        const ocrResult = await processExpenseImage(pdfMi(file) || driveFileId ? previewUrls[i] : imageUrl)
+        const ocrResult = okunanFisler[i]
 
         // Gider kaydi olustur
         const { data: expense, error: expenseError } = await supabase
@@ -315,7 +343,7 @@ export default function ExpenseUploader({ clientId, clientName }) {
             document_no: ocrResult.parsed.fisNo || '',
             image_url: imageUrl,
             file_name: file.name,
-            status: 'parsed',
+            status: belgeSatirlari({ ocr_data: ocrResult.parsed }).some(row => row[3] === 'Kontrol gerekli') ? 'pending' : 'parsed',
             total_amount: ocrResult.parsed.toplam || 0,
             kdv_amount: ocrResult.parsed.kdv || 0,
             kdv_rate: ocrResult.parsed.kdvOran || 0,
@@ -346,12 +374,18 @@ export default function ExpenseUploader({ clientId, clientName }) {
       }
       
       setMsg(`${selectedFiles.length} gider fisi basariyla yuklendi ve OCR ile okundu!`)
-      setSelectedFiles([])
-      setPreviewUrls([])
+      setFisInceleme(false)
       loadExpenses()
     } catch (e) {
-      setMsg('Kaydetme hatasi: ' + e.message)
+      setMsg('Kaydetme hatası: ' + e.message)
+      if (kaydedilen) loadExpenses()
     } finally {
+      if (kaydedilen) {
+        previewUrls.slice(0, kaydedilen).filter(url => url.startsWith('blob:')).forEach(url => URL.revokeObjectURL(url))
+        setSelectedFiles(prev => prev.slice(kaydedilen))
+        setPreviewUrls(prev => prev.slice(kaydedilen))
+        setOkunanFisler(prev => prev.slice(kaydedilen))
+      }
       setUploading(false)
       setTimeout(() => setMsg(''), 3000)
     }
@@ -443,8 +477,11 @@ export default function ExpenseUploader({ clientId, clientName }) {
                 <p className="text-sm text-gray-400">Kamera ile Cek</p>
                 <p className="text-xs text-gray-500">Telefon kamerasi acilir</p>
               </div>
-              <input type="file" className="hidden" accept="image/*" capture="environment" onChange={handleFileSelect} />
+              <input type="file" disabled={uploading || processingOCR} className="hidden" accept="image/*" capture="environment" onChange={handleFileSelect} />
             </label>
+            <button type="button" disabled={!clientId || uploading || processingOCR || selectedFiles.length >= 10} onClick={() => setSeriKamera(true)} className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-blue-500/60 bg-blue-800/40 px-3 py-2 text-sm text-white disabled:opacity-50">
+              <Camera className="h-4 w-4" /> Seri Çekim
+            </button>
             
             {/* Galeriden Sec (Resim / PDF) */}
             <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-blue-700/50 rounded-xl cursor-pointer hover:border-blue-500/50 hover:bg-blue-900/20 transition-colors">
@@ -453,7 +490,7 @@ export default function ExpenseUploader({ clientId, clientName }) {
                 <p className="text-sm text-gray-400">Resim / PDF Sec</p>
                 <p className="text-xs text-gray-500">JPG, PNG, PDF (En fazla 10 dosya)</p>
               </div>
-              <input type="file" className="hidden" accept="image/*,.pdf,application/pdf" multiple onChange={handleFileSelect} />
+              <input type="file" disabled={uploading || processingOCR} className="hidden" accept="image/*,.pdf,application/pdf" multiple onChange={handleFileSelect} />
             </label>
 
             {/* Excel ile Yukle */}
@@ -479,6 +516,8 @@ export default function ExpenseUploader({ clientId, clientName }) {
                       <button onClick={() => {
                         const newFiles = selectedFiles.filter((_, i) => i !== index)
                         const newUrls = previewUrls.filter((_, i) => i !== index)
+                        if (previewUrls[index].startsWith('blob:')) URL.revokeObjectURL(previewUrls[index])
+                        setOkunanFisler([])
                         setSelectedFiles(newFiles)
                         setPreviewUrls(newUrls)
                       }} className="absolute top-1 right-1 bg-red-500/80 text-white p-1 rounded">
@@ -494,24 +533,27 @@ export default function ExpenseUploader({ clientId, clientName }) {
           {/* Sag - Butonlar */}
           <div className="space-y-3 flex flex-col justify-center">
             <button
-              onClick={handleSave}
-              disabled={uploading || !selectedFiles.length}
+              onClick={okunanFisler.length ? () => setFisInceleme(true) : fisleriIncele}
+              disabled={uploading || processingOCR || !selectedFiles.length}
               className="w-full bg-gradient-to-r from-green-600 to-green-500 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              <Save className="w-4 h-4" /> {uploading ? 'Kaydediliyor...' : 'Kaydet'}
+              <Save className="w-4 h-4" /> {processingOCR ? 'Fişler okunuyor...' : okunanFisler.length ? 'Sonuçları İncele' : 'Oku ve İncele'}
             </button>
             
             <p className="text-xs text-gray-400 text-center">
-              Yukledikten sonra OCR ile otomatik okunacak
+Görseli ve okunan tutarları kontrol ettikten sonra kaydedebilirsiniz.
             </p>
           </div>
         </div>
       </div>
 
+      {seriKamera && <BelgeSeriKamera kalan={10 - selectedFiles.length} onCek={file => dosyalariEkle([file])} onKapat={seriKamerayiKapat} />}
+
       {/* Liste */}
       <div className="bg-blue-800/20 rounded-2xl p-6 border border-blue-700/30">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-white">Gider Fisleri - {months[selectedMonth]} {selectedYear}</h3>
+          <h3 className="text-lg font-semibold text-white">Gider Fişleri - {months[selectedMonth]} {selectedYear}</h3>
+          <button type="button" disabled={loading || !expenses.length} onClick={() => belgeExcelIndir(expenses, selectedYear + '-' + String(selectedMonth + 1).padStart(2, '0')).catch(() => setMsg('Excel dosyası hazırlanamadı.'))} className="flex items-center gap-1 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs text-white disabled:opacity-50"><Download className="h-3 w-3" /> KDV Dökümü Excel</button>
         </div>
 
         {loading ? (
@@ -593,6 +635,27 @@ export default function ExpenseUploader({ clientId, clientName }) {
       </div>
 
       {/* Expense Modal */}
+      {fisInceleme && okunanFisler.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <section role="dialog" aria-modal="true" aria-label="Fişleri incele" className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-blue-950 p-4 text-white">
+            <header className="mb-3 flex items-center justify-between"><h3 className="font-semibold">Fişleri İncele</h3><button type="button" disabled={uploading} onClick={() => setFisInceleme(false)} aria-label="İncelemeyi kapat"><X size={20} /></button></header>
+            {okunanFisler.map(({ parsed, confidence }, index) => <div key={previewUrls[index]} className="mb-3 grid gap-3 rounded-lg border border-blue-700/40 p-3 md:grid-cols-2">
+              <a href={previewUrls[index]} target="_blank" rel="noreferrer" aria-label="Fiş görselini büyüt"><img src={previewUrls[index]} alt="Fiş görseli" className="max-h-56 w-full rounded bg-black/20 object-contain" /></a>
+              <div className="overflow-x-auto text-sm">
+                <div className="font-medium">{parsed.satici || selectedFiles[index]?.name}</div>
+                <div className="text-gray-300">{parsed.tarih} · Fiş No: {parsed.fisNo || 'Okunamadı'} · Toplam: {parsed.toplam} TL</div>
+                {confidence < 65 && <p className="text-amber-300">Okuma güveni düşük; görseli kontrol edin.</p>}
+                <table className="mt-2 w-full text-left text-xs">
+                  <thead><tr>{['KDV Oranı', 'Matrah', 'KDV', 'Kart', 'Nakit'].map(baslik => <th key={baslik} className="p-1">{baslik}</th>)}</tr></thead>
+                  <tbody>{belgeSatirlari({ ocr_data: parsed }).map((row, satir) => <tr key={satir} className={row[3] === 'Kontrol gerekli' ? 'text-amber-300' : ''}>{row.slice(3).map((deger, sutun) => <td key={sutun} className="p-1">{deger ?? '—'}</td>)}</tr>)}</tbody>
+                </table>
+              </div>
+            </div>)}
+            {msg && <p role="status" className="mb-2 text-sm text-gray-300">{msg}</p>}
+            <button type="button" onClick={handleSave} disabled={uploading} className="rounded-lg bg-emerald-700 px-4 py-2 disabled:opacity-50">{uploading ? 'Kaydediliyor...' : 'İnceledim, Kaydet'}</button>
+          </section>
+        </div>
+      )}
       {showExpenseModal && selectedExpense && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-blue-900 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-blue-700/30">

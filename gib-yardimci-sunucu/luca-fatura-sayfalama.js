@@ -2,7 +2,7 @@ const path = require("path");
 const AdmZip = require("adm-zip");
 const { DOMParser } = require("@xmldom/xmldom");
 
-function faturaSayfaEylemi({ menu, bas, bit, eylem = "oku", kimlikler = [] }) {
+function faturaSayfaEylemi({ menu, bas, bit, eylem = "oku", kimlikler = [], durumDogrula = false }) {
   if (window.menu_tur !== menu) throw new Error("Luca fatura ekranının belge türü değişti.");
   const temizle = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
   const gorunur = (element) => element && element.getClientRects().length > 0;
@@ -63,7 +63,23 @@ function faturaSayfaEylemi({ menu, bas, bit, eylem = "oku", kimlikler = [] }) {
       return false;
     });
     if (matches.length !== 1 || disabled(matches[0])) throw new Error("Luca Yenile düğmesi doğrulanamadı.");
+    window.__mubisListeYenileme?.observer?.disconnect();
+    const takip = { degisti: false };
+    const tablo = satirlar[0]?.box.closest("table");
+    if (!tablo?.parentElement) throw new Error("Luca fatura tablosu doğrulanamadı; yenileme başlatılmadı.");
+    takip.observer = new MutationObserver((mutations) => {
+      if (mutations.some((mutation) => mutation.target === tablo || tablo.contains(mutation.target) || [...mutation.removedNodes].some((node) => node === tablo || node.contains?.(tablo)))) takip.degisti = true;
+    });
+    takip.observer.observe(tablo.parentElement, { childList: true, subtree: true, characterData: true });
+    window.__mubisListeYenileme = takip;
     delete window.__mubisFaturaPager;
+    matches[0].click();
+    return { clicked: true };
+  }
+  if (eylem === "iptal-sorgula") {
+    if (!kimlikler.length || satirlar.filter((row) => row.box.checked).length !== kimlikler.length || kimlikler.some((key) => !satirlar.some((row) => row.key === key && row.box.checked))) throw new Error("İptal/itiraz sorgusu için fatura seçimi doğrulanamadı.");
+    const matches = controls.filter((el) => [el.innerText, el.value, el.title, el.getAttribute("aria-label")].some((value) => temizle(value).toLocaleLowerCase("tr") === "seçilenleri iptal/itiraz sorgula"));
+    if (matches.length !== 1 || disabled(matches[0])) throw new Error("Luca iptal/itiraz sorgulama düğmesi doğrulanamadı; indirme başlatılmadı.");
     matches[0].click();
     return { clicked: true };
   }
@@ -79,21 +95,24 @@ function faturaSayfaEylemi({ menu, bas, bit, eylem = "oku", kimlikler = [] }) {
     return { secili: kimlikler.length };
   }
   if (document.readyState !== "complete" || (typeof window.jQuery?.active === "number" && window.jQuery.active > 0)) return { pending: true };
-  let dateIndex = -1;
+  if (durumDogrula && !window.__mubisListeYenileme?.degisti) return { pending: true };
+  let dateIndex = -1, statusIndex = -1;
   for (const row of document.querySelectorAll("tr")) {
     const cells = Array.from(row.cells);
-    for (let index = 0; index < cells.length; index++) {
-      if (temizle(cells[index].innerText) === "Belge Tarihi") { dateIndex = index; break; }
-    }
-    if (dateIndex >= 0) break;
+    const date = cells.findIndex((cell) => temizle(cell.innerText) === "Belge Tarihi");
+    const status = cells.findIndex((cell) => temizle(cell.innerText) === "Onay Durumu");
+    if (date >= 0) dateIndex = date;
+    if (status >= 0) statusIndex = status;
+    if (dateIndex >= 0 && (!durumDogrula || statusIndex >= 0)) break;
   }
+  if (durumDogrula && statusIndex < 0) throw new Error("Luca Onay Durumu sütunu doğrulanamadı; indirme başlatılmadı.");
   const first = tarih(bas), last = tarih(bit);
   if (!first || !last || first > last) throw new Error("Fatura dönemi doğrulanamadı.");
   const records = [];
   for (const row of satirlar) {
     const date = dateIndex >= 0 ? tarih(row.cells[dateIndex]) : "";
     if (!date) throw new Error("Luca fatura satırının belge tarihi okunamadı; indirme başlatılmadı.");
-    if (date >= first && date <= last) records.push({ no: row.no, ettn: temizle(row.invoice.ettn || row.invoice.uuid), key: row.key });
+    if (date >= first && date <= last) records.push({ no: row.no, ettn: temizle(row.invoice.ettn || row.invoice.uuid), key: row.key, ...(durumDogrula ? { durum: temizle(row.cells[statusIndex]) } : {}) });
   }
   const text = document.body?.innerText || "";
   const count = text.match(/(\d+)\s+adet fatura bulundu/i);
@@ -172,7 +191,97 @@ function kurtarilabilirArsivHatasi(error) {
     || /^Luca toplu indirme servisi:\s*Beklenmeyen hata\.?$/i.test(message.trim());
 }
 
-async function sayfalariIndir({ frame, menu, bas, bit, indir, log, iptal }) {
+function iptalTakipEkrani(eylem) {
+  const panel = document.querySelector("#luca-board");
+  if (!panel || !panel.getClientRects().length || getComputedStyle(panel).display === "none" || getComputedStyle(panel).visibility === "hidden") return null;
+  const metin = String(panel.innerText || "");
+  if (!/işlem\s*takip/.test(metin.toLocaleLowerCase("tr"))) return null;
+  if (eylem === "kapat") {
+    const buttons = [...panel.querySelectorAll("button, input, a, [onclick]")].filter((el) => el.getClientRects().length && String(el.innerText || el.textContent || el.value || "").trim().toLocaleLowerCase("tr") === "kapat");
+    if (buttons.length !== 1) throw new Error("Luca işlem takip penceresi kapatılamadı.");
+    buttons[0].click();
+  }
+  return metin;
+}
+
+function iptalTakipSonucunuOku(metin, records, ilerleme) {
+  const expected = new Set(records.map((record) => record.no.toUpperCase()));
+  if (expected.size !== records.length) throw new Error("Aynı fatura numarası birden fazla kez listelendi; iptal/itiraz sonucu eşleştirilemedi.");
+  const matches = [...String(metin || "").matchAll(/\[(\d+)\s*\/\s*(\d+)\]\s*([^\s:]+)\s*:\s*([^\r\n\[]+)/g)];
+  if (!matches.length) return null;
+  const found = new Map(), indexes = new Set();
+  for (const match of matches) {
+    const index = Number(match[1]), total = Number(match[2]), no = match[3].trim().toUpperCase(), status = match[4].trim();
+    if (total !== records.length || index < 1 || index > total || indexes.has(index) || !expected.has(no) || found.has(no)) throw new Error("Luca iptal/itiraz takip satırları seçilen faturalarla eşleşmedi.");
+    indexes.add(index);
+    const normalized = status.toLocaleLowerCase("tr");
+    if (/hata|başarısız|basarisiz|sorgulanamad|zaman\s*aşım/.test(normalized)) throw new Error("Luca iptal/itiraz sorgusunda hata bildirdi; indirme başlatılmadı.");
+    if (/iptal|itiraz|\bred\b|redded/.test(normalized)) found.set(no, "iptal");
+    else if (/^fatura\s+var\s*\/\s*geçerli[.!]?$/.test(normalized)) found.set(no, "gecerli");
+    else throw new Error("Luca iptal/itiraz sonucu tanınmadı; indirme başlatılmadı.");
+  }
+  ilerleme?.(found.size, records.length);
+  if (found.size !== records.length) return null;
+  return found;
+}
+
+async function iptalItirazSorgula({ frame, menu, bas, bit, records, iptal, log, ilerleme }) {
+  if (!records.length) return [];
+  if (new Set(records.map((record) => record.no.toUpperCase())).size !== records.length) throw new Error("Fatura numaraları tekil değil; iptal/itiraz sorgusu başlatılmadı.");
+  const frames = () => frame.page().frames();
+  for (const candidate of frames()) {
+    if (await candidate.evaluate(iptalTakipEkrani).catch(() => null)) throw new Error("Luca işlem takip penceresi açık; önceki işlemin tamamlandığını doğrulayın.");
+  }
+  const kimlikler = records.map((record) => record.key);
+  await frame.evaluate(faturaSayfaEylemi, { menu, bas, bit, eylem: "sec", kimlikler });
+  log(`${records.length} fatura için iptal/itiraz sorgulanıyor`);
+  await frame.evaluate(faturaSayfaEylemi, { menu, bas, bit, eylem: "iptal-sorgula", kimlikler });
+  const deadline = Date.now() + 20 * 60 * 1000;
+  let result = null, takipFrame = null, sonIlerleme = 0;
+  const ilerlemeyiBildir = (sayi, toplam) => {
+    if (sayi > sonIlerleme) { sonIlerleme = sayi; ilerleme?.(sayi, toplam); }
+  };
+  while (Date.now() < deadline) {
+    iptal();
+    for (const candidate of frames()) {
+      const metin = await candidate.evaluate(iptalTakipEkrani).catch(() => null);
+      if (!metin) continue;
+      const parsed = iptalTakipSonucunuOku(metin, records, ilerlemeyiBildir);
+      if (parsed) { result = parsed; takipFrame = candidate; break; }
+    }
+    if (result) break;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  if (!result) throw new Error("Luca iptal/itiraz sorgusunun tüm faturalar için tamamlandığı doğrulanamadı; indirme başlatılmadı.");
+  await takipFrame.evaluate(iptalTakipEkrani, "kapat");
+  await frame.evaluate(faturaSayfaEylemi, { menu, bas, bit, eylem: "refresh" });
+  const refreshDeadline = Date.now() + 30000;
+  let refreshed = null;
+  while (Date.now() < refreshDeadline) {
+    iptal();
+    const current = await frame.evaluate(faturaSayfaEylemi, { menu, bas, bit, durumDogrula: true });
+    if (!current.pending) { refreshed = current; break; }
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  if (!refreshed) throw new Error("Luca fatura listesi yenilenemedi; indirme başlatılmadı.");
+  const yeniler = new Map(refreshed.records.map((record) => [record.no.toUpperCase(), record]));
+  if (yeniler.size !== records.length || refreshed.records.length !== records.length) throw new Error("Luca yenilemesinde fatura listesi değişti; indirme başlatılmadı.");
+  const allowed = [];
+  for (const original of records) {
+    const key = original.no.toUpperCase(), updated = yeniler.get(key);
+    if (!updated || String(original.ettn || "").toLowerCase() !== String(updated.ettn || "").toLowerCase()) throw new Error("Luca yenilemesinde fatura kimliği değişti; indirme başlatılmadı.");
+    const status = updated.durum.toLocaleLowerCase("tr");
+    const cancelled = /iptal|itiraz|redded|\bred\b/i.test(status);
+    if (result.get(key) === "iptal" && !cancelled) throw new Error("Luca iptal sonucu yenilenen listede doğrulanamadı; indirme başlatılmadı.");
+    if (cancelled) continue;
+    if (!/^onaylandı[.!]?$/i.test(status)) throw new Error("Luca fatura onay durumu doğrulanamadı; indirme başlatılmadı.");
+    allowed.push(updated);
+  }
+  log(`İptal/itiraz sorgusu tamamlandı: ${records.length - allowed.length} geçersiz fatura indirmeden çıkarıldı`);
+  return { records: allowed, page: refreshed };
+}
+
+async function sayfalariIndir({ frame, menu, bas, bit, indir, log, iptal, ilerleme }) {
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const read = async (previous) => {
     const deadline = Date.now() + 30000;
@@ -227,8 +336,13 @@ async function sayfalariIndir({ frame, menu, bas, bit, indir, log, iptal }) {
       if (seenInvoices.has(identity)) throw new Error("Luca fatura sayfaları çakışıyor; liste değişmiş olabilir.");
       seenInvoices.add(identity);
     }
-    for (let offset = 0; offset < page.records.length; offset += 500) {
-      await recover(page.records.slice(offset, offset + 500));
+    if (page.records.length) {
+      const kontrol = await iptalItirazSorgula({ frame, menu, bas, bit, records: page.records, iptal, log, ilerleme });
+      if (kontrol.page.identities.length !== page.identities.length || page.pager.pageNumber && kontrol.page.pager.pageNumber !== page.pager.pageNumber) throw new Error("Luca yenilemesinde fatura sayfası değişti; indirme başlatılmadı.");
+      page = kontrol.page;
+      for (let offset = 0; offset < kontrol.records.length; offset += 500) {
+        await recover(kontrol.records.slice(offset, offset + 500));
+      }
     }
     if (!page.pager.hasNext) {
       if (!page.pager.nextKnown && page.identities.length >= 500 || seenInvoices.size < expected) throw new Error("Luca son sayfa veya toplam fatura sayısı doğrulanamadı.");
@@ -240,8 +354,9 @@ async function sayfalariIndir({ frame, menu, bas, bit, indir, log, iptal }) {
       }
       return { pages: pageCount, listed: seenInvoices.size, downloaded };
     }
+    const sonParmakIzi = JSON.stringify(page.identities);
     await frame.evaluate(faturaSayfaEylemi, { menu, bas, bit, eylem: "next" });
-    page = await read(fingerprint);
+    page = await read(sonParmakIzi);
   }
 }
 
@@ -285,4 +400,4 @@ function modernZipYakala() {
   return true;
 }
 
-module.exports = { faturaSayfaEylemi, arsiviDogrula, sayfalariIndir, modernZipYakala };
+module.exports = { faturaSayfaEylemi, arsiviDogrula, sayfalariIndir, modernZipYakala, iptalTakipSonucunuOku, iptalItirazSorgula };

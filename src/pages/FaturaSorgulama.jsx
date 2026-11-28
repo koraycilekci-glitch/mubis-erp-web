@@ -86,6 +86,7 @@ export default function FaturaSorgulama() {
   const durdurRef = useRef(false)
   const iptalKontrol = useCallback(() => durdurRef.current, [])
   const handleTopluDurdur = async () => {
+    if (!topluSorguluyor && !window.confirm('Sunucudaki çalışan ve bekleyen Luca sorgularına durdurma isteği gönderilecek. Devam edilsin mi?')) return
     durdurRef.current = true
     setTopluMesaj('Tüm sorgulamalar durduruluyor — çalışan ve kuyrukta bekleyen işler iptal ediliyor...')
     try {
@@ -199,6 +200,7 @@ export default function FaturaSorgulama() {
 
   const [kaliciAktarimlar, setKaliciAktarimlar] = useState([])
   const [aktarimDurumHatasi, setAktarimDurumHatasi] = useState(false)
+  const bekleyenLucaIslemi = lucaIslemiBelirsiz(topluMesaj) || kaliciAktarimlar.some(kayit => kayit.durum?.sorun === 'bekliyor')
   useEffect(() => {
     let aktif = true
     setKaliciAktarimlar([])
@@ -786,6 +788,7 @@ if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
             </div>
           </div>
         )}
+        <p className="text-[11px] text-gray-400 mt-2.5">İptal/itiraz sorgulama: e-Fatura, e-Arşiv ve alınan e-SMM belgeleri indirilmeden önce Luca’da kontrol edilir; iptal edilenler yüklenmez.</p>
         {sorguSecimi !== 'yeni' && (
           <p className="text-[11px] text-gray-500 mt-2.5">
             {sorguSecimi === 'eksik' && 'Seçili yöntem: Yalnızca doğrulanmamış sorgular ve eksik aktarım adımları çalıştırılır.'}
@@ -1008,15 +1011,15 @@ if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
             <span className="text-[11px] font-bold whitespace-nowrap">Sorgula ve Yükle</span>
             <span className="text-[9px] font-normal opacity-70 whitespace-nowrap">Luca → MUBiS</span>
           </button>
-          {(tekSorguluyor || topluSorguluyor) && (
+          {(tekSorguluyor || topluSorguluyor || bekleyenLucaIslemi) && (
             <button
               onClick={() => tekSorguluyor ? tekSorguDurdurRef.current?.() : handleTopluDurdur()}
               className="islem-btn flex-1 min-w-[104px] px-2 py-2.5 rounded-xl bg-red-600 text-white hover:bg-red-500 flex flex-col items-center justify-center text-center gap-1 leading-tight"
-              title="Mevcut adım tamamlanınca kalan sorgulamayı durdurur"
+              title="Sunucudaki çalışan ve bekleyen sorgulara durdurma isteği gönderir"
             >
               <Square className="w-4 h-4 shrink-0" />
               <span className="text-[11px] font-bold whitespace-nowrap">Sorgulamayı Durdur</span>
-              <span className="text-[9px] font-normal opacity-70">Mevcut adım bitsin</span>
+              <span className="text-[9px] font-normal opacity-70">Sunucudaki işleri durdur</span>
             </button>
           )}
           <button
@@ -1210,7 +1213,7 @@ if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
               <span className="block text-[10px] opacity-70">Sadece sorgu</span>
             </button>
             {/* 2.7.574: sorgulama sürerken Durdur */}
-            {(topluSorguluyor || topluMesaj.includes('islem takibi suresinde tamamlanmadi')) && (
+            {(topluSorguluyor || bekleyenLucaIslemi) && (
               <button
                 onClick={handleTopluDurdur}
                 className="px-4 py-2 rounded-xl bg-red-600/80 border border-red-500/50 text-white text-sm font-semibold hover:bg-red-600 flex items-center gap-2"

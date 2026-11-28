@@ -474,7 +474,7 @@ const IZINLI_ISLER = [
   'defterbeyan-gecici-vergi', 'defterbeyan-ortaklik-beyanlari',
   'earsiv-fatura-doldur', 'efatura-fatura-doldur', 'esmm-makbuz-doldur',
   'whatsapp-web-gonder', 'whatsapp-desktop-gonder', 'mail-gonder',
-  'toplu-belge-duzenle', 'fis-tarama', 'fis-bol', 'luca-edefter-olustur',
+  'toplu-belge-duzenle', 'fis-tarama', 'fis-bol', 'z-raporu-tara', 'luca-edefter-olustur',
   'edefter-kopyala', 'luca-hesap-ekle'
 ]
 

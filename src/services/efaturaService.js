@@ -495,6 +495,7 @@ export function lucaDurumMetni(adim) {
     'gibden-getir': 'GİB sorgusu için tarih aralığı hazırlanıyor...',
     'gib-sorgu-gonderildi': 'Luca’da tarih aralığıyla sorgu başlatma denendi; yanıt bekleniyor...',
     'belge-sec-indir': 'Luca’da belgeler seçiliyor ve indirme işlemi yürütülüyor...',
+    'iptal-itiraz-sorgulaniyor': 'Luca’da faturaların iptal/itiraz durumu kontrol ediliyor...',
     'tamamlandi': 'Yardımcı işlem sonucunu hazırlıyor...',
     'luca-sorgusu-bekleniyor': 'Önceki Luca işleminin bitmesi bekleniyor...',
     'yerel-yedek': 'Sunucu bağlantısı başarısız oldu; yerel yardımcıda işlem sürüyor...'
@@ -634,7 +635,7 @@ export async function efaturaSorgula({ client, yil, ay, sorguTip = 'efatura', yo
     // 2.7.385: Luca satis sorgulari yuzlerce dosya + zip paketleme
     // yapabiliyor; varsayilan 10 dk zaman asimi satis taramalarinda
     // dosyalar inmis olsa bile web'i bekletmeden patliyordu -> 25 dk.
-      }, 25 * 60 * 1000, durum, {
+      }, (mod === 'indir' ? 55 : 25) * 60 * 1000, durum, {
         iptalKontrol,
         oncekiIsId,
         onIsBasladi,
@@ -676,6 +677,10 @@ export async function efaturaSorgula({ client, yil, ay, sorguTip = 'efatura', yo
   if (isSonuc.akisTamam === false || /akis ["“].+?["”] adiminda tamamlanamadi/i.test(isSonuc.not || '')) {
     throw Object.assign(new Error(isSonuc.not || 'Luca sorgusu tamamlanamadı; belge durumu doğrulanamadı.'), { isBitti: true })
   }
+  const iptalItirazGerekli = !sadeceSorgu && mod === 'indir' && (/^(efatura|earsiv)$/.test(sorguTip) || sorguTip === 'esmm' && yon === 'alis')
+  if (iptalItirazGerekli && isSonuc.iptalItirazDogrulandi !== true) {
+    throw Object.assign(new Error('İptal/itiraz sorgusu doğrulanamadı. VPS yardımcı programı güncellenmeden faturalar MUBİS’e yüklenmedi.'), { isBitti: true })
+  }
 
   // 2.7.461: sadeceSorgu — yalniz GİB'den Getir tetiklendi; dosya bekleme/
   // fark listesi YOK (indirme ayri 'indir' isiyla, tum sorgular bitince).
@@ -699,7 +704,7 @@ export async function efaturaSorgula({ client, yil, ay, sorguTip = 'efatura', yo
         if (dosyaDegistiMi(aktifFotograf, d) && /\.(pdf|xml|xlsx|xls|html?)$/i.test(d.ad)) yeniListe.push(d)
       })
     }
-    return { ok: true, sadeceIndir: true, sayi: yeniListe.length, dosyalar: yeniListe, vpsDosyalari, bosDogrulandi: isSonuc.bosDogrulandi === true, zipYoluIle: isSonuc.zipYoluIle === true, not: isSonuc.not || '', yerelYedek: isYereldeCalisti, yardimciKaynak: aktifKaynak, oncekiSet: aktifFotograf }
+    return { ok: true, sadeceIndir: true, sayi: yeniListe.length, dosyalar: yeniListe, vpsDosyalari, bosDogrulandi: isSonuc.bosDogrulandi === true, iptalItirazDogrulandi: isSonuc.iptalItirazDogrulandi === true, zipYoluIle: isSonuc.zipYoluIle === true, not: isSonuc.not || '', yerelYedek: isYereldeCalisti, yardimciKaynak: aktifKaynak, oncekiSet: aktifFotograf }
   }
 
   // 2.7.460: eski davranis (tek cagri = bekle + yukle). Yeni toplu akista web
@@ -1325,6 +1330,7 @@ export async function edefterTopluKopyala({ client, yil, ay, yon = 'alis', dosya
   let yerel = yardimciKaynak === 'yerel'
   let sonuc = await (yerel ? yardimciIsYerel : yardimciIsSunucu)('edefter-kopyala', istek, 5 * 60 * 1000)
   if (sonuc?.yerelYedek) yerel = true
+  let yerelUlasilamiyor = yerel && sonuc?.reason === 'kurulu-degil'
   let kalan = eksikler(sonuc, istek.dosyalar)
   let kopya = istek.dosyalar.length - kalan.length
   let hata = sonuc?.error || sonuc?.reason || (Array.isArray(sonuc?.atlanan) ? sonuc.atlanan[0] : '') || ''
@@ -1332,12 +1338,13 @@ export async function edefterTopluKopyala({ client, yil, ay, yon = 'alis', dosya
     const oncekiKalan = kalan.length
     const yerelSonuc = await yardimciIsYerel('edefter-kopyala', { ...istek, dosyalar: kalan }, 5 * 60 * 1000)
     yerel = true
+    yerelUlasilamiyor = yerelSonuc?.reason === 'kurulu-degil'
     kalan = eksikler(yerelSonuc, kalan)
     kopya += oncekiKalan - kalan.length
     hata = yerelSonuc?.error || yerelSonuc?.reason || (Array.isArray(yerelSonuc?.atlanan) ? yerelSonuc.atlanan[0] : '') || hata
     if (yerelSonuc?.hedef) sonuc = { ...sonuc, hedef: yerelSonuc.hedef }
   }
-  if (yerel && kalan.length) {
+  if (yerel && kalan.length && !yerelUlasilamiyor) {
     const urlDosyalari = []
     for (const dosya of dosyalar) {
       if (typeof dosya === 'string' || !dosya?.url || !kalan.includes(dosya.ad)) continue
@@ -1350,6 +1357,7 @@ export async function edefterTopluKopyala({ client, yil, ay, yon = 'alis', dosya
     }
     if (urlDosyalari.length) {
       const urlSonuc = await yardimciIsYerel('edefter-url-kopyala', { ...istek, files: urlDosyalari }, 10 * 60 * 1000)
+      if (urlSonuc?.reason === 'kurulu-degil') yerelUlasilamiyor = true
       const urlKalan = eksikler(urlSonuc, urlDosyalari.map(d => d.ad))
       const kopyalanan = urlDosyalari.map(d => d.ad).filter(ad => !urlKalan.includes(ad))
       kopya += kopyalanan.length
@@ -1362,6 +1370,7 @@ export async function edefterTopluKopyala({ client, yil, ay, yon = 'alis', dosya
     }
   }
   if (kalan.length) {
+    if (yerelUlasilamiyor) hata = 'Arşiv klasörü bu cihazdan erişilebilir değil. Arşiv klasörünün bulunduğu bilgisayarda MUBİS Yardımcı’yı çalıştırıp aynı dönem için Eksik adımları tamamla seçeneğini kullanın.'
     return { ok: false, kopya, toplam: istek.dosyalar.length, atlanan: kalan, error: `${kopya}/${istek.dosyalar.length} dosya kopyalandı; ${kalan.length} dosya eksik${hata ? ': ' + hata : '. Yerel yardımcıyı ve hedef klasör erişimini kontrol edin.'}` }
   }
   return { ...sonuc, ok: true, kopya, toplam: istek.dosyalar.length, atlanan: [] }
@@ -2171,7 +2180,7 @@ export async function karsiTarafOnar(clientId, adaylar = null) {
     // Eski kayıtlarda yön (alınan/satış) hatalı olabiliyor; XML'den yeniden
     // hesaplanıp düzeltilir. En fazla 40 kayıt / tur.
     const supheli = (liste || [])
-      .filter(f => f.xml_url)
+      .filter(f => f.xml_url && ['efatura', 'earsiv', 'esmm'].includes(f.tur))
       .slice(0, 40)
     if (!supheli.length) return 0
     let onarilan = 0
@@ -2183,6 +2192,7 @@ export async function karsiTarafOnar(clientId, adaylar = null) {
         const meta = faturaMetadatasiXml(xml, mv, f.yon)
         const sVkn = String(meta.saticiVkn || '').replace(/\s/g, '')
         const aVkn = String(meta.aliciVkn || '').replace(/\s/g, '')
+        if (!/^\d{10,11}$/.test(sVkn) || !/^\d{10,11}$/.test(aVkn)) continue
         let yeniYon = f.yon
         if (mv && sVkn && aVkn) {
           if (sVkn === mv && aVkn !== mv) yeniYon = 'giden'
@@ -2190,6 +2200,7 @@ export async function karsiTarafOnar(clientId, adaylar = null) {
         }
         const yeniVkn = yeniYon === 'giden' ? aVkn : sVkn
         const yeniUnvan = (yeniYon === 'giden' ? meta.aliciUnvan : meta.saticiUnvan) || ''
+        if (!yeniUnvan.trim()) continue
         const degisti = yeniYon !== f.yon
           || String(yeniVkn) !== String(f.karsi_vkn || '').replace(/\s/g, '')
           || String(yeniUnvan).trim() !== String(f.karsi_unvan || '').trim()
@@ -2295,6 +2306,67 @@ export async function faturaFisDetaylariniTamamla(faturalar) {
   })
 }
 
+async function uttsKimlikleriniOnar(faturalar) {
+  const adaylar = faturalar.filter(fatura => fatura.tur === 'utts' && !String(fatura.karsi_vkn || '').trim() && /^utts_[a-f0-9]{64}$/.test(fatura.fatura_uuid || '') && fatura.xml_url)
+  const kaynaklar = [...new Set(adaylar.map(fatura => fatura.xml_url))]
+  let siradaki = 0
+  await Promise.all(Array.from({ length: Math.min(4, kaynaklar.length) }, async () => {
+    while (siradaki < kaynaklar.length) {
+      const url = kaynaklar[siradaki++]
+      try {
+        const response = await fetchDocument(url)
+        const satirlar = await uttsOtomatikSatirlariniOku(await response.arrayBuffer())
+        const kimlikler = new Map()
+        for (const satir of satirlar) {
+          const anahtar = JSON.stringify([satir.tarih, String(satir.faturaNo || '').trim(), String(satir.vkn || '').trim()])
+          const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(anahtar))
+          const uuid = 'utts_' + Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('')
+          kimlikler.set(uuid, satir)
+        }
+        for (const fatura of adaylar.filter(kayit => kayit.xml_url === url)) {
+          const satir = kimlikler.get(fatura.fatura_uuid)
+          const esit = (bir, iki) => bir != null && iki != null && Math.abs(Number(bir) - Number(iki)) < 0.01
+          if (!satir || !esit(fatura.tutar, satir.toplam) || !esit(fatura.matrah, satir.matrah) || !esit(fatura.kdv, satir.kdv)) continue
+          let sorgu = supabase.from('efatura_faturalar').update({ karsi_vkn: satir.vkn }).eq('id', fatura.id).eq('client_id', fatura.client_id).eq('tur', 'utts')
+          sorgu = fatura.karsi_vkn == null ? sorgu.is('karsi_vkn', null) : sorgu.eq('karsi_vkn', fatura.karsi_vkn)
+          await sorgu.select('id')
+          fatura.karsi_vkn = satir.vkn
+        }
+      } catch {}
+    }
+  }))
+  return faturalar
+}
+
+export async function uttsUnvanlariniGetir(clientId, faturalar) {
+  const adaylar = faturalar.filter(fatura => {
+    const unvan = String(fatura.karsi_unvan || '').trim()
+    const vkn = String(fatura.karsi_vkn || '').trim()
+    return fatura.tur === 'utts' && /^\d{10,11}$/.test(vkn) && (!unvan || /^utts$/i.test(unvan) || unvan === vkn)
+  })
+  const numaralar = [...new Set(adaylar.map(fatura => String(fatura.karsi_vkn).trim()))]
+  if (!numaralar.length) return {}
+  const { data, error } = await supabase.auth.getSession()
+  if (error || !data?.session?.access_token) throw new Error('Ünvan sorgusu için oturum açın.')
+  const unvanlar = {}
+  for (let offset = 0; offset < numaralar.length; offset += 10) {
+    const grup = numaralar.slice(offset, offset + 10)
+    const response = await fetch('/api/vkn-sorgula', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.access_token}` },
+      body: JSON.stringify({ clientId, vknler: grup }),
+      signal: AbortSignal.timeout(120000)
+    })
+    const sonuc = await response.json().catch(() => null)
+    if (!response.ok || !sonuc?.success || !sonuc.data || typeof sonuc.data !== 'object' || Array.isArray(sonuc.data)) throw new Error(sonuc?.error || 'GİB ünvan sorgusu başarısız.')
+    for (const vkn of grup) {
+      const unvan = typeof sonuc.data[vkn] === 'string' ? sonuc.data[vkn].trim() : ''
+      if (unvan && !/^\d+$/.test(unvan)) unvanlar[vkn] = unvan
+    }
+  }
+  return unvanlar
+}
+
 export async function faturalariGetir(clientId, secenek) {
   if (!clientId) return []
   let q = supabase
@@ -2339,7 +2411,7 @@ export async function faturalariGetir(clientId, secenek) {
       .then(() => eski.forEach(f => { f.fatura_turu = 'UTTS'; f.yon = 'gelen' }))
       .catch(() => { /* en azindan listede duzelt */ eski.forEach(f => { f.fatura_turu = 'UTTS'; f.yon = 'gelen' }) })
   }
-  return faturaFisDetaylariniTamamla(mukerrerFaturaTemizle(data || []))
+  return faturaFisDetaylariniTamamla(await uttsKimlikleriniOnar(mukerrerFaturaTemizle(data || [])))
 }
 
 // 2.8.21: Ayni fatura birden fazla kez kaydedilmis olabilir (Luca sorgusu

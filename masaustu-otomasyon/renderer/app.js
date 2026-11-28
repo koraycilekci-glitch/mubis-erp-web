@@ -615,6 +615,63 @@ $('fisBolBtn').addEventListener('click', async () => {
   await isCalistir('fis-bol', p, { btn: $('fisBolBtn'), sonucId: 'fisSonuc', beklemeMetni: 'Bölünüyor…' })
 })
 
+// ------------------------------------------------------------- Z RAPORU TARAMA
+let zrSonVeri = null
+$('zrTaraBtn').addEventListener('click', async () => {
+  const yol = ($('zrResimYolu').value || '').trim()
+  if (!yol) { mesaj('zrMesaj', 'Resim dosyası yolu girin.', 'hatali'); return }
+  dugmeBeklet($('zrTaraBtn'), true, 'OCR taraması yapılıyor…')
+  mesaj('zrMesaj', 'Resim okunuyor, bu işlem birkaç saniye sürebilir…')
+  try {
+    const j = await window.mubis.isCalistir('z-raporu-tara', { resimYolu: yol })
+    if (!j || j.success === false || j.ok === false) {
+      mesaj('zrMesaj', 'Hata: ' + ((j && (j.error || j.not)) || 'bilinmeyen'), 'hatali')
+      return
+    }
+    zrSonVeri = j
+    const alanlar = [
+      ['Tarih', j.tarih], ['Saat', j.saat], ['Firma', j.firma], ['VKN', j.vkn],
+      ['Fiş No', j.fisNo], ['Matrah %0', j.matrah0], ['Matrah %1', j.matrah1],
+      ['Matrah %10', j.matrah10], ['Matrah %20', j.matrah20],
+      ['KDV %1', j.kdv1], ['KDV %10', j.kdv10], ['KDV %20', j.kdv20],
+      ['Toplam KDV', j.toplamKdv], ['Genel Toplam', j.genelToplam],
+      ['Nakit', j.nakit], ['Kredi Kartı', j.krediKarti],
+      ['Hesap Kodu', j.hesapKodu], ['Hesap Adı', j.hesapAdi], ['Güven', j.guven]
+    ]
+    $('zrSonuc').innerHTML = alanlar.map(([k, v]) =>
+      '<div class="bilgi"><span class="etiket">' + k + '</span><span class="deger">' + (v || '—') + '</span></div>'
+    ).join('')
+    if (j.hamMetin) {
+      $('zrHamMetin').style.display = 'block'
+      $('zrHamMetin').textContent = j.hamMetin
+    }
+    $('zrExcelBtn').disabled = false
+    mesaj('zrMesaj', 'Tarama tamamlandı.', 'basarili')
+  } catch (e) {
+    mesaj('zrMesaj', 'Hata: ' + (e && e.message), 'hatali')
+  } finally {
+    dugmeBeklet($('zrTaraBtn'), false)
+  }
+})
+
+$('zrExcelBtn').addEventListener('click', async () => {
+  if (!zrSonVeri) { mesaj('zrMesaj', 'Önce tarama yapın.', 'hatali'); return }
+  const j = zrSonVeri
+  const basliklar = ['Tarih','Saat','Firma','VKN','Fiş No','Matrah %0','Matrah %1','KDV %1','Matrah %10','KDV %10','Matrah %20','KDV %20','Toplam KDV','Genel Toplam','Kontrol Farkı','Ödeme','Güven','Fotoğraf','Kayıt Zamanı','Belge Türü','Nakit','Kredi Kartı','Hesap Kodu','Hesap Adı','Doğrulama']
+  const degerler = [
+    j.tarih || '', j.saat || '', j.firma || '', j.vkn || '', j.fisNo || '',
+    j.matrah0 || '', j.matrah1 || '', j.kdv1 || '', j.matrah10 || '', j.kdv10 || '',
+    j.matrah20 || '', j.kdv20 || '', j.toplamKdv || '', j.genelToplam || '',
+    '', j.nakit || '', j.guven || '', j.resimYolu || '', new Date().toLocaleString('tr-TR'),
+    'Fiş', j.nakit || '', j.krediKarti || '', j.hesapKodu || '', j.hesapAdi || '', 'OCR'
+  ]
+  const kacisCsv = (v) => '"' + String(v).replace(/"/g, '""') + '"'
+  const icerik = [basliklar.map(kacisCsv).join(';'), degerler.map(kacisCsv).join(';')].join('\r\n')
+  const r = await window.mubis.dosyaKaydet({ ad: 'z-raporu-' + (j.tarih || 'tarama').replace(/[\/.]/g, '-') + '.csv', icerik })
+  if (r && r.ok) mesaj('zrMesaj', 'Kaydedildi: ' + r.yol, 'basarili')
+  else if (r && !r.iptal) mesaj('zrMesaj', 'Kaydedilemedi: ' + (r.mesaj || ''), 'hatali')
+})
+
 // ------------------------------------------------------------- MÜKELLEF
 
 let mukellefler = []

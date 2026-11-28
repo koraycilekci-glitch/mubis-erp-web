@@ -1,4 +1,5 @@
 import Tesseract from 'tesseract.js'
+import { giderVergiVeOdemeOku } from '../utils/belgeTarama.js'
 
 /**
  * Gider fisi resminden OCR ile veri cikarma
@@ -37,12 +38,16 @@ export async function processExpenseImage(imageUrl) {
 function parseExpenseText(text) {
   const lines = text.split('\n').map(l => l.trim()).filter(l => l)
   
+  const okunan = giderVergiVeOdemeOku(lines, parseTurkishNumber)
   const parsed = {
     tarih: extractDate(text),
     fisNo: extractFisNo(text),
     toplam: extractTotal(text),
-    kdv: extractKDV(text),
-    kdvOran: extractKDVRatio(text),
+    kdv: okunan.toplamKdv ?? (okunan.kdvDetaylari.length > 0 ? okunan.kdvDetaylari.reduce((sum, row) => sum + row.kdv, 0) : extractKDV(text)),
+    kdvOran: okunan.kdvDetaylari.length === 1 ? okunan.kdvDetaylari[0].oran : null,
+    kdvDetaylari: okunan.kdvDetaylari,
+    nakit: okunan.nakit,
+    krediKarti: okunan.krediKarti,
     kategori: detectCategory(text),
     satici: extractSeller(text),
     aciklama: lines.slice(0, 3).join(' ')
@@ -122,22 +127,6 @@ function extractKDV(text) {
     }
   }
   return 0
-}
-
-function extractKDVRatio(text) {
-  const patterns = [
-    /kdv\s*[%\s]*([\d]+)/i,
-    /([\d]+)\s*%\s*kdv/i,
-    /kdv[.:\s]*([\d]+)\s*%/i
-  ]
-  
-  for (const pattern of patterns) {
-    const match = text.match(pattern)
-    if (match) {
-      return parseInt(match[1])
-    }
-  }
-  return 20 // Varsayilan KDV orani
 }
 
 function detectCategory(text) {

@@ -29,19 +29,33 @@
       {
         "from": "engine",
         "to": "engine",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "resources/luca-edefter",
         "to": "luca-edefter",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
       "icon": "assets/icon.ico",
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "nsis": {
@@ -58,5 +72,9 @@
     "portable": {
       "artifactName": "MUBiS Masaustu Otomasyon ${version}.${ext}"
     }
+  },
+  "dependencies": {
+    "tesseract.js": "^7.0.0",
+    "xlsx": "^0.18.5"
   }
 }

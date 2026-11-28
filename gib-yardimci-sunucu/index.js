@@ -377,41 +377,6 @@ let LUCA_GETIR_DURUM = null
 // 2.8.0 SUNUCU MODU: asenkron is sonuclari (/is asenkron:true -> isId;
 // /is-sonuc?id= ile okunur). Sonuclar 1 saat sonra otomatik silinir.
 const IS_SONUCLARI = new Map()
-const FATURA_IS_SONUCLARI_DIZINI = path.join(__dirname, '.fatura-is-sonuclari')
-const FATURA_IS_SONUCU_OMRU = 7 * 24 * 60 * 60 * 1000
-const FATURA_IS_KIMLIGI = /^is_\d{10,16}_[a-z0-9]{1,12}$/
-
-function faturaIsSonucuKaydet(id, kayit) {
-  try {
-    fs.mkdirSync(FATURA_IS_SONUCLARI_DIZINI, { recursive: true, mode: 0o700 });
-    const hedef = path.join(FATURA_IS_SONUCLARI_DIZINI, id + '.json');
-    fs.writeFileSync(hedef + '.tmp', JSON.stringify(kayit), { mode: 0o600 });
-    fs.renameSync(hedef + '.tmp', hedef);
-  } catch (err) { console.warn('[fatura-is-sonucu]', err.code || err.name); }
-}
-
-function faturaIsSonucuOku(id) {
-  if (!FATURA_IS_KIMLIGI.test(id)) return null;
-  try {
-    const kayit = JSON.parse(fs.readFileSync(path.join(FATURA_IS_SONUCLARI_DIZINI, id + '.json'), 'utf8'));
-    return Date.now() - kayit.bitti < FATURA_IS_SONUCU_OMRU ? kayit : null;
-  } catch { return null; }
-}
-
-if (SUNUCU_MODU) {
-  const temizle = () => {
-    try {
-      const esik = Date.now() - FATURA_IS_SONUCU_OMRU;
-      for (const ad of fs.readdirSync(FATURA_IS_SONUCLARI_DIZINI)) {
-        const id = ad.replace(/\.json(?:\.tmp)?$/, '');
-        if (!FATURA_IS_KIMLIGI.test(id) || Number(id.split('_')[1]) >= esik) continue;
-        fs.rmSync(path.join(FATURA_IS_SONUCLARI_DIZINI, ad), { force: true });
-      }
-    } catch {}
-  };
-  temizle();
-  setInterval(temizle, 24 * 60 * 60 * 1000).unref();
-}
 
 // PowerShell komutunu alinti sorunu olmadan calistirir (-EncodedCommand).
 function psCalistir(psKomut, zamanAsimiMs = 20000) {
@@ -17399,27 +17364,6 @@ const ISLER = {
     const s = asistanBaslat();
     return { ok: s.ok, ayar: yeni, not: s.ok ? "Asistan baslatildi" : "Baslatilamadi: " + s.neden };
   },
-  "efatura-pdf-tamamla": async (p) => {
-    if (!SUNUCU_MODU || !Array.isArray(p.dosyalar) || p.dosyalar.length > 20) throw new Error("Gecersiz PDF tamamlama listesi");
-    const dosyalar = [];
-    for (const kaynak of p.dosyalar) {
-      if (TUM_ISLER_DURDUR) break;
-      const ad = String(kaynak?.ad || "");
-      if (!ad || path.basename(ad) !== ad || /[\\/:]/.test(ad) || !/\.(xml|html?)$/i.test(ad)) continue;
-      try {
-        const kaynakBilgisi = fs.lstatSync(path.join(indirmeKlasoru, ad));
-        if (!kaynakBilgisi.isFile() || kaynakBilgisi.size !== kaynak.boyut || kaynakBilgisi.mtimeMs !== kaynak.tarih) continue;
-        const pdf = ad.replace(/\.(xml|html?)$/i, ".pdf");
-        const hedef = path.join(indirmeKlasoru, pdf);
-        const mevcut = fs.lstatSync(hedef, { throwIfNoEntry: false });
-        if (mevcut && (!mevcut.isFile() || mevcut.mtimeMs < kaynakBilgisi.mtimeMs)) continue;
-        if (!await faturaPdfDosyasi(ad, {})) continue;
-        const stat = fs.statSync(hedef);
-        if (stat.size > 0) dosyalar.push({ ad: pdf, boyut: stat.size, tarih: stat.mtimeMs });
-      } catch (err) { console.warn("[efatura-pdf-tamamla]", err.code || err.name); }
-    }
-    return { success: true, dosyalar };
-  },
   "efatura-sorgula": async (p) => {
     const simdiMs = Date.now();
     if (efaturaAkisCalisiyor && simdiMs - efaturaAkisKilitZamani < 15 * 60 * 1e3) {
@@ -17607,8 +17551,6 @@ const ISLER = {
       let akisTamam = false;
       let akisHatasi = "";
       let akisBasarisizYonler = [];
-      let bosDogrulananYonler = 0;
-      let sorguDogrulananYonler = 0;
       let akisSonAdim = "-";
       let yonler = [];
       if (girisOk) {
@@ -17625,9 +17567,8 @@ const ISLER = {
           console.log("[efatura-sorgula] yon sorgulamasi:", yon);
           let akisOk = false;
           let yonHatasi = "";
-          const yonParametreleri = { ...p, yon };
           try {
-            akisOk = await efaturaFaturaListesineGit(page, "efatura-sorgula", yonParametreleri) === true;
+            akisOk = await efaturaFaturaListesineGit(page, "efatura-sorgula", { ...p, yon }) === true;
           } catch (e) {
             if (e?.message === "KULLANICI_DURDURDU") throw e;
             akisOk = false;
@@ -17638,6 +17579,7 @@ const ISLER = {
             // dene. Boylece 60 tur (~20 dk) bos donmek yerine ~2-3 dk'da
             // kendini toparlar.
             if (/LUCA_SSO_TAKILDI/i.test(e && e.message || "")) {
+              p._ilerleme?.("luca-girisi");
               try { await ISLER["luca-oturumu-kapat"]({}); } catch { }
               try {
                 page = null;
@@ -17648,7 +17590,7 @@ const ISLER = {
                   const giris2 = await efaturaPortalGirisYap(page, kull, parola, "efatura-sorgula", /turmob|luca/i, uyeNo);
                   if (giris2.ok) {
                     console.log("[efatura-sorgula] SSO takilmasi sonrasi taze giris tamam — yon tekrar deneniyor:", yon);
-                    akisOk = await efaturaFaturaListesineGit(page, "efatura-sorgula", yonParametreleri) === true;
+                    akisOk = await efaturaFaturaListesineGit(page, "efatura-sorgula", { ...p, yon }) === true;
                   }
                 }
               } catch (e2) {
@@ -17656,8 +17598,6 @@ const ISLER = {
               }
             }
           }
-          if (akisOk && yonParametreleri._bosDogrulandi === true) bosDogrulananYonler++;
-          if (akisOk && yonParametreleri._sorguDogrulandi === true) sorguDogrulananYonler++;
           if (!akisOk) {
             akisTamam = false;
             akisHatasi ||= yonHatasi;
@@ -17678,8 +17618,6 @@ const ISLER = {
       return {
         girisOk,
         akisTamam,
-        bosDogrulandi: akisTamam && yonler.length > 0 && bosDogrulananYonler === yonler.length,
-        sorguDogrulandi: akisTamam && yonler.length > 0 && sorguDogrulananYonler === yonler.length,
         girisReddedildi,
         hata: girisHata,
         adim: akisSonAdim,
@@ -18411,6 +18349,104 @@ const ISLER = {
     } catch (e) {
       log("HATA: " + (e && e.message));
       return { ok: false, error: e && e.message || "OKC bildirim sorgulanamadi" };
+    }
+  },
+  "z-raporu-tara": async (p) => {
+    const etiket = "z-raporu-tara";
+    const log = (m) => console.log(`[${etiket}] ${m}`);
+    const fs = require("fs");
+    const path = require("path");
+    try {
+      const resimYolu = String(p.resimYolu || p.imagePath || "").trim();
+      if (!resimYolu) throw new Error("Resim dosyasi yolu eksik.");
+      if (!fs.existsSync(resimYolu)) throw new Error("Resim dosyasi bulunamadi: " + resimYolu);
+      log("OCR basliyor: " + resimYolu);
+
+      // Tesseract worker olustur (Turkce + Ingilizce)
+      const { createWorker } = require("tesseract.js");
+      const worker = await createWorker("tur+eng", 1, {
+        logger: (m) => { if (m.status === "recognizing text") log("OCR: %" + Math.round(m.progress * 100)) }
+      });
+      const { data: { text } } = await worker.recognize(resimYolu);
+      await worker.terminate();
+      log("OCR tamamlandi. Metin uzunlugu: " + text.length);
+
+      // Z raporu alanlarini parse et
+      const satirlar = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      const metin = satirlar.join("\n");
+
+      // Yardimci: regex ile deger bul
+      const bul = (desenler) => {
+        for (const d of desenler) {
+          const m = metin.match(d);
+          if (m && m[1]) return m[1].trim();
+        }
+        return "";
+      };
+      const sayiBul = (desenler) => {
+        const v = bul(desenler);
+        return v.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
+      };
+
+      // Tarih: DD.MM.YYYY veya DD/MM/YYYY
+      const tarih = bul([/(\d{2}[.\/]\d{2}[.\/]\d{4})/, /Tarih[:\s]*(\d{2}[.\/]\d{2}[.\/]\d{4})/i]);
+      // Saat: HH:MM
+      const saat = bul([/(\d{2}:\d{2}(?::\d{2})?)/, /Saat[:\s]*(\d{2}:\d{2})/i]);
+      // Firma adi: genellikle ilk satirlarda
+      const firma = bul([/Firma[:\s]*(.+)/i, /Unvan[:\s]*(.+)/i, /Isyeri[:\s]*(.+)/i]);
+      // VKN
+      const vkn = bul([/VKN[:\s]*(\d{10,11})/i, /Vergi No[:\s]*(\d{10,11})/i, /(\d{10,11})/]);
+      // Fis No
+      const fisNo = bul([/Fis No[:\s]*(\S+)/i, /Fi�? No[:\s]*(\S+)/i, /Belge No[:\s]*(\S+)/i]);
+      // Matrah/KDV oranlari
+      const matrah0 = sayiBul([/%0.*?(\d[\d.,]*)/i, /Matrah.*?%0.*?(\d[\d.,]*)/i]);
+      const matrah1 = sayiBul([/%1\b.*?(\d[\d.,]*)/i]);
+      const matrah10 = sayiBul([/%10.*?(\d[\d.,]*)/i]);
+      const matrah20 = sayiBul([/%20.*?(\d[\d.,]*)/i]);
+      const kdv1 = sayiBul([/KDV.*?%1.*?(\d[\d.,]*)/i]);
+      const kdv10 = sayiBul([/KDV.*?%10.*?(\d[\d.,]*)/i]);
+      const kdv20 = sayiBul([/KDV.*?%20.*?(\d[\d.,]*)/i]);
+      const toplamKdv = sayiBul([/Toplam KDV[:\s]*(\d[\d.,]*)/i, /KDV Toplam[:\s]*(\d[\d.,]*)/i]);
+      const genelToplam = sayiBul([/Genel Toplam[:\s]*(\d[\d.,]*)/i, /Toplam[:\s]*(\d[\d.,]*)/i]);
+      // Odeme turleri
+      const nakit = sayiBul([/Nakit[:\s]*(\d[\d.,]*)/i]);
+      const krediKarti = sayiBul([/Kredi Kart[ıi][:\s]*(\d[\d.,]*)/i, /Banka.*Kart[:\s]*(\d[\d.,]*)/i]);
+      // Hesap kodu/adı
+      const hesapKodu = bul([/Hesap Kodu[:\s]*(\S+)/i]);
+      const hesapAdi = bul([/Hesap Ad[ıi][:\s]*(.+)/i]);
+      // Güven skoru (Tesseract confidence - ortalama)
+      const guven = "OCR";
+
+      const sonuc = {
+        ok: true,
+        resimYolu,
+        tarih,
+        saat,
+        firma,
+        vkn,
+        fisNo,
+        matrah0,
+        matrah1,
+        matrah10,
+        matrah20,
+        kdv1,
+        kdv10,
+        kdv20,
+        toplamKdv,
+        genelToplam,
+        nakit,
+        krediKarti,
+        hesapKodu,
+        hesapAdi,
+        guven,
+        hamMetin: text,
+        satirlar
+      };
+      log("Parse tamamlandi: " + JSON.stringify({ tarih, firma, vkn, genelToplam }));
+      return sonuc;
+    } catch (e) {
+      log("HATA: " + (e && e.message));
+      return { ok: false, error: e && e.message || "OCR hatasi" };
     }
   },
   "luca-edefter-olustur": async (p) => {
@@ -24481,180 +24517,6 @@ setTimeout(() => {
   } catch {
   }
 }, 180 * 1e3);
-// ---------------------------------------------------------------------------
-// OTOMATIK OKC HASILAT SORGULAMA (VPS) — admin gun/saat planina gore tum
-// aktif musterilerin OKC Aylik Satis Rapor Bildirimlerini okur; sonuclar
-// mubiserp.com/api/okc-cron PATCH ile kdv_dokumleri (tur='okc') yazilir.
-// ---------------------------------------------------------------------------
-var okcCronCalisiyor = false;
-const OKC_CRON_WEB = "https://mubiserp.com";
-function okcCronBasliklar() {
-  return { "Content-Type": "application/json", "x-mubis-key": FATURA_CRON_ANAHTARI };
-}
-async function okcSorgulaTek(musteri, yil, ay, detay) {
-  try {
-    const kullaniciKodu = musteri.dvs_username || "";
-    const parola = musteri.dvs_password || "";
-    if (!kullaniciKodu || !parola) return { ok: false, ozet: "DVS sifre eksik" };
-    const res = await ISLER["okc-bildirim-getir"]({ kullaniciKodu, parola, yil, ay, detay: detay !== false });
-    if (!res || res.ok === false) throw new Error(String((res && (res.error || res.not)) || "sonuc-yok"));
-    const kayitlar = Array.isArray(res.kayitlar) ? res.kayitlar : [];
-    if (detay !== false && kayitlar.some((kayit) => !kayit.detay || kayit.detayHatasi)) {
-      throw new Error('ÖKC hasılatı kaydedilmedi: bir veya daha fazla bildirimin ayrıntısı doğrulanamadı.');
-    }
-    let toplamSatis = 0;
-    let toplamKdv = 0;
-    for (const k of kayitlar) {
-      const d = k.detay || {};
-      const bul = (anahtar) => {
-        const eslesme = Object.keys(d).find((x) => String(x).toLocaleLowerCase("tr").includes(anahtar));
-        return eslesme ? Number(String(d[eslesme]).replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".")) || 0 : 0;
-      };
-      toplamSatis += bul("toplam sat") || Number(k.toplamSatis) || 0;
-      toplamKdv += bul("toplam kdv") || Number(k.toplamKdv) || 0;
-    }
-    try {
-      await fetch(OKC_CRON_WEB + "/api/okc-cron", {
-        method: "PATCH",
-        headers: okcCronBasliklar(),
-        body: JSON.stringify({
-          tip: "sonuc",
-          client_id: musteri.id,
-          office_id: musteri.office_id,
-          yil,
-          ay,
-          sonuc: { kayitlar, toplam_satis: toplamSatis, toplam_kdv: toplamKdv }
-        }),
-        signal: AbortSignal.timeout(3e4)
-      });
-    } catch {
-    }
-    return { ok: true, ozet: "okc=" + kayitlar.length + " kayit" };
-  } catch (e) {
-    const hata = String((e && e.message) || e);
-    console.log(`[okc-cron] ${musteri.name || musteri.id} hata: ${hata}`);
-    try {
-      await fetch(OKC_CRON_WEB + "/api/okc-cron", {
-        method: "PATCH",
-        headers: okcCronBasliklar(),
-        body: JSON.stringify({ tip: "sonuc", client_id: musteri.id, yil, ay, hata }),
-        signal: AbortSignal.timeout(15e3)
-      });
-    } catch {
-    }
-    return { ok: false, ozet: hata.slice(0, 80) };
-  }
-}
-async function okcCronKontrol() {
-  if (okcCronCalisiyor) return;
-  if (cronKapaliMi("OKC")) return;
-  let paket = null;
-  try {
-    const r = await fetch(OKC_CRON_WEB + "/api/okc-cron?sunucu=1", { headers: okcCronBasliklar(), signal: AbortSignal.timeout(2e4) });
-    if (!r.ok) return;
-    paket = await r.json().catch(() => null);
-  } catch {
-    return;
-  }
-  if (!paket || !paket.ok || !paket.plan || paket.plan.aktif === false) return;
-  const plan = paket.plan;
-  const now = new Date();
-  const bugunStr = gunlukBugunStr();
-  const gun = now.getDay();
-  const haftaGunu = gun === 0 ? 7 : gun;
-  const saatStr = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
-  let dilimler = Array.isArray(plan.zamanlar) && plan.zamanlar.length ? plan.zamanlar : [];
-  if (!dilimler.length) return;
-  const sonTurlar = plan.son_turlar && typeof plan.son_turlar === "object" ? plan.son_turlar : {};
-  const vadesiGelen = [];
-  for (let zi = 0; zi < dilimler.length; zi++) {
-    const z = dilimler[zi] || {};
-    const zSaat = String(z.saat || "08:00");
-    if (!/^\d{1,2}:\d{2}$/.test(zSaat) || zSaat > saatStr) continue;
-    if (z.mod === "haftalik") {
-      const zHafta = Array.isArray(z.hafta_gunleri) ? z.hafta_gunleri.map(Number).filter((n) => n >= 1 && n <= 7) : [];
-      if (!zHafta.includes(haftaGunu)) continue;
-    } else {
-      const zGunler = Array.isArray(z.gunler_ay) ? z.gunler_ay.map(Number).filter((n) => n >= 1 && n <= 31) : [];
-      if (!zGunler.includes(now.getDate())) continue;
-    }
-    const anahtar = "i" + zi;
-    let sonYerel = "";
-    if (sonTurlar[anahtar]) {
-      try {
-        const d = new Date(sonTurlar[anahtar]);
-        sonYerel = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
-      } catch {
-      }
-    }
-    if (sonYerel >= bugunStr) continue;
-    vadesiGelen.push(anahtar);
-  }
-  if (!vadesiGelen.length) return;
-  okcCronCalisiyor = true;
-  // onceki ay donemi (ay kapandiktan sonra bildirimler kesinlesir)
-  const yil = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
-  const ay = now.getMonth() === 0 ? 12 : now.getMonth();
-  let hamMusteriler = paket.musteriler || [];
-  if (Array.isArray(plan.musteriler) && plan.musteriler.length) {
-    const secili = new Set(plan.musteriler.map(Number));
-    hamMusteriler = hamMusteriler.filter((m) => secili.has(Number(m.id)));
-  }
-  const musteriler = hamMusteriler;
-  const mevcut = paket.mevcut && typeof paket.mevcut === "object" ? paket.mevcut : {};
-  const yenidenOku = plan.yenidenOku === true;
-  const dahaOnceOkundu = (m) => !yenidenOku && Number(mevcut[`${m.id}|okc|${yil}|${ay}`] || 0) > 0;
-  console.log(`[okc-cron] calisiyor: musteri=${musteriler.length} donem=${yil}/${ay}${yenidenOku ? " (yeniden oku)" : ""}`);
-  try {
-    let okMusteri = 0;
-    let sifreEksik = 0;
-    let hatali = 0;
-    let atlanan = 0;
-    let toplamKayit = 0;
-    for (const m of musteriler) {
-      if (dahaOnceOkundu(m)) { atlanan++; continue; }
-      const s = await okcSorgulaTek(m, yil, ay, plan.detay !== false);
-      if (s.ok) {
-        okMusteri++;
-        const n = Number((s.ozet.match(/okc=(\d+)/) || [])[1] || 0);
-        toplamKayit += n;
-      } else if (/sifre eksik/i.test(s.ozet)) sifreEksik++;
-      else hatali++;
-      await new Promise((r) => setTimeout(r, 3000));
-    }
-    const ozet = `Otomatik ÖKC hasılat sorgulama tamamlandı (${yil}/${ay}): ${okMusteri}/${musteriler.length} tam` +
-      (atlanan ? `, ${atlanan} zaten okunmuş (atlandı)` : "") +
-      (sifreEksik ? `, ${sifreEksik} şifre eksik` : "") +
-      (hatali ? `, ${hatali} hata` : "") +
-      `, ${toplamKayit} ÖKC kaydı`;
-    console.log("[okc-cron]", ozet);
-    const yeniSonTurlar = { ...sonTurlar };
-    for (const anahtar of vadesiGelen) yeniSonTurlar[anahtar] = new Date().toISOString();
-    try {
-      await fetch(OKC_CRON_WEB + "/api/okc-cron", {
-        method: "PATCH",
-        headers: okcCronBasliklar(),
-        body: JSON.stringify({ sonuc: { ozet }, son_turlar: yeniSonTurlar }),
-        signal: AbortSignal.timeout(3e4)
-      });
-    } catch {
-    }
-  } finally {
-    okcCronCalisiyor = false;
-  }
-}
-setInterval(() => {
-  try {
-    okcCronKontrol();
-  } catch {
-  }
-}, 60 * 1e3);
-setTimeout(() => {
-  try {
-    okcCronKontrol();
-  } catch {
-  }
-}, 240 * 1e3);
 var zipYakalamaKurFn = (guvenli = false) => {
   try {
     if (window.__mubisZipKap) return "zaten";
@@ -26579,8 +26441,6 @@ async function lucaBelgeleriIndir(page, etiket, durum, p = {}) {
           log("UTTS: yeniden adlandirma basarisiz, orijinal ad kullanilacak: " + (e2 && e2.message || e2));
           sonAd = bulunan;
         }
-        const excelBilgisi = fs.statSync(path.join(indirmeKlasoru, sonAd));
-        lucaSonIndirilenDosyalar.push({ ad: sonAd, boyut: excelBilgisi.size, tarih: excelBilgisi.mtimeMs });
         log("UTTS Excel dosyasi indi: " + sonAd);
         // musteri/yil/ay/GELEN klasorune kopyala (e-fatura ile ayni yapi);
         // dosya indirmeKlasoru'nde kalir â€” web /dosya ile okuyup MUBiS'e yukler.
@@ -33556,7 +33416,7 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
           if (p.sadeceSorgu) {
             log("gib'den getir tetiklendi (sadeceSorgu) \u2014 GIB isleminin bitmesi bekleniyor");
             if (lucaSayfaliFaturaMi(p)) {
-              p._sorguDogrulandi = await lucaGibIslemTakibiniBekle(browser, etiket) === "tamamlandi";
+              await lucaGibIslemTakibiniBekle(browser, etiket);
             } else {
             const gibIslemBittiFn = () => {
               const normL = (s) => String(s || "").toLocaleLowerCase("tr").replace(/ç/g, "c").replace(/ğ/g, "g").replace(/ı/g, "i").replace(/ö/g, "o").replace(/ş/g, "s").replace(/ü/g, "u").replace(/\s+/g, "");
@@ -33641,10 +33501,8 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
               }
               if (bitisSinyali) break;
             }
-            if (bitisSinyali) {
-              p._sorguDogrulandi = true;
-              log(`GIB islemi tamamlandi (${bitisSinyali} sinyali, ${Math.round((Date.now() - islemBaslangici) / 1e3)} sn)`);
-            } else log("GIB islem bitis sinyali 4 dk icinde gelmedi");
+            if (bitisSinyali) log(`GIB islemi tamamlandi (${bitisSinyali} sinyali, ${Math.round((Date.now() - islemBaslangici) / 1e3)} sn)`);
+            else log("GIB islem bitis sinyali 4 dk icinde gelmedi \u2014 siradaki periyoda geciliyor");
             }
             indirmeBitti = true;
           } else {
@@ -33680,7 +33538,6 @@ async function efaturaAkisiYurut(page, etiket, p = {}) {
         throw hata;
       }
       if (isonuc === "tamam" || isonuc === "bos") {
-        p._bosDogrulandi = isonuc === "bos" && p.mod === "indir" && !p.canliSorgu && lucaSayfaliFaturaMi(p);
         indirmeBitti = true;
         if (isonuc === "tamam") log("fatura belgeleri indirildi (zip/xml)");
         if (isonuc === "bos") log("indir modu: indirilecek belge yok (liste bos)");
@@ -34884,7 +34741,7 @@ document.getElementById('gir').addEventListener('click', async () => {
   if (SUNUCU_MODU && req.method === "GET" && String(req.url).split("?")[0] === "/is-sonuc") {
     const u = new URL("http://x" + req.url);
     const id = u.searchParams.get("id") || "";
-    const kayit = IS_SONUCLARI.get(id) || faturaIsSonucuOku(id);
+    const kayit = IS_SONUCLARI.get(id);
     if (!kayit) {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: false, error: "is-bulunamadi", id }));
@@ -34921,7 +34778,6 @@ document.getElementById('gir').addEventListener('click', async () => {
           setTimeout(() => {
             if (IS_SONUCLARI.has(isId)) IS_SONUCLARI.delete(isId);
           }, 60 * 60 * 1000);
-          const kaliciTakip = p.is === "efatura-pdf-tamamla" || (p.is === "efatura-sorgula" && p.kaliciTakip === true);
           const isParams = Object.assign({}, p);
           delete isParams.asenkron;
           if (p.is === "efatura-sorgula" || p.is === "toplu-belge-duzenle" || p.is === "fis-tarama" || p.is === "fis-bol") {
@@ -34952,12 +34808,7 @@ document.getElementById('gir').addEventListener('click', async () => {
                 if (aktifIsSayisi === 0) { otomasyonSeansAktif = false; indirmeModuUygula(false).catch(() => {}); }
               }
               if (OTOMATIK_ISLER.has(p.is) && !isParams.oturumKalsin && sonuc2?.pencereAcikBirak !== true) bostaKapatZamanla();
-              const bitisKaydi = { durum: "bitti", sonuc: sonuc2 || {}, bitti: Date.now() };
-              IS_SONUCLARI.set(isId, bitisKaydi);
-              if (kaliciTakip) {
-                const { girisOk, akisTamam, bosDogrulandi, sorguDogrulandi, girisReddedildi, not, zipYoluIle, dosyalar } = bitisKaydi.sonuc;
-                faturaIsSonucuKaydet(isId, { ...bitisKaydi, sonuc: { girisOk, akisTamam, bosDogrulandi, sorguDogrulandi, girisReddedildi, not: girisOk === false ? undefined : not, zipYoluIle, dosyalar } });
-              }
+              IS_SONUCLARI.set(isId, { durum: "bitti", sonuc: sonuc2 || {}, bitti: Date.now() });
               console.log("[is-asenkron]", isId, p.is, "bitti");
             } catch (err2) {
               const mesaj2 = err2 && err2.message || String(err2);
@@ -34966,9 +34817,7 @@ document.getElementById('gir').addEventListener('click', async () => {
                 if (OTOMATIK_ISLER.has(p.is) && !isParams.oturumKalsin) bostaKapatZamanla();
               } catch (e) {
               }
-              const hataKaydi = { durum: "hata", error: mesaj2, bitti: Date.now() };
-              IS_SONUCLARI.set(isId, hataKaydi);
-              if (kaliciTakip) faturaIsSonucuKaydet(isId, { ...hataKaydi, error: /islem takibi suresinde tamamlanmadi/i.test(mesaj2) ? 'Luca islem takibi suresinde tamamlanmadi' : 'VPS fatura adımı tamamlanamadı.' });
+              IS_SONUCLARI.set(isId, { durum: "hata", error: mesaj2, bitti: Date.now() });
             }
           })().catch(() => {});
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -35191,7 +35040,7 @@ async function protokolIsle(gelenUrl) {
       const captchaSonuc = await guvenlikKoduDoldur(page, "gib-odeme-protokol", { buton: "sorgula" }).catch((e) => ({ ok: false, neden: "hata: " + (e?.message || e) }));
       console.log("[protokol] captcha sonucu:", JSON.stringify(captchaSonuc));
     } else if (ISLER[isAdi]) {
-      if (["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle", "fis-tarama", "fis-bol", "luca-edefter-olustur"].includes(isAdi) && !CONFIG.adminMod) {
+      if (["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle", "fis-tarama", "fis-bol", "z-raporu-tara", "luca-edefter-olustur"].includes(isAdi) && !CONFIG.adminMod) {
         console.log("[protokol]", isAdi, "| reddedildi: adminMod kapali");
         const page = await sayfaAc("about:blank");
         await page.setContent('<h3 style="font-family:sans-serif">Luca entegrasyonu yalnizca muhasebe ofisi (admin) kurulumunda etkindir.</h3>');

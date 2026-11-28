@@ -38,7 +38,8 @@ async function main() {
   result = await context.edefterTopluKopyala({ client, dosyalar: files, yardimciKaynak: 'yerel' })
   assert.equal(result.ok, false)
   assert.equal(result.kopya, 0)
-  assert.match(result.error, /kurulu-degil/)
+  assert.match(result.error, /Arşiv klasörünün bulunduğu bilgisayarda MUBİS Yardımcı/)
+  assert.equal(calls.length, 1)
 
   calls = []
   localResults = [{ ok: true, kopya: 1, toplam: 2, atlanan: ['two.xml (izin yok)'] }, { ok: false, error: 'HTTP 403' }]
@@ -54,10 +55,9 @@ async function main() {
   result = await context.edefterTopluKopyala({ client, dosyalar: files, yardimciKaynak: 'sunucu' })
   assert.equal(result.ok, false)
   assert.equal(result.kopya, 1)
-  assert.equal(calls.length, 3)
+  assert.equal(calls.length, 2)
   assert.deepEqual(Array.from(calls[1].params.dosyalar), ['two.xml'])
-  assert.equal(calls[2].name, 'edefter-url-kopyala')
-  assert.equal(calls[2].params.files[0].ad, 'two.xml')
+  assert.match(result.error, /Eksik adımları tamamla/)
 
   calls = []
   serverResult = { ok: true, kopya: 1, toplam: 2, atlanan: ['two.xml'] }

@@ -32,6 +32,7 @@
       <button class="menu-oge" data-sayfa="dvs"><span class="ikon">▩</span> POS / KDV</button>
       <button class="menu-oge" data-sayfa="tebligat"><span class="ikon">✉</span> e-Tebligat</button>
       <button class="menu-oge" data-sayfa="fis"><span class="ikon">✂</span> Fiş İşlemleri</button>
+      <button class="menu-oge" data-sayfa="zraporu"><span class="ikon">Z</span> Z Raporu Tarama</button>
       <button class="menu-oge" data-sayfa="edefter"><span class="ikon">ED</span> e-Defter (Luca)</button>
       <button class="menu-oge" data-sayfa="edefter-islem"><span class="ikon">ED</span> e-Defter İşlemleri</button>
       <button class="menu-oge" data-sayfa="gonderim"><span class="ikon">➤</span> Gönderim</button>
@@ -694,6 +695,28 @@
         </p>
       </div>
       <div class="kart"><h2>Sonuç</h2><div id="fisSonuc" class="sonuc">Henüz işlem yapılmadı.</div></div>
+    </section>
+
+    <!-- ----------------------------- Z RAPORU TARAMA ------------------- -->
+    <section class="sayfa" id="sayfa-zraporu">
+      <h1>Z Raporu / Fiş Tarama (OCR)</h1>
+      <div class="kart">
+        <h2>Resim seçimi</h2>
+        <p class="ipucu ust-bosluk">Z raporu veya fiş fotoğrafını seçin. Program OCR ile okur ve Excel'e aktarılabilir formatta döner.</p>
+        <div class="form">
+          <label><span>Resim dosyası</span><input id="zrResimYolu" type="text" placeholder="C:\...\zraporu.jpg" autocomplete="off" /></label>
+        </div>
+        <div class="dugme-grubu ust-bosluk">
+          <button id="zrTaraBtn" class="dugme dugme-ana">Tara (OCR)</button>
+          <button id="zrExcelBtn" class="dugme" disabled>Excel'e aktar</button>
+          <span id="zrMesaj" class="mesaj"></span>
+        </div>
+      </div>
+      <div class="kart">
+        <h2>OCR sonucu</h2>
+        <div id="zrSonuc" class="sonuc">Henüz tarama yapılmadı.</div>
+        <pre id="zrHamMetin" class="log" style="max-height:200px;overflow:auto;margin-top:10px;display:none"></pre>
+      </div>
     </section>
 
     <!-- ----------------------------- E-DEFTER --------------------------- -->

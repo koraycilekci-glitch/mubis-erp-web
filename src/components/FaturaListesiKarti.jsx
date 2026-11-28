@@ -208,7 +208,11 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
     const adaylar = uttsUnvanlariBirlestir(liste).filter(f => unvanYok(f))
     const numaralar = [...new Set(adaylar.map(f => String(f.karsi_vkn || '').trim()).filter(vkn => /^\d{10,11}$/.test(vkn)))]
       .filter(vkn => !uttsSorgulananRef.current.has(`${hedefClientId}:${vkn}`))
-    if (!numaralar.length) return
+    const vknEksik = adaylar.filter(f => f.tur === 'utts' && !/^\d{10,11}$/.test(String(f.karsi_vkn || '').trim())).length
+    if (!numaralar.length) {
+      if (vknEksik) setUttsUnvanMesaj(`${vknEksik} UTTS kaydının vergi numarası kaynak dosyadan doğrulanamadı; ünvan sorgulanamıyor.`)
+      return
+    }
     numaralar.forEach(vkn => uttsSorgulananRef.current.add(`${hedefClientId}:${vkn}`))
     const tamamlanan = new Set()
     setUttsUnvanMesaj('Ünvanlar vergi numarasından GİB üzerinden sorgulanıyor...')
@@ -233,23 +237,26 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
         const kaydedilemeyen = new Set()
         for (const vkn of grup) {
           const unvan = typeof result.data[vkn] === 'string' ? result.data[vkn].trim() : ''
-          if (!unvan || /^\d+$/.test(unvan)) continue
+          if (!unvan || /^\d+$/.test(unvan)) {
+            kaydedilemeyen.add(vkn)
+            continue
+          }
           unvanlar[vkn] = unvan
+          const ids = adaylar.filter(f => String(f.karsi_vkn || '').trim() === vkn).map(f => f.id)
           const { data: kayitlar, error: kayitError } = await supabase.from('efatura_faturalar')
-            .update({ karsi_unvan: unvan }).eq('client_id', hedefClientId).eq('karsi_vkn', vkn)
+            .update({ karsi_unvan: unvan }).eq('client_id', hedefClientId).eq('karsi_vkn', vkn).in('id', ids)
             .select('id')
           if (kayitError || !kayitlar?.length) {
             kayitHatasi = true
             kaydedilemeyen.add(vkn)
-          }
-          bulunan++
+          } else bulunan++
         }
         if (aktifClientRef.current !== hedefClientId) return
         grup.filter(vkn => !kaydedilemeyen.has(vkn)).forEach(vkn => tamamlanan.add(vkn))
         setFaturalar(onceki => onceki.map(f => unvanYok(f) && unvanlar[String(f.karsi_vkn || '').trim()]
           ? { ...f, karsi_unvan: unvanlar[String(f.karsi_vkn || '').trim()] } : f))
       }
-      if (aktifClientRef.current === hedefClientId) setUttsUnvanMesaj(`Ünvan sorgusu tamamlandı: ${bulunan}/${numaralar.length} unvan bulunup kaydedildi.${kayitHatasi ? ' Bazı unvanlar kaydedilemedi.' : ''}`)
+      if (aktifClientRef.current === hedefClientId) setUttsUnvanMesaj(`Ünvan sorgusu tamamlandı: ${bulunan}/${numaralar.length} ünvan bulunup kaydedildi.${kayitHatasi ? ' Bazı ünvanlar kaydedilemedi.' : ''}${vknEksik ? ` ${vknEksik} UTTS kaydının vergi numarası kaynak dosyadan doğrulanamadı.` : ''}`)
     } catch (error) {
       if (aktifClientRef.current === hedefClientId) setUttsUnvanMesaj(`Ünvan sorgusu yapılamadı: ${error?.message || 'GİB bağlantı hatası'}`)
     } finally {

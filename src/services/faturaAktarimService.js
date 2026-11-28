@@ -113,6 +113,11 @@ export async function faturaAktariminiCalistir({ client, yil, ay, tur, yon, parc
     if (durum.bos || (durum.yuklendi && !durum.pdfEksik && ['tamam', 'atlandi'].includes(durum.arsiv))) return { durum, yeniSayi: 0 }
 
     asama = 'indirme'
+    const iptalItirazGerekli = /^(efatura|earsiv)$/.test(tur) || tur === 'esmm' && yon === 'alis'
+    if (iptalItirazGerekli && durum.dosyalar?.length && durum.iptalItirazDogrulandi !== true) {
+      if (durum.yuklendi || durum.is) throw new Error('Önceki aktarımın iptal/itiraz kontrolü doğrulanamıyor. Luca işlemini kontrol edip dönemi yeniden sorgulayın.')
+      await kaydet({ dosyalar: [], pdfEksik: null })
+    }
     if (!durum.dosyalar?.length) {
       const sonuc = await calistir({ mod: 'indir' }, 'indirme')
       if (sonuc.bosDogrulandi) {
@@ -124,7 +129,7 @@ export async function faturaAktariminiCalistir({ client, yil, ay, tur, yon, parc
         await kaydet({ is: null })
         throw new Error('VPS doğrulanmış bir dosya listesi veya boş sonuç döndürmedi.')
       }
-      await kaydet({ is: null, dosyalar, zipYoluIle: sonuc.zipYoluIle })
+      await kaydet({ is: null, dosyalar, zipYoluIle: sonuc.zipYoluIle, iptalItirazDogrulandi: sonuc.iptalItirazDogrulandi === true })
     }
 
     let yeniSayi = 0

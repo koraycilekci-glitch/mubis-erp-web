@@ -1,9 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Camera, Upload, Trash2, Save, X, Eye, CheckCircle, AlertTriangle, FileText, Download, FileSpreadsheet } from 'lucide-react'
+import BelgeSeriKamera from './BelgeSeriKamera'
+import { belgeExcelIndir, belgeSatirlari } from '../utils/belgeTarama'
 import { supabase } from '../lib/supabase'
 import { processZReportImage, processZReportImagesBatch, convertToAccountingEntry, pdfIlkSayfaResmi, zRaporExcelOku } from '../services/zReportOCRService'
 import { saveZReport, updateZReportParsedData, createAccountingEntries } from '../services/zReportService'
 import { convertToLucaFormat, downloadLucaCSV, downloadLucaExcel, convertToDefterFormat, downloadDefterExcel } from '../services/zReportExportService'
+
+function incelemeVerisi(parsed) {
+  return parsed?.kdvOraniVarsayildi ? { ...parsed, satis20: 0, matrah20: 0, kdv20: 0, toplamKdv: null } : parsed
+}
 
 export default function ZReportManager({ clientId, clientName, clientType }) {
   // clientId null/undefined ise bile component render edilsin
@@ -14,6 +20,8 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
   const [uploading, setUploading] = useState(false)
   const [selectedFiles, setSelectedFiles] = useState([])
   const [previewUrls, setPreviewUrls] = useState([])
+  const [seriKamera, setSeriKamera] = useState(false)
+  const seriKamerayiKapat = useCallback(() => setSeriKamera(false), [])
   const [currentFileIndex, setCurrentFileIndex] = useState(0)
   const [msg, setMsg] = useState('')
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
@@ -61,13 +69,18 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
     }
   }
 
-  const handleFileSelect = async (e) => {
+  const handleFileSelect = (event) => {
+    const files = Array.from(event.currentTarget.files)
+    event.currentTarget.value = ''
+    return dosyalariEkle(files)
+  }
+
+  const dosyalariEkle = async (files) => {
     if (!clientId) {
       setMsg('Musteri ID bulunamadi. Lutfen tekrar giris yapin.')
       setTimeout(() => setMsg(''), 3000)
       return
     }
-    const files = Array.from(e.target.files)
     if (!files.length) return
 
     // Resim + PDF kabul edilir; PDF'ler OCR icin ilk sayfadan resme cevrilir
@@ -191,7 +204,7 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
               file: selectedFiles[i],
               previewUrl: previewUrls[i],
               rawText: result.rawText,
-              parsed: p,
+              parsed: incelemeVerisi(p),
               parsedList: [p],
               confidence: p.confidence || 0,
               subIndex: liste.length > 1 ? j + 1 : 0
@@ -211,7 +224,7 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
             file: selectedFiles[0],
             previewUrl: previewUrls[0],
             rawText: result.rawText,
-            parsed: p,
+            parsed: incelemeVerisi(p),
             parsedList: [p],
             confidence: p.confidence || 0,
             subIndex: j + 1
@@ -221,7 +234,7 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
           setBatchResults(expanded)
           setMsg(`Fotografta ${expanded.length} Z raporu bulundu`)
         } else {
-          setOcrResult(result)
+          setOcrResult({ ...result, parsed: incelemeVerisi(result.parsed) })
           setMsg('OCR tamamlandi')
         }
         setShowOcrModal(true)
@@ -304,18 +317,27 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
 
     await updateZReportParsedData(report.id, {
       rawText: parsedData.rawText || '',
-      ...parsedData
+      ...parsedData,
+      zNo: parsedData.evrakNo,
+      totalAmount: parsedData.toplamSatis,
+      totalKdv: parsedData.toplamKdv ?? ((parsedData.kdv1 || 0) + (parsedData.kdv10 || 0) + (parsedData.kdv20 || 0)),
+      kdvMatrah: (parsedData.matrah1 || 0) + (parsedData.matrah10 || 0) + (parsedData.matrah20 || 0),
+      cashAmount: parsedData.nakit,
+      creditCardAmount: parsedData.krediKarti,
+      otherAmount: parsedData.havale
     })
 
-    const entries = convertToAccountingEntry(clientType, parsedData)
-    await createAccountingEntries(clientId, report.id, entries)
+    if (!belgeSatirlari({ parsed_data: parsedData }, true).some(row => row[3] === 'Kontrol gerekli')) {
+      const entries = convertToAccountingEntry(clientType, parsedData)
+      await createAccountingEntries(clientId, report.id, entries)
+    }
     
     return report
   }
 
   const updateBatchResult = (index, field, value) => {
     setBatchResults(prev => prev.map((r, i) =>
-      i === index ? { ...r, parsed: { ...r.parsed, [field]: value } } : r
+      i === index ? { ...r, parsed: { ...r.parsed, [field]: value, kdvOraniVarsayildi: ['satis20', 'matrah20', 'kdv20'].includes(field) ? false : r.parsed.kdvOraniVarsayildi } } : r
     ))
   }
 
@@ -407,8 +429,11 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
                 <p className="text-sm text-gray-400">Kamera ile Cek</p>
                 <p className="text-xs text-gray-500">Telefon kamerasi acilir</p>
               </div>
-              <input type="file" className="hidden" accept="image/*" capture="environment" onChange={handleFileSelect} />
+              <input type="file" disabled={uploading || processingOCR} className="hidden" accept="image/*" capture="environment" onChange={handleFileSelect} />
             </label>
+            <button type="button" disabled={!clientId || uploading || processingOCR || selectedFiles.length >= 10} onClick={() => setSeriKamera(true)} className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-blue-500/60 bg-blue-800/40 px-3 py-2 text-sm text-white disabled:opacity-50">
+              <Camera className="h-4 w-4" /> Seri Çekim
+            </button>
             
             {/* Galeriden Sec (Resim / PDF) */}
             <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-blue-700/50 rounded-xl cursor-pointer hover:border-blue-500/50 hover:bg-blue-900/20 transition-colors">
@@ -417,7 +442,7 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
                 <p className="text-sm text-gray-400">Resim / PDF Sec</p>
                 <p className="text-xs text-gray-500">JPG, PNG, PDF (En fazla 10 dosya)</p>
               </div>
-              <input type="file" className="hidden" accept="image/*,.pdf,application/pdf" multiple onChange={handleFileSelect} />
+              <input type="file" disabled={uploading || processingOCR} className="hidden" accept="image/*,.pdf,application/pdf" multiple onChange={handleFileSelect} />
             </label>
 
             {/* Excel ile Yukle */}
@@ -519,12 +544,15 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
         </div>
       </div>
 
+      {seriKamera && <BelgeSeriKamera kalan={10 - selectedFiles.length} onCek={file => dosyalariEkle([file])} onKapat={seriKamerayiKapat} />}
+
       {/* Liste */}
       <div className="bg-blue-800/20 rounded-2xl p-6 border border-blue-700/30">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-white">Z Raporlari - {months[selectedMonth]} {selectedYear}</h3>
           {reports.length > 0 && (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              <button type="button" disabled={loading || !reports.length} onClick={() => belgeExcelIndir(reports, selectedYear + '-' + String(selectedMonth + 1).padStart(2, '0'), true).catch(() => setMsg('Excel dosyası hazırlanamadı.'))} className="flex items-center gap-1 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs text-white disabled:opacity-50"><Download className="h-3 w-3" /> KDV Dökümü Excel</button>
               <button onClick={() => downloadLucaCSV(convertToLucaFormat(reports, {name: clientName, client_type: clientType}))} className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1">
                 <Download className="w-3 h-3" /> Luca CSV
               </button>
@@ -592,7 +620,7 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
       {/* OCR Modal */}
       {showOcrModal && ocrResult && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-blue-900 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-blue-700/30">
+          <div className="bg-blue-900 rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto border border-blue-700/30">
             <div className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-white">OCR Sonuclari - Duzeltme</h3>
@@ -601,6 +629,10 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
                 </button>
               </div>
 
+              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
+                {previewUrls[0] && <a href={previewUrls[0]} target="_blank" rel="noreferrer" aria-label="Z raporu görselini büyüt"><img src={previewUrls[0]} alt="Z raporu görseli" className="max-h-[55vh] w-full rounded-lg bg-black/20 object-contain" /></a>}
+                <div>
+              {belgeSatirlari({ parsed_data: ocrResult.parsed }, true).some(row => row[3] === 'Kontrol gerekli') && <p className="mb-3 text-sm text-amber-300">KDV kontrolü gerekli. Tutarlar düzeltilmezse rapor saklanır ancak muhasebe fişi oluşturulmaz.</p>}
               <div className="grid grid-cols-2 gap-4 mb-4">
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Tarih</label>
@@ -616,7 +648,7 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
                 {['satis0', 'satis1', 'satis10', 'satis20', 'nakit', 'krediKarti', 'matrah1', 'matrah10', 'matrah20', 'kdv1', 'kdv10', 'kdv20'].map(field => (
                   <div key={field}>
                     <label className="block text-xs text-gray-400 mb-1">{field.toUpperCase()}</label>
-                    <input type="number" step="0.01" value={ocrResult.parsed[field] || 0} onChange={e => setOcrResult({...ocrResult, parsed: {...ocrResult.parsed, [field]: parseFloat(e.target.value) || 0}})} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm" />
+                    <input type="number" step="0.01" value={ocrResult.parsed[field] || 0} onChange={e => setOcrResult({...ocrResult, parsed: {...ocrResult.parsed, [field]: parseFloat(e.target.value) || 0, kdvOraniVarsayildi: ['satis20', 'matrah20', 'kdv20'].includes(field) ? false : ocrResult.parsed.kdvOraniVarsayildi}})} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm" />
                   </div>
                 ))}
               </div>
@@ -627,8 +659,10 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
               </div>
 
               <button onClick={() => setShowOcrModal(false)} className="w-full bg-blue-600 text-white py-2 rounded-lg">
-                Kaydet ve Kapat
+                İncelemeyi Kapat
               </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -650,7 +684,7 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
                 {batchResults.map((result, index) => (
                   <div key={index} className="bg-blue-800/30 rounded-lg p-4 border border-blue-700/30">
                     <div className="flex items-center gap-2 mb-3">
-                      <img src={result.previewUrl} alt="" className="w-10 h-10 object-cover rounded bg-black/20" />
+                      <a href={result.previewUrl} target="_blank" rel="noreferrer" className="flex shrink-0 items-center gap-2 text-xs text-blue-300"><img src={result.previewUrl} alt="" className="h-14 w-14 rounded bg-black/20 object-contain" /> Görseli Büyüt</a>
                       <span className="text-sm text-white">{result.file.name}{result.subIndex ? ` (#${result.subIndex})` : ''}</span>
                     </div>
                     <div className="grid grid-cols-2 gap-3 mb-3">
@@ -676,7 +710,7 @@ export default function ZReportManager({ clientId, clientName, clientType }) {
               </div>
 
               <button onClick={() => setShowOcrModal(false)} className="w-full bg-blue-600 text-white py-2 rounded-lg mt-4">
-                Kaydet ve Kapat
+                İncelemeyi Kapat
               </button>
             </div>
           </div>

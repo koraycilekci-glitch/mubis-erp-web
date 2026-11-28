@@ -578,6 +578,7 @@ function parseZReportOCRText(text) {
   // KDV'li satis kategorileri bos ama toplam satis varsa %20 varsayimiyla dagit
   if (result.toplamSatis > 0 && result.satis0 + result.satis1 + result.satis10 + result.satis20 === 0) {
     result.satis20 = result.toplamSatis
+    result.kdvOraniVarsayildi = true
   }
 
   // ===== 2.7.388: CAPRAZ DOGRULAMA / FIS DENGELEME =====

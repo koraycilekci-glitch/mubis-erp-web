@@ -17579,6 +17579,7 @@ const ISLER = {
             // dene. Boylece 60 tur (~20 dk) bos donmek yerine ~2-3 dk'da
             // kendini toparlar.
             if (/LUCA_SSO_TAKILDI/i.test(e && e.message || "")) {
+              p._ilerleme?.("luca-girisi");
               try { await ISLER["luca-oturumu-kapat"]({}); } catch { }
               try {
                 page = null;
@@ -18348,6 +18349,104 @@ const ISLER = {
     } catch (e) {
       log("HATA: " + (e && e.message));
       return { ok: false, error: e && e.message || "OKC bildirim sorgulanamadi" };
+    }
+  },
+  "z-raporu-tara": async (p) => {
+    const etiket = "z-raporu-tara";
+    const log = (m) => console.log(`[${etiket}] ${m}`);
+    const fs = require("fs");
+    const path = require("path");
+    try {
+      const resimYolu = String(p.resimYolu || p.imagePath || "").trim();
+      if (!resimYolu) throw new Error("Resim dosyasi yolu eksik.");
+      if (!fs.existsSync(resimYolu)) throw new Error("Resim dosyasi bulunamadi: " + resimYolu);
+      log("OCR basliyor: " + resimYolu);
+
+      // Tesseract worker olustur (Turkce + Ingilizce)
+      const { createWorker } = require("tesseract.js");
+      const worker = await createWorker("tur+eng", 1, {
+        logger: (m) => { if (m.status === "recognizing text") log("OCR: %" + Math.round(m.progress * 100)) }
+      });
+      const { data: { text } } = await worker.recognize(resimYolu);
+      await worker.terminate();
+      log("OCR tamamlandi. Metin uzunlugu: " + text.length);
+
+      // Z raporu alanlarini parse et
+      const satirlar = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      const metin = satirlar.join("\n");
+
+      // Yardimci: regex ile deger bul
+      const bul = (desenler) => {
+        for (const d of desenler) {
+          const m = metin.match(d);
+          if (m && m[1]) return m[1].trim();
+        }
+        return "";
+      };
+      const sayiBul = (desenler) => {
+        const v = bul(desenler);
+        return v.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
+      };
+
+      // Tarih: DD.MM.YYYY veya DD/MM/YYYY
+      const tarih = bul([/(\d{2}[.\/]\d{2}[.\/]\d{4})/, /Tarih[:\s]*(\d{2}[.\/]\d{2}[.\/]\d{4})/i]);
+      // Saat: HH:MM
+      const saat = bul([/(\d{2}:\d{2}(?::\d{2})?)/, /Saat[:\s]*(\d{2}:\d{2})/i]);
+      // Firma adi: genellikle ilk satirlarda
+      const firma = bul([/Firma[:\s]*(.+)/i, /Unvan[:\s]*(.+)/i, /Isyeri[:\s]*(.+)/i]);
+      // VKN
+      const vkn = bul([/VKN[:\s]*(\d{10,11})/i, /Vergi No[:\s]*(\d{10,11})/i, /(\d{10,11})/]);
+      // Fis No
+      const fisNo = bul([/Fis No[:\s]*(\S+)/i, /Fi�? No[:\s]*(\S+)/i, /Belge No[:\s]*(\S+)/i]);
+      // Matrah/KDV oranlari
+      const matrah0 = sayiBul([/%0.*?(\d[\d.,]*)/i, /Matrah.*?%0.*?(\d[\d.,]*)/i]);
+      const matrah1 = sayiBul([/%1\b.*?(\d[\d.,]*)/i]);
+      const matrah10 = sayiBul([/%10.*?(\d[\d.,]*)/i]);
+      const matrah20 = sayiBul([/%20.*?(\d[\d.,]*)/i]);
+      const kdv1 = sayiBul([/KDV.*?%1.*?(\d[\d.,]*)/i]);
+      const kdv10 = sayiBul([/KDV.*?%10.*?(\d[\d.,]*)/i]);
+      const kdv20 = sayiBul([/KDV.*?%20.*?(\d[\d.,]*)/i]);
+      const toplamKdv = sayiBul([/Toplam KDV[:\s]*(\d[\d.,]*)/i, /KDV Toplam[:\s]*(\d[\d.,]*)/i]);
+      const genelToplam = sayiBul([/Genel Toplam[:\s]*(\d[\d.,]*)/i, /Toplam[:\s]*(\d[\d.,]*)/i]);
+      // Odeme turleri
+      const nakit = sayiBul([/Nakit[:\s]*(\d[\d.,]*)/i]);
+      const krediKarti = sayiBul([/Kredi Kart[ıi][:\s]*(\d[\d.,]*)/i, /Banka.*Kart[:\s]*(\d[\d.,]*)/i]);
+      // Hesap kodu/adı
+      const hesapKodu = bul([/Hesap Kodu[:\s]*(\S+)/i]);
+      const hesapAdi = bul([/Hesap Ad[ıi][:\s]*(.+)/i]);
+      // Güven skoru (Tesseract confidence - ortalama)
+      const guven = "OCR";
+
+      const sonuc = {
+        ok: true,
+        resimYolu,
+        tarih,
+        saat,
+        firma,
+        vkn,
+        fisNo,
+        matrah0,
+        matrah1,
+        matrah10,
+        matrah20,
+        kdv1,
+        kdv10,
+        kdv20,
+        toplamKdv,
+        genelToplam,
+        nakit,
+        krediKarti,
+        hesapKodu,
+        hesapAdi,
+        guven,
+        hamMetin: text,
+        satirlar
+      };
+      log("Parse tamamlandi: " + JSON.stringify({ tarih, firma, vkn, genelToplam }));
+      return sonuc;
+    } catch (e) {
+      log("HATA: " + (e && e.message));
+      return { ok: false, error: e && e.message || "OCR hatasi" };
     }
   },
   "luca-edefter-olustur": async (p) => {
@@ -34941,7 +35040,7 @@ async function protokolIsle(gelenUrl) {
       const captchaSonuc = await guvenlikKoduDoldur(page, "gib-odeme-protokol", { buton: "sorgula" }).catch((e) => ({ ok: false, neden: "hata: " + (e?.message || e) }));
       console.log("[protokol] captcha sonucu:", JSON.stringify(captchaSonuc));
     } else if (ISLER[isAdi]) {
-      if (["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle", "fis-tarama", "fis-bol", "luca-edefter-olustur"].includes(isAdi) && !CONFIG.adminMod) {
+      if (["efatura-sorgula", "luca-giris", "luca-oturumu-kapat", "toplu-belge-duzenle", "fis-tarama", "fis-bol", "z-raporu-tara", "luca-edefter-olustur"].includes(isAdi) && !CONFIG.adminMod) {
         console.log("[protokol]", isAdi, "| reddedildi: adminMod kapali");
         const page = await sayfaAc("about:blank");
         await page.setContent('<h3 style="font-family:sans-serif">Luca entegrasyonu yalnizca muhasebe ofisi (admin) kurulumunda etkindir.</h3>');

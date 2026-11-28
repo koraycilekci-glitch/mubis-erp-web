@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
@@ -52,7 +52,7 @@ import { musteriManuelFisEkle } from '../services/taramaService'
 
 import FisDokumTablosu from '../components/FisDokumTablosu'
 import { fisKaydiMi } from '../utils/fisDetay'
-import { faturalariGetir, faturaGruplari, faturaTuruAdi, faturaTurEslesir, faturaTurEtiketi, belgeTuruAdi, kdvDetaylariGetir, fisKdvDetayUret } from '../services/efaturaService'
+import { faturalariGetir, uttsUnvanlariniGetir, faturaGruplari, faturaTuruAdi, faturaTurEslesir, faturaTurEtiketi, belgeTuruAdi, kdvDetaylariGetir, fisKdvDetayUret } from '../services/efaturaService'
 import { kdvDurumuGetir } from '../services/kdvDurumService'
 import { krediKartiHasilatGetir, dvsSorgula } from '../services/dvsSorguService'
 import { ublAyikla, faturaHtmlOlustur, gomuluXsltGorunumu } from '../utils/faturaGorunum'
@@ -232,6 +232,10 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
 
   // e-Fatura / e-Arsiv faturalari (Faturalarim sekmesi)
   const [faturalar, setFaturalar] = useState([])
+  const [uttsUnvanMesaj, setUttsUnvanMesaj] = useState('')
+  const faturaIstekRef = useRef(0)
+  const faturaClientRef = useRef(clientId)
+  faturaClientRef.current = clientId
   const [kdvDurum, setKdvDurum] = useState(null)
   const [kdvDurumYukleniyor, setKdvDurumYukleniyor] = useState(false)
   const [kdvDetayAc, setKdvDetayAc] = useState(false)
@@ -700,10 +704,33 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
   // e-Fatura / e-Arsiv faturalari
   const faturalariYukle = async () => {
     if (!clientId) return
+    const istek = ++faturaIstekRef.current
+    const guncel = () => istek === faturaIstekRef.current && faturaClientRef.current === clientId
+    setUttsUnvanMesaj('')
     try {
       const liste = await faturalariGetir(clientId)
+      if (!guncel()) return
       setFaturalar(liste)
+      const eksik = liste.filter(f => f.tur === 'utts' && (!f.karsi_unvan || /^utts$/i.test(String(f.karsi_unvan).trim()) || String(f.karsi_unvan).trim() === String(f.karsi_vkn || '').trim()))
+      const sorgulanabilir = eksik.some(f => /^\d{10,11}$/.test(String(f.karsi_vkn || '').trim()))
+      if (sorgulanabilir) {
+        setUttsUnvanMesaj('UTTS ünvanları vergi numarasından sorgulanıyor…')
+        void uttsUnvanlariniGetir(clientId, eksik).then(unvanlar => {
+          if (!guncel()) return
+          setFaturalar(onceki => onceki.map(f => {
+            const vkn = String(f.karsi_vkn || '').trim()
+            const unvan = String(f.karsi_unvan || '').trim()
+            return f.tur === 'utts' && unvanlar[vkn] && (!unvan || /^utts$/i.test(unvan) || unvan === vkn) ? { ...f, karsi_unvan: unvanlar[vkn] } : f
+          }))
+          const eksikVkn = eksik.some(f => !/^\d{10,11}$/.test(String(f.karsi_vkn || '').trim()))
+          const bulunamayan = eksik.some(f => /^\d{10,11}$/.test(String(f.karsi_vkn || '').trim()) && !unvanlar[String(f.karsi_vkn).trim()])
+          setUttsUnvanMesaj(eksikVkn ? 'Bazı UTTS kayıtlarının vergi numarası kaynak dosyadan doğrulanamadı.' : bulunamayan ? 'Bazı UTTS ünvanları GİB sorgusunda bulunamadı.' : '')
+        }).catch(error => {
+          if (guncel()) setUttsUnvanMesaj('UTTS ünvan sorgusu yapılamadı: ' + (error?.message || 'GİB bağlantı hatası'))
+        })
+      } else if (eksik.length) setUttsUnvanMesaj('UTTS kayıtlarının vergi numarası kaynak dosyadan doğrulanamadı.')
       const birlestir = (h) => {
+        if (!guncel()) return
         const b = { ...h }
         for (const f of liste) {
           const detay = fisKdvDetayUret(f)
@@ -3223,6 +3250,7 @@ export default function ClientPortal({ embedded = false, initialTab = null, owne
               </select>
             </div>
 
+            {uttsUnvanMesaj && <p role="status" className="mb-3 text-xs text-gray-300">{uttsUnvanMesaj}</p>}
             {gorunenFaturalar.length === 0 ? (
               <div className="text-center py-8 text-gray-400">
                 <Receipt className="w-10 h-10 mx-auto mb-3 text-gray-600" />

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Trash2, Save, Send, FileText, RefreshCw, ChevronDown, ChevronRight, Eraser, Loader2, Users, Smartphone, Apple, PlayCircle } from 'lucide-react'
 import { getClients } from '../services/clientService'
+import { clientDisplayName, sortClients } from '../utils/clientDisplay'
 import { pdfMetinOku } from '../services/efaturaService'
 import { getAppSetting, setAppSetting, listAppSettings, deleteAppSetting } from '../services/settingsService'
 import { gibYardimciIs, musteriGirisBilgileriGetir, gibYardimciDevamEt, gibYardimciIptal, gibYardimciGonderimDurumu } from '../utils/gibOdemeHelper'
@@ -1071,7 +1072,7 @@ export default function EFaturaKesim({ clientId, allowedTurs = ['earsiv'], basli
           <label className="text-blue-300 text-xs font-medium mb-1.5 block">Müşteri</label>
           <select value={secilenClient} onChange={(e) => { setSecilenClient(e.target.value); setMesaj(null) }} className={cls}>
             <option value="">Müşteri seçin...</option>
-            {clients.slice().sort((a, b) => (a.name || a.ad || a.isim || '').localeCompare(b.name || b.ad || b.isim || '', 'tr')).map(c => <option key={c.id} value={c.id}>{c.name || c.ad || c.isim || c.id}</option>)}
+            {sortClients(clients).map(c => <option key={c.id} value={c.id}>{clientDisplayName(c)}</option>)}
           </select>
         </div>
       )}

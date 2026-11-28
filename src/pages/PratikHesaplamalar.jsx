@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Calculator, Briefcase, Receipt, Shield, FileText, Save, Trash2, Edit3, FileDown, RotateCcw } from 'lucide-react'
 import { useParameters } from '../hooks/useParameters'
 import { useClients } from '../hooks/useClients'
+import { clientDisplayName, sortClients } from '../utils/clientDisplay'
 import * as D from '../data/defaults'
 import { jsPDF } from 'jspdf'
 import { formatTurkishInput, parseTurkishNumber, hamTutarGirdisi } from '../utils/numberFormat'
@@ -447,7 +448,7 @@ function IhbarKidem() {
               ]} />
               {isverenKaynak === 'musteri' && (
                 <Select label="Musteri Sec" value={selectedClient} onChange={setSelectedClient}
-                  options={[{ value: '', label: '-- Secin --' }, ...clients.slice().sort((a, b) => (a.name || a.company || "").localeCompare(b.name || b.company || "", "tr")).map(c => ({ value: String(c.id), label: c.type === 'company' ? (c.company || c.name) : c.name }))]} />
+                  options={[{ value: '', label: '-- Secin --' }, ...sortClients(clients).map(c => ({ value: String(c.id), label: clientDisplayName(c) }))]} />
               )}
               <Input label="Isveren Adi / Unvani" value={isverenAd} onChange={setIsverenAd} type="text" disabled={isverenKaynak === 'musteri' && !!selectedClient} />
               <TextArea label="Isveren Adresi" value={isverenAdres} onChange={setIsverenAdres} />

@@ -3,6 +3,7 @@
 // Storage'dan GERCEK indirilir (demo degil).
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useClients } from '../hooks/useClients'
+import { clientDisplayName, sortClients } from '../utils/clientDisplay'
 import { Download, RefreshCw, FileArchive, Eye, Loader2, Trash2, FolderOpen, Upload } from 'lucide-react'
 import { tumFaturalariGetir, faturaTuruAdi, faturaTurEslesir, faturaTurEtiketi, klasordekiFaturalariAktar, faturalariSil, manuelFaturaYukle } from '../services/efaturaService'
 import FisModal from '../components/FisModal'
@@ -422,7 +423,7 @@ ${b.kalemler.map((k, i) => `<tr><td>${i + 1}</td><td>${k.ad}</td><td>${k.miktar}
             <label className="text-gray-400 text-xs block mb-1">Müşteri</label>
             <select value={seciliClient} onChange={(e) => setSeciliClient(e.target.value)} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400 transition-colors">
               <option value="all">Tüm Müşteriler</option>
-              {(clients || []).slice().sort((a, b) => (a.name || a.company || a.shortName || '').localeCompare(b.name || b.company || b.shortName || '', 'tr')).map(c => <option key={c.id} value={c.id}>{c.name || c.company || c.shortName}</option>)}
+              {sortClients(clients).map(c => <option key={c.id} value={c.id}>{clientDisplayName(c)}</option>)}
             </select>
           </div>
           <div>

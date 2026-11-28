@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useClients } from '../hooks/useClients'
+import { clientDisplayName, sortClients } from '../utils/clientDisplay'
 import {
   Inbox, RefreshCw, Search, Download, Eye, EyeOff,
   MessageCircle, Mail, AlertTriangle, Loader2, Trash2, Users, Clock, X
@@ -740,8 +741,8 @@ const seciliMusteri = hepsiSecili ? null : musteriler.find(m => String(m.id) ===
             >
               <option value="">Müşteri seçin…</option>
               <option value="hepsi">Tüm müşteriler (Hepsi)</option>
-              {musteriler.map(c => (
-                <option key={c.id} value={c.id}>{c.name || c.company}</option>
+              {sortClients(musteriler).map(c => (
+                <option key={c.id} value={c.id}>{clientDisplayName(c)}</option>
               ))}
             </select>
           </div>

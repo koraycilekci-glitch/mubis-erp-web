@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Calculator, FileSpreadsheet, CheckCircle2, RefreshCw, Search, Loader2, ChevronDown, Undo2, Building2, Upload, Download } from 'lucide-react'
 import { useClients } from '../hooks/useClients'
+import { clientDisplayName } from '../utils/clientDisplay'
 import {
   hesapPlaniGetir, kurallariGetir, kuralKaydet,
   faturalariGetir, faturaHesapKaydet, faturaOnayKaldir, faturaDurumGuncelle, lucaExcelIndir,
@@ -14,7 +15,7 @@ import { kdvDetaylariGetir, lucaHesapEkle } from '../services/efaturaService'
 const tl = (n) => (Number(n) || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 // Client kayitlarinda ünvan alani "name"/"company"/"shortName" — "unvan" yoktu,
 // secenekler bos metinle render oluyordu (acilir liste bos gorunuyordu).
-const musteriAdi = (c) => c?.name || c?.company || c?.shortName || `Müşteri #${c?.id}`
+const musteriAdi = clientDisplayName
 
 // Kod yazarak arama + açılır liste hesap seçici (2.7.463 muhasebe akışı).
 // onMouseDown kullanilir: blur önce tetiklenip secim tikini diye.

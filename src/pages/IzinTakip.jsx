@@ -6,7 +6,8 @@ import PersonelKayitlari from './izin/PersonelKayitlari'
 import IzinGirisiSorgulama from './izin/IzinGirisiSorgulama'
 import KidemIhbarHesap from './izin/KidemIhbarHesap'
 import SaglikRapor from './izin/SaglikRapor'
-import { asArray, clientName } from './izin/izinUtils'
+import { asArray } from './izin/izinUtils'
+import { clientDisplayName, sortClients } from '../utils/clientDisplay'
 
 const TABS = [
   { key: 'personel', label: 'Personel', icon: Users },
@@ -17,10 +18,7 @@ const TABS = [
 
 export default function IzinTakip({ clientId: propClientId }) {
   const { clients = [] } = useClients()
-  // 2.7.5xx: Müşteri listesi açılır listede alfabetik (Türkçe) — tüm rollerde
-  const clientList = (Array.isArray(clients) ? clients : [])
-    .slice()
-    .sort((a, b) => clientName(a).localeCompare(clientName(b), 'tr'))
+  const clientList = sortClients(Array.isArray(clients) ? clients : [])
   const [clientId, setClientId] = useState(propClientId || '')
   const [employees, setEmployees] = useState([])
   const [activeTab, setActiveTab] = useState('personel')
@@ -74,7 +72,7 @@ export default function IzinTakip({ clientId: propClientId }) {
           >
             <option value="">Müşteri seçin</option>
             {clientList.filter((client) => client?.id).map((client) => (
-              <option key={client.id} value={client.id}>{clientName(client)}</option>
+              <option key={client.id} value={client.id}>{clientDisplayName(client)}</option>
             ))}
           </select>
         )}

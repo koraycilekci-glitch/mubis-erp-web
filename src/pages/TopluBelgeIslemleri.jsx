@@ -2,6 +2,7 @@ import { Fragment, useMemo, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useClients } from '../hooks/useClients'
+import { clientDisplayName } from '../utils/clientDisplay'
 import {
   Loader2, Play, Eye, CheckCircle2, XCircle, AlertTriangle, Search,
   Users, User, ChevronDown, ChevronRight, Info, RefreshCw, ScanLine,
@@ -16,7 +17,7 @@ const yilSecenekleri = () => {
   return Array.from({ length: 6 }, (_, i) => bu - 3 + i)
 }
 
-const musteriAdi = (c) => c?.name || c?.company || c?.shortName || `Müşteri #${c?.id}`
+const musteriAdi = clientDisplayName
 
 // Sunucudan gelen teknik adim kodlarini okunur etiketlere cevirir.
 const ADIM_ETIKETLERI = {

@@ -3,6 +3,7 @@ import { Loader2, RefreshCw, Upload, FileSpreadsheet, FileText, Receipt, Percent
 import { fisListesi, fisYukle, fisManuelEkle, mukerrerBul, taramaFotoUrl, taramaSil } from '../services/taramaService'
 import BilgisayarTarama from '../components/BilgisayarTarama'
 import { supabase } from '../lib/supabase'
+import { clientDisplayName, sortClients } from '../utils/clientDisplay'
 import { fisDetaylariniDogrula, fisOranSatirlari } from '../utils/fisDetay'
 import FisElleEkleTablosu, { elleBosSatir, elleSatirHesap, donemUyumsuz, sayiAl } from '../components/FisElleEkleTablosu'
 
@@ -557,7 +558,7 @@ export default function Fisler() {
         <div className="flex flex-wrap items-center gap-2">
           <select value={yukMusteri} onChange={e => setYukMusteri(e.target.value)} className="bg-blue-900/60 border border-blue-700/60 rounded-lg px-3 py-2 text-white text-sm min-w-[170px]">
             <option value="">Tüm müşteriler</option>
-            {musteriler.map(m => <option key={m.id} value={m.id}>{m.name || m.company}</option>)}
+            {sortClients(musteriler).map(m => <option key={m.id} value={m.id}>{clientDisplayName(m)}</option>)}
           </select>
           <select value={yukAy} onChange={e => setYukAy(Number(e.target.value))} className="bg-blue-900/60 border border-blue-700/60 rounded-lg px-3 py-2 text-white text-sm">
             {AYLAR.map((a, i) => <option key={a} value={i + 1}>{a}</option>)}

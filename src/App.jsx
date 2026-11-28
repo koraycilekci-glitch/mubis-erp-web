@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavig
 const ClientKiraStopaj = lazy(() => import('./pages/ClientKiraStopaj'))
 const StorageLinkHandler = () => null
 import { useAuth } from './context/AuthContext'
+import { mobilTaramaYolu } from './utils/mobilTarama'
 import { yardimciIsYerel } from './utils/gibOdemeHelper'
 import Navbar from './components/Navbar'
 import YardimciSurumUyari from './components/YardimciSurumUyari'
@@ -96,6 +97,14 @@ function AdminBeyannamelerim() {
   )
 }
 
+function TaramaYuklemeEkrani({ tip }) {
+  const { user, profile, dbHatasi, dbYenidenDene } = useAuth()
+  if (!user) return <Navigate to={`/giris?tarama=${tip === 'zrapor' ? 'z' : 'gider'}`} replace />
+  if (!profile || profile.id !== user.authUserId) return <div className="p-6 text-white">{dbHatasi ? <>Kullanıcı yetkisi doğrulanamadı. <button className="underline" onClick={dbYenidenDene}>Tekrar dene</button></> : 'Kullanıcı yetkisi doğrulanıyor...'}</div>
+  if (!['admin', 'super_admin', 'personel'].includes(profile.role)) return <Navigate to="/portal" replace />
+  return <AdminOcrYukle tip={tip} />
+}
+
 function RootRedirect() {
   const { user, loading } = useAuth()
   if (loading) {
@@ -187,7 +196,7 @@ function AppContent() {
 
   // Gecici sifre varsa sifre degistirme sayfasina zorla
   if (needsPasswordChange && user && location.pathname !== '/sifre-degistir') {
-    return <Navigate to="/sifre-degistir" replace />
+    return <Navigate to={`/sifre-degistir${location.pathname === '/giris' && mobilTaramaYolu(location.search) ? location.search : ''}`} replace />
   }
 
   // 2.7.575: Müşteri admin sayfalarına düşemesin (ör. asistan tebligat bildirimi
@@ -293,8 +302,8 @@ function AppContent() {
           <Route path="/admin/kredi-karti-hasilat" element={<KrediKartiHasilat />} />
           <Route path="/admin/musteri-borc-dokumu" element={<MusteriBorcDokumu />} />
           <Route path="/admin/efatura-islemleri" element={<EFaturaKesim />} />
-          <Route path="/admin/z-raporu-yukle" element={<AdminOcrYukle tip="zrapor" />} />
-          <Route path="/admin/gider-fisi-yukle" element={<AdminOcrYukle tip="gider" />} />
+          <Route path="/admin/z-raporu-yukle" element={<TaramaYuklemeEkrani tip="zrapor" />} />
+          <Route path="/admin/gider-fisi-yukle" element={<TaramaYuklemeEkrani tip="gider" />} />
           <Route path="/admin/beyannamelerim" element={<AdminBeyannamelerim />} />
           <Route path="/admin/beyannamelerim/o/:ownerId" element={<AdminBeyannamelerim />} />
           <Route path="/admin/beyannamelerim/o/:ownerId/:tab" element={<AdminBeyannamelerim />} />

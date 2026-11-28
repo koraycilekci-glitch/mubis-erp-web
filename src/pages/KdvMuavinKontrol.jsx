@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useClients } from '../hooks/useClients'
+import { clientDisplayName, sortClients } from '../utils/clientDisplay'
 import { supabase } from '../lib/supabase'
 import { FileText, AlertTriangle, CheckCircle, XCircle, RefreshCw, Loader2, ChevronDown, ChevronUp, Download } from 'lucide-react'
 
@@ -106,7 +107,7 @@ export default function KdvMuavinKontrol() {
           <label className="text-sm text-blue-300 block mb-1">Müşteri</label>
           <select value={seciliMusteri || ''} onChange={e => setSeciliMusteri(e.target.value ? Number(e.target.value) : null)} className="w-full bg-blue-900/30 border border-blue-700/50 rounded-lg px-3 py-2 text-white text-sm">
             <option value="">Seçin...</option>
-            {(clients || []).slice().sort((a, b) => (a.name || a.company || a.shortName || '').localeCompare(b.name || b.company || b.shortName || '', 'tr')).map(c => <option key={c.id} value={c.id}>{c.name || c.company || c.shortName}</option>)}
+            {sortClients(clients).map(c => <option key={c.id} value={c.id}>{clientDisplayName(c)}</option>)}
           </select>
         </div>
         <div>

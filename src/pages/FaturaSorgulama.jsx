@@ -8,6 +8,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { Receipt, Layers, X, Search, Download, Users, FolderOpen, FileSpreadsheet, SlidersHorizontal, ChevronDown, Upload, Square, RefreshCw, Clock, CalendarCheck } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useClients } from '../hooks/useClients'
+import { clientDisplayName } from '../utils/clientDisplay'
 import { efaturaSorgula, dosyalariMubisYukle, edefterDokumleriniYukle, edefterTopluKopyala, faturaKopyalamaDosyalari, sorguYonleri, lucaDurumMetni, faturaIlerlemeMetni } from '../services/efaturaService'
 import { faturaAktarimAsamaMetni, faturaAktarimDurumlariniGetir, faturaAktariminiCalistir, lucaIslemiBelirsiz } from '../services/faturaAktarimService'
 import { yardimciIsSunucu, gibLucaSorguDurdur } from '../utils/gibOdemeHelper'
@@ -136,7 +137,7 @@ export default function FaturaSorgulama() {
 
   // 2.7.498: acilir listede TAM unvan gosterilir — Luca kisa adi yalnizca
   // tam unvan hic yoksa yedek olarak kullanilir.
-  const musteriAdi = (c) => c.name || c.company || c.shortName || `Müşteri #${c.id}`
+  const musteriAdi = clientDisplayName
   // Alfabetik siralama (Turkce duyarli): A -> Z — gorunen ada gore siralanir
   const siraliMusteriler = [...(clients || [])].sort((a, b) =>
     musteriAdi(a).localeCompare(musteriAdi(b), 'tr')

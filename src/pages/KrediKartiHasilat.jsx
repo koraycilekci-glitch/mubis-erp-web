@@ -8,6 +8,7 @@
 // ve metadata içindeki banka_detay / odeme_detay listeleri kullanılır.
 // Müşteri satırına tıklanınca detay tabloları açılır/kapanır.
 import { useEffect, useMemo, useState } from 'react'
+import { clientDisplayName } from '../utils/clientDisplay'
 import { useClients } from '../hooks/useClients'
 import { krediKartiHasilatGetir } from '../services/dvsSorguService'
 import { CreditCard, Wallet, ChevronDown, ChevronUp, Loader2, RefreshCw, Users } from 'lucide-react'
@@ -25,7 +26,7 @@ const sayi = (v) => {
 }
 
 function musteriAdi(c) {
-  return c?.name || c?.company || c?.shortName || `Müşteri #${c?.id}`
+  return clientDisplayName(c)
 }
 
 export default function KrediKartiHasilat() {

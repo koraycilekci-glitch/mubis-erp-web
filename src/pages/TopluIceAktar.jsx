@@ -4,6 +4,7 @@ import {
   RefreshCw, FolderSearch, Play
 } from 'lucide-react'
 import { useClients } from '../hooks/useClients'
+import { clientDisplayName, sortClients } from '../utils/clientDisplay'
 import { uploadBulkBeyanDocuments, uploadClientBulkDocument } from '../services/documentService'
 import { supabase } from '../lib/supabase'
 
@@ -338,8 +339,8 @@ export default function TopluIceAktar() {
                           className={`bg-blue-900/40 border rounded-lg px-2 py-1.5 text-white text-xs max-w-[200px] ${r.clientId ? 'border-blue-700/50' : 'border-yellow-500/60'}`}
                         >
                           <option value="">-- Musteri secin --</option>
-                          {clients.map(c => (
-                            <option key={c.id} value={c.id}>{c.name || c.company}</option>
+                          {sortClients(clients).map(c => (
+                            <option key={c.id} value={c.id}>{clientDisplayName(c)}</option>
                           ))}
                         </select>
                       )}

@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useClients } from '../hooks/useClients'
+import { clientDisplayName } from '../utils/clientDisplay'
 import { borcDokumuToplu, borcOzetle, borcDetaySatirlari, eskiBorclariSil, musteriBorclariSil } from '../services/borcDokumuService'
 import { gibBorcSorgula, sgkBorcSorgula, gibLucaSorguDurdur } from '../utils/gibOdemeHelper'
 import { openWhatsAppWeb, sendEmail } from '../services/whatsappService'
@@ -46,7 +47,7 @@ const sayi = (v) => {
   const n = Number(v)
   return isFinite(n) ? n : 0
 }
-const musteriAdi = (c) => c?.name || c?.company || c?.shortName || `Müşteri #${c?.id}`
+const musteriAdi = clientDisplayName
 
 const KPI_RENK = {
   amber: { kart: 'border-amber-500/30 bg-amber-500/[0.07]', ikon: 'bg-amber-500/15 text-amber-300', deger: 'text-amber-200' },

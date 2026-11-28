@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { FileArchive, Eye, EyeOff, Filter, Download, ExternalLink, FileText } from 'lucide-react'
 import { getAutomationDocuments, markDocumentRead } from '../services/automationService'
 import { useClients } from '../hooks/useClients'
+import { clientDisplayName, sortClients } from '../utils/clientDisplay'
 
 const TYPE_LABELS = {
   etebligat: 'e-Tebligat',
@@ -75,8 +76,8 @@ export default function OtomasyonBelgeler() {
               className="bg-blue-900/30 border border-blue-700/40 rounded-lg px-3 py-2 text-white text-sm focus:outline-none min-w-[180px]"
             >
               <option value="">Tümü</option>
-              {clients.slice().sort((a, b) => (a.name || a.company || '').localeCompare(b.name || b.company || '', 'tr')).map(c => (
-                <option key={c.id} value={c.id}>{c.name || c.company}</option>
+              {sortClients(clients).map(c => (
+                <option key={c.id} value={c.id}>{clientDisplayName(c)}</option>
               ))}
             </select>
           </div>

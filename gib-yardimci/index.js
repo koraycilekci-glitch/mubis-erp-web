@@ -1266,7 +1266,21 @@ const xmlPdfKopyalanan = new Set()
 // 2.7.147: izleyicinin EDEFTERE kopyaladigi ZIP'ler (her zip bir kez)
 const zipKopyalanan = new Set()
 
+const faturaPdfIslemleri = new Map()
+
 async function faturaPdfDosyasi(ad, dosyaCtx, kaynakKlasor = indirmeKlasoru) {
+  const anahtar = path.resolve(kaynakKlasor, ad.replace(/\.(xml|html?)$/i, '.pdf'))
+  const onceki = faturaPdfIslemleri.get(anahtar) || Promise.resolve()
+  const islem = onceki.catch(() => {}).then(() => faturaPdfDosyasiOlustur(ad, dosyaCtx, kaynakKlasor))
+  faturaPdfIslemleri.set(anahtar, islem)
+  try {
+    return await islem
+  } finally {
+    if (faturaPdfIslemleri.get(anahtar) === islem) faturaPdfIslemleri.delete(anahtar)
+  }
+}
+
+async function faturaPdfDosyasiOlustur(ad, dosyaCtx, kaynakKlasor) {
   const pdfAd = ad.replace(/\.(xml|html?)$/i, '.pdf')
   const pdfYol = path.join(kaynakKlasor, pdfAd)
   // 2.7.141: ORIJINAL GIB HTML onceliklidir. XML tasarim PDF'i once olustuysa

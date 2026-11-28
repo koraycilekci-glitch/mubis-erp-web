@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useClients } from '../hooks/useClients'
+import { clientDisplayName, sortClients } from '../utils/clientDisplay'
 import { supabase } from '../lib/supabase'
 import { uploadBulkBeyanDocuments } from '../services/documentService'
 import {
@@ -247,9 +248,9 @@ export default function TopluBeyanYukle() {
                           className="bg-blue-900/40 border border-blue-700/50 rounded-lg px-2 py-1.5 text-white text-xs min-w-[160px]"
                         >
                           <option value="">Müşteri seçin</option>
-                          {clients.slice().sort((a,b) => (a.name||a.company||"").localeCompare(b.name||b.company||"","tr")).map(c => (
+                          {sortClients(clients).map(c => (
                             <option key={c.id} value={c.id}>
-                              {c.name || c.company} {c.vkn ? `(${c.vkn})` : ''}
+                              {clientDisplayName(c)} {c.vkn ? `(${c.vkn})` : ''}
                             </option>
                           ))}
                         </select>

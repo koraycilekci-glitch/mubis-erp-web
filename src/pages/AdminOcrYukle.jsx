@@ -3,7 +3,9 @@
 // bilgisayardan yükleme bileşenleri (portal ile ayni) altta acilir.
 import { useEffect, useState } from 'react'
 import { Loader2, RefreshCw, Smartphone, Trash2, Receipt, ScanLine, ExternalLink } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
 import { useClients } from '../hooks/useClients'
+import { clientDisplayName, sortClients } from '../utils/clientDisplay'
 import ZReportManager from '../components/ZReportManager'
 import ExpenseUploader from '../components/ExpenseUploader'
 import { taramaListesi, taramaIsle, taramaSil, taramaFotoUrl } from '../services/taramaService'
@@ -20,6 +22,8 @@ export default function AdminOcrYukle({ tip = 'zrapor' }) {
 
   const zRaporMu = tip === 'zrapor'
   const baslik = zRaporMu ? 'Z Raporu Yükle' : 'Gider Fişi Yükle'
+  const telefonLinki = `${window.location.origin}/giris?tarama=${zRaporMu ? 'z' : 'gider'}`
+  const telefonLinkiUygun = window.location.protocol === 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)
   const aciklama = zRaporMu
     ? 'Müşteri seçin — telefondan gelen Z raporlarını işleyin veya bilgisayardan kamera/resim/PDF/Excel ile yükleyin (OCR ile okunup muhasebe fişlerine işlenir)'
     : 'Müşteri seçin — telefondan gelen fişleri işleyin veya bilgisayardan kamera/resim/PDF/Excel ile yükleyin (OCR ile okunup gider kayıtlarına işlenir)'
@@ -100,6 +104,18 @@ export default function AdminOcrYukle({ tip = 'zrapor' }) {
         <p className="text-gray-400 mt-1">{aciklama}</p>
       </div>
 
+      <div className="bg-blue-800/20 rounded-xl p-4 border border-cyan-700/40 mb-6 flex flex-col sm:flex-row gap-4 items-start">
+        {telefonLinkiUygun && <div className="bg-white p-2 rounded-lg shrink-0"><QRCodeSVG value={telefonLinki} size={160} marginSize={4} title="Telefonla tarama bağlantısı" /></div>}
+        <div className="text-sm text-gray-300">
+          <h2 className="text-white font-semibold flex items-center gap-2 mb-2"><Smartphone className="w-4 h-4 text-cyan-300" /> Telefonla fotoğraf çek</h2>
+          {telefonLinkiUygun ? <>
+            <p>Telefonunuzun kamerasıyla QR kodu okutun ve bağlantıyı açın. Yönetici veya personel hesabınızla giriş yapın.</p>
+            <p className="mt-2">Telefonda müşteriyi seçin, kamera veya seri çekimle belgeleri ekleyin; okunan bilgileri kontrol edip kaydedin. Kayıtlar bilgisayarda sayfa yenilendiğinde görünür.</p>
+            <p className="mt-2 text-gray-400">QR kod şifre veya oturum bilgisi içermez. Bu bağlantı müşteriye özel değildir; telefonda müşteriyi yeniden seçin.</p>
+          </> : <p>QR kod için MUBİS'i telefondan erişilebilen HTTPS adresinden açın.</p>}
+        </div>
+      </div>
+
       <div className="bg-blue-800/20 rounded-xl p-4 border border-blue-700/30 mb-6">
         <label className="text-gray-400 text-xs block mb-1">Müşteri</label>
         {loading ? (
@@ -113,8 +129,8 @@ export default function AdminOcrYukle({ tip = 'zrapor' }) {
             className="w-full md:w-96 bg-blue-900/30 border border-blue-700/50 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-yellow-400 transition-colors"
           >
             <option value="">Müşteri seçin</option>
-            {(clients || []).map(c => (
-              <option key={c.id} value={c.id}>{c.shortName || c.name || c.company}</option>
+            {sortClients(clients).map(c => (
+              <option key={c.id} value={c.id}>{clientDisplayName(c)}</option>
             ))}
           </select>
         )}

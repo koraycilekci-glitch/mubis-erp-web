@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useNavigate, useLocation, Link } from 'react-router-dom'
+import { mobilTaramaYolu, personelMi } from '../utils/mobilTarama'
 import { useAuth } from '../context/AuthContext'
 import { LogIn, User, Lock, AlertCircle, Eye, EyeOff, CheckCircle, ArrowLeft, Mail } from 'lucide-react'
 
@@ -12,8 +13,15 @@ export default function Login() {
   const [mode, setMode] = useState('login') // login | forgot | forgot-sent
   const [resetEmail, setResetEmail] = useState('')
   const [rememberMe, setRememberMe] = useState(true)
-  const { login, resetPassword } = useAuth()
+  const { login, resetPassword, user, profile, loading: authLoading, needsPasswordChange } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
+  const taramaYolu = mobilTaramaYolu(location.search)
+
+  useEffect(() => {
+    if (!taramaYolu || authLoading || !user || !profile || profile.id !== user.authUserId || needsPasswordChange || profile.temp_password) return
+    navigate(personelMi(profile) ? taramaYolu : '/portal', { replace: true })
+  }, [taramaYolu, authLoading, user, profile, needsPasswordChange, navigate])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -26,12 +34,12 @@ export default function Login() {
     if (result.success) {
       // Gecici sifre ise sifre degistirme sayfasina yonlendir
       if (result.tempPassword) {
-        navigate('/sifre-degistir')
+        navigate(`/sifre-degistir${taramaYolu ? location.search : ''}`)
         return
       }
       
-      if (['admin', 'personel', 'super_admin'].includes(result.user.role)) {
-        navigate('/admin')
+      if (personelMi(result.user)) {
+        navigate(taramaYolu || '/admin')
       } else {
         navigate('/portal')
       }

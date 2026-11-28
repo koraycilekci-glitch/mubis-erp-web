@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Receipt, ChevronDown } from 'lucide-react'
 import { useClients } from '../hooks/useClients'
+import { clientDisplayName, sortClients } from '../utils/clientDisplay'
 import KdvDokumTab from '../components/KdvDokumTab'
 
 // 2.7.522: KDV Dökümleri artık bağımsız sayfa — müşteri kartından taşındı.
@@ -9,9 +10,7 @@ export default function KdvDokumler() {
   const { clients } = useClients()
   const [secili, setSecili] = useState('')
 
-  const sirali = useMemo(() =>
-    [...(clients || [])].sort((a, b) =>
-      String(a.name || a.short_name || '').localeCompare(String(b.name || b.short_name || ''), 'tr')), [clients])
+  const sirali = useMemo(() => sortClients(clients), [clients])
 
   const musteri = sirali.find(c => String(c.id) === String(secili))
 
@@ -36,7 +35,7 @@ export default function KdvDokumler() {
             >
               <option value="">Müşteri seçin…</option>
               {sirali.map(c => (
-                <option key={c.id} value={c.id}>{c.name || c.short_name || '(isimsiz müşteri)'}</option>
+                <option key={c.id} value={c.id}>{clientDisplayName(c)}</option>
               ))}
             </select>
             <ChevronDown className="w-4 h-4 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { Eye, Download } from 'lucide-react'
 import { useClients } from '../hooks/useClients'
+import { clientDisplayName, sortClients } from '../utils/clientDisplay'
 import { supabase } from '../lib/supabase'
 import { formatDateTR } from '../utils/dateUtils'
 import { tevkifatMi, iadeMi } from '../services/tevkifatService'
@@ -263,7 +264,7 @@ export default function TevkifatliFaturalar() {
           <label className="text-xs text-blue-200/70 block mb-1">Müşteri</label>
           <select value={seciliClient} onChange={e => setSeciliClient(e.target.value)} className="w-full bg-blue-950/60 border border-blue-700/50 rounded-lg py-2 px-3 text-sm text-white">
             <option value="all">Tüm Müşteriler</option>
-            {(clients || []).slice().sort((a, b) => String(a.name || a.company || a.shortName || '').localeCompare(String(b.name || b.company || b.shortName || ''), 'tr')).map(c => <option key={c.id} value={c.id}>{c.name || c.company || c.shortName || `#${c.id}`}</option>)}
+            {sortClients(clients).map(c => <option key={c.id} value={c.id}>{clientDisplayName(c)}</option>)}
           </select>
         </div>
         <div>

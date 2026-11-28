@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
+import { mobilTaramaYolu, personelMi } from '../utils/mobilTarama'
 import { useAuth } from '../context/AuthContext'
 import { Lock, Eye, EyeOff, AlertCircle, CheckCircle, Shield } from 'lucide-react'
 
@@ -12,6 +13,7 @@ export default function ChangePassword() {
   const [success, setSuccess] = useState(false)
   const { updatePassword, user, needsPasswordChange } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -34,8 +36,8 @@ export default function ChangePassword() {
     if (result.success) {
       setSuccess(true)
       setTimeout(() => {
-        if (user?.role === 'admin' || user?.role === 'personel') {
-          navigate('/admin')
+        if (personelMi(user)) {
+          navigate(mobilTaramaYolu(location.search) || '/admin')
         } else {
           navigate('/portal')
         }

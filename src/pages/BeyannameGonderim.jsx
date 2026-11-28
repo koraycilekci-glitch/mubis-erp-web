@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { RefreshCw, CheckCircle2, Eye, Send, Search, FileDown, Users, Loader2, KeyRound, PlugZap, Trash2, FileSpreadsheet, Check, Folder, FolderOpen, UserRound, PenLine } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { clientDisplayName, sortClients } from '../utils/clientDisplay'
 import {
   BEYANNAME_TURLERI, DURUMLAR,
   musterileriGetir, kayitlariGetir, hazirKayitlariOlustur, durumuGuncelle, kontrolSonucu, testGonder,
@@ -883,7 +884,7 @@ export default function BeyannameGonderim() {
               <label className="text-xs text-gray-400 block mt-3">Mükellef (sıfat ve matrah bölümlerini doldurur)
                 <select value={hzMukellef} onChange={e => setHzMukellef(e.target.value)} className="mt-1 w-full bg-blue-900/60 border border-blue-700/60 rounded-lg px-3 py-2 text-white text-sm">
                   <option value="">— mükellef seçin —</option>
-                  {musteriler.map(m => <option key={m.id} value={m.id}>{m.ad}{m.kimlikNo ? ` (${m.kimlikNo})` : ''}</option>)}
+                  {sortClients(musteriler).map(m => <option key={m.id} value={m.id}>{clientDisplayName(m)}{m.kimlikNo ? ` (${m.kimlikNo})` : ''}</option>)}
                 </select>
               </label>
               <p className="text-[11px] text-gray-500 mt-2">Çoklu seçimde ilk seçili müşteri otomatik atanır; vergi dairesi müşteri kaydından gelir.</p>

@@ -663,7 +663,7 @@ ipcMain.handle('pencere-kucult', () => {  if (anaPencere) anaPencere.hide()
 // --- Otomatik guncelleme kontrolu ---
 async function guncellemeKontrol() {
   try {
-    const r = await fetch('https://mubiserp.com/downloads/masaustu-surum.json', { signal: AbortSignal.timeout(8000) })
+    const r = await fetch('https://mubiserp.com/api/masaustu-surum', { signal: AbortSignal.timeout(8000) })
     if (!r.ok) return
     const j = await r.json()
     const sunucuSurum = String(j.surum || '').trim()

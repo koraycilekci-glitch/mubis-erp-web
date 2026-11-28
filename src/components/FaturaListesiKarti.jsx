@@ -9,6 +9,8 @@ import { faturalariGetir, kdvDetaylariGetir, efaturaSorgula, faturaGruplari, fat
 import { yardimciIsSunucu, gibLucaSorguDurdur } from '../utils/gibOdemeHelper'
 import { krediKartiHasilatGetir, dvsSorgula } from '../services/dvsSorguService'
 import { formatDateTR } from '../utils/dateUtils'
+import { donemParcalari, yedekParcalari } from '../utils/faturaSorguDonemi'
+import { lucaIslemiBelirsiz } from '../services/faturaAktarimService'
 import { supabase } from '../lib/supabase'
 import { ublAyikla, faturaHtmlOlustur, gomuluXsltGorunumu } from '../utils/faturaGorunum'
 import FisModal from './FisModal'
@@ -525,28 +527,6 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
       ? ['efatura', 'earsiv', 'esmm', 'utts']
       : ['zrapor', 'giderfisi'].includes(sorguTipEff) ? [] : [sorguTipEff]
     const turAdlari = { efatura: 'e-Fatura', earsiv: 'e-Arşiv', esmm: 'e-SMM', utts: 'UTTS' }
-    // 7/30 günlük parçalama — yalnizca GIB->Luca sorgu adiminda uygulanir
-    const donemParcalari = (yil, ay, gun = 7) => {
-      const y = parseInt(yil, 10), a = parseInt(ay, 10)
-      if (!(y >= 2000) || !(a >= 1 && a <= 12)) return null
-      const iki = n => String(n).padStart(2, '0')
-      const son = new Date(y, a, 0).getDate()
-      const bugun = new Date()
-      const bugunDD = (y === bugun.getFullYear() && a === bugun.getMonth() + 1) ? bugun.getDate() : null
-      const dilimler = gun >= 30 ? [[1, son]] : [[1, 7], [8, 14], [15, 21], [22, 28], [29, 31]]
-      const parc = []
-      for (const [b, e] of dilimler) {
-        if (b > son) break
-        const bit = Math.min(e, son, bugunDD != null ? bugunDD : e)
-        if (b > bit) continue
-        parc.push({
-          bas: `${iki(b)}/${iki(a)}/${y}`,
-          bit: `${iki(bit)}/${iki(a)}/${y}`,
-          etiket: `${iki(b)}.${iki(a)} - ${iki(bit)}.${iki(a)}`
-        })
-      }
-      return parc.length ? parc : null
-    }
     const gun = sorguPeriyod === '30gun' ? 30 : 7
     const parcalar = donemParcalari(sorguYiliEff, sorguAyiEff, gun) || [null]
     // "Alış (Alınan)"/"Satış (Kesilen)" filtresi seciliyse sorgu da yalniz o
@@ -564,7 +544,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
     // dosyalar yeniden islenir (oncekiSet/onarim).
     const eksikMod = sorguSecimi === 'eksik'
     const onarimMod = sorguSecimi === 'onarim'
-    const toplamAdim = turlar.length * yonlar.length * ((eksikMod ? 1 : parcalar.length) + 3)
+    let toplamAdim = turlar.length * yonlar.length * ((eksikMod ? 1 : parcalar.length) + 3)
     let adim = 0
     let durdur = false
     let durdurNedeni = ''
@@ -601,12 +581,15 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
           // 1a: tum periyotlar Luca'da SADECE SORGULANIR (GİB'den Getir,
           // indirme YOK; yardimci 'sona erdi' sinyalini bekler — 2.7.462).
           // 'Eksikleri tamamla' modunda bu adim atlanir (GIB sorgusu yapilmaz).
-          for (const parca of (eksikMod ? [] : parcalar)) {
+          const sorguParcalari = eksikMod ? [] : [...parcalar]
+          for (let parcaIndex = 0; parcaIndex < sorguParcalari.length; parcaIndex++) {
+            const parca = sorguParcalari[parcaIndex]
+            if (iptalKontrol()) { durdur = true; break }
             adim++
             const parcaEtiket = parca ? ' (' + parca.etiket + ')' : ''
             const onEk = '(' + adim + '/' + toplamAdim + ') ' + turAd + yonEtiket + parcaEtiket + ': '
             try {
-              await efaturaSorgula({
+              const sonuc = await efaturaSorgula({
                 client: clientArg,
                 yil: sorguYiliEff,
                 ay: sorguAyiEff || '',
@@ -623,8 +606,17 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
                   if (metin && !durdurRef.current) setMesaj(onEk + metin)
                 }
               })
+              if (!sonuc.sorguDogrulandi) throw Object.assign(new Error('Luca tamamlanma sinyali doğrulanamadı; işlem devam ediyor olabilir.'), { code: 'LUCA_BEKLENIYOR' })
             } catch (err) {
-              if ((err.message || '').includes('KULLANICI_DURDURDU')) { durdur = true; break }
+              if (iptalKontrol() || (err.message || '').includes('KULLANICI_DURDURDU')) { durdur = true; break }
+              const yedek = yedekParcalari(err, parca)
+              if (yedek.length) {
+                sorguParcalari.splice(parcaIndex, 1, ...yedek)
+                toplamAdim += yedek.length - 1
+                setMesaj(onEk + 'Aralık reddedildi; 7 günlük aralıklarla devam ediliyor.')
+                parcaIndex--
+                continue
+              }
               if ((err.message || '').includes('mevcut-sorgu-devam-ediyor')) {
                 hatalar.push(turAd + yonEtiket + parcaEtiket + ': Luca önceki sorgunun hâlâ sürdüğünü bildirdi; kalan aralıklar durduruldu.')
                 durdur = true
@@ -633,7 +625,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
               const msg = err.message || 'bilinmeyen hata'
               hatalar.push(turAd + yonEtiket + parcaEtiket + ': ' + msg)
               sorguHatasi = true
-              if (/islem takibi suresinde tamamlanmadi/i.test(msg)) {
+              if (err.code === 'LUCA_BEKLENIYOR' || lucaIslemiBelirsiz(msg)) {
                 durdurNedeni = 'Luca işlemi devam ediyor olabilir; kalan sorgular güvenlik için durduruldu.'
                 durdur = true
               }
@@ -678,7 +670,7 @@ export default function FaturaListesiKarti({ clientId, client, disDonem, sorguSe
             } else {
               const msg = err.message || 'bilinmeyen hata'
               hatalar.push(turAd + yonEtiket + ' indirme: ' + msg)
-              if (/islem takibi suresinde tamamlanmadi/i.test(msg)) {
+              if (err.code === 'LUCA_BEKLENIYOR' || lucaIslemiBelirsiz(msg)) {
                 durdurNedeni = 'Luca işlemi devam ediyor olabilir; kalan sorgular güvenlik için durduruldu.'
                 durdur = true
               }

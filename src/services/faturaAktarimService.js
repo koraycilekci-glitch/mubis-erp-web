@@ -1,4 +1,5 @@
 import { yardimciIsSunucu } from '../utils/gibOdemeHelper'
+import { yedekParcalari } from '../utils/faturaSorguDonemi'
 import { supabase } from '../lib/supabase'
 import { dosyalariMubisYukle, edefterTopluKopyala, efaturaSorgula, faturaIlerlemeMetni, faturaKopyalamaDosyalari, lucaDurumMetni } from './efaturaService'
 
@@ -41,8 +42,10 @@ export async function faturaAktariminiCalistir({ client, yil, ay, tur, yon, parc
   const lease = crypto.randomUUID()
   const bitis = () => new Date(Date.now() + leaseSuresi).toISOString()
   const tabloSorgusu = () => supabase.from(tablo)
+  let leaseKayip = false
   const kontrol = () => {
     if (iptalKontrol?.()) throw new Error('KULLANICI_DURDURDU')
+    if (leaseKayip) throw Object.assign(new Error('Aktarım kilidi doğrulanamadı; Luca işlem durumu kontrol edilmelidir.'), { code: 'AKTARIM_KILITLI' })
   }
   kontrol()
   const { error: eklemeHatasi } = await tabloSorgusu().upsert(anahtar, { onConflict: 'client_id,yil,ay,tur,yon', ignoreDuplicates: true })
@@ -55,7 +58,6 @@ export async function faturaAktariminiCalistir({ client, yil, ay, tur, yon, parc
 
   let durum = satir.durum || {}
   let asama = 'sorgu'
-  let leaseKayip = false
   const yenile = setInterval(async () => {
     try {
       const { data, error } = await tabloSorgusu().update({ lease_until: bitis() }).match({ ...anahtar, lease_id: lease }).select('lease_id').maybeSingle()
@@ -88,9 +90,12 @@ export async function faturaAktariminiCalistir({ client, yil, ay, tur, yon, parc
       throw hata
     }
   }
-  if (devam && durum.plan?.length) parcalar = durum.plan
-  const kapsam = parcalar.map(parcaAnahtari).join(';')
+  parcalar = [...(devam && durum.plan?.length ? durum.plan : parcalar)]
+  let kapsam = parcalar.map(parcaAnahtari).join(';')
   try {
+    if (devam && durum.sorun === 'bekliyor' && !durum.is) {
+      throw Object.assign(new Error('Önceki Luca işleminin sonucu izlenemiyor. Luca’da işlemin bittiğini veya durdurulduğunu doğrulamadan yeni sorgu başlatmayın.'), { code: 'AKTARIM_BEKLIYOR' })
+    }
     if (durum.is && (!devam || durum.kapsam !== kapsam)) {
       throw Object.assign(new Error('Önceki VPS işi izlenmeli. Aynı dönem ve sorgu aralığıyla Eksik adımları tamamla seçeneğini kullanın.'), { code: 'AKTARIM_BEKLIYOR' })
     }
@@ -99,11 +104,24 @@ export async function faturaAktariminiCalistir({ client, yil, ay, tur, yon, parc
       await kaydet({ kapsam, plan: parcalar, parcalar: [], onarim, sorun: null })
     } else await kaydet({ sorun: null })
 
-    for (const parca of parcalar) {
+    for (let parcaIndex = 0; parcaIndex < parcalar.length; parcaIndex++) {
+      const parca = parcalar[parcaIndex]
       const anahtar = parcaAnahtari(parca)
       if (durum.parcalar?.includes(anahtar)) continue
       onDurum?.(`Luca’da sorgulanıyor${parca?.etiket ? ` (${parca.etiket})` : ''}…`)
-      const sonuc = await calistir({ sadeceSorgu: true, baslangicTarih: parca?.bas, bitisTarih: parca?.bit }, `sorgu:${anahtar}`)
+      let sonuc
+      try {
+        sonuc = await calistir({ sadeceSorgu: true, baslangicTarih: parca?.bas, bitisTarih: parca?.bit }, `sorgu:${anahtar}`)
+      } catch (hata) {
+        const yedek = yedekParcalari(hata, parca)
+        if (!yedek.length || iptalKontrol?.() || leaseKayip) throw hata
+        parcalar.splice(parcaIndex, 1, ...yedek)
+        kapsam = parcalar.map(parcaAnahtari).join(';')
+        await kaydet({ is: null, plan: parcalar, kapsam, sorun: null })
+        onDurum?.(`${parca.etiket} reddedildi; 7 günlük aralıklarla devam ediliyor.`)
+        parcaIndex--
+        continue
+      }
       if (!sonuc.sorguDogrulandi) {
         await kaydet({ is: null })
         throw Object.assign(new Error('Luca tamamlanma sinyali doğrulanamadı; işlem devam ediyor olabilir.'), { code: 'LUCA_BEKLENIYOR' })

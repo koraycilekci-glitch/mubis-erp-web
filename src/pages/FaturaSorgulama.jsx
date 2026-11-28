@@ -9,6 +9,7 @@ import { Receipt, Layers, X, Search, Download, Users, FolderOpen, FileSpreadshee
 import { supabase } from '../lib/supabase'
 import { useClients } from '../hooks/useClients'
 import { clientDisplayName } from '../utils/clientDisplay'
+import { donemParcalari, yedekParcalari } from '../utils/faturaSorguDonemi'
 import { efaturaSorgula, dosyalariMubisYukle, edefterDokumleriniYukle, edefterTopluKopyala, faturaKopyalamaDosyalari, sorguYonleri, lucaDurumMetni, faturaIlerlemeMetni } from '../services/efaturaService'
 import { faturaAktarimAsamaMetni, faturaAktarimDurumlariniGetir, faturaAktariminiCalistir, lucaIslemiBelirsiz } from '../services/faturaAktarimService'
 import { yardimciIsSunucu, gibLucaSorguDurdur } from '../utils/gibOdemeHelper'
@@ -166,33 +167,6 @@ export default function FaturaSorgulama() {
     setTopluSecili(prev => prev.length === siraliMusteriler.length ? [] : siraliMusteriler.map(c => String(c.id)))
   }
 
-  // 2.7.385: secilen yil/ayi gunluk parçalara böler (dd/MM/yyyy).
-  // 7 gun: [1-7] [8-14] [15-21] [22-28] [29-ay sonu]
-  // 30 gun: tum ay tek parça [1-ay sonu] (tek sorgu)
-  // bulunulan ayda bitis bugüne çekilir, bugünden sonraki parçalar atlanir.
-  const donemParcalari = (yil, ay, gun = 7) => {
-    const y = parseInt(yil, 10), a = parseInt(ay, 10)
-    if (!(y >= 2000) || !(a >= 1 && a <= 12)) return null
-    const iki = n => String(n).padStart(2, '0')
-    const son = new Date(y, a, 0).getDate()
-    const bugun = new Date()
-    const bugunDD = (y === bugun.getFullYear() && a === bugun.getMonth() + 1) ? bugun.getDate() : null
-    const dilimler = gun >= 30 ? [[1, son]] : [[1, 7], [8, 14], [15, 21], [22, 28], [29, 31]]
-    const parcalar = []
-    for (const [b, e] of dilimler) {
-      if (b > son) break
-      const bit = Math.min(e, son, bugunDD != null ? bugunDD : e)
-      if (b > bit) continue
-      parcalar.push({
-        bas: `${iki(b)}/${iki(a)}/${y}`,
-        bit: `${iki(bit)}/${iki(a)}/${y}`,
-        etiket: `${iki(b)}.${iki(a)} - ${iki(bit)}.${iki(a)}`
-      })
-    }
-    return parcalar.length ? parcalar : null
-  }
-  const yediGunParcalari = (yil, ay) => donemParcalari(yil, ay, 7)
-
   // 2.7.462: SIRALI tam dongu (musteri basina) —
   //   her tur+yon icin: sorgula (tum periyotlar, sadeceSorgu) ->
   //   Luca'dan indir -> MUBiS'e yukle -> klasore kopyala; BITINCE
@@ -290,7 +264,7 @@ export default function FaturaSorgulama() {
     const turAdlari = { efatura: 'e-Fatura', earsiv: 'e-Arşiv', esmm: 'e-SMM', utts: 'UTTS' }
     const gun = topluPeriyod === '30gun' ? 30 : 7
     const parcalar = donemParcalari(topluYil, topluAy, gun) || [null]
-    const toplamAdim = hedefler.length * turlar.length * 2 * parcalar.length
+    let toplamAdim = hedefler.length * turlar.length * 2 * parcalar.length
     let adim = 0
     let toplamSorgu = 0
     const hatalar = []
@@ -309,13 +283,16 @@ export default function FaturaSorgulama() {
             if (durdur) break
             const turAd = turAdlari[tur] || tur
             const yonEtiket = yon === 'alis' ? ' (Alış)' : ' (Satış)'
-            for (const parca of parcalar) {
+            const sorguParcalari = [...parcalar]
+            for (let parcaIndex = 0; parcaIndex < sorguParcalari.length; parcaIndex++) {
+              const parca = sorguParcalari[parcaIndex]
+              if (iptalKontrol()) { durdur = true; break }
               adim++
               const parcaEtiket = parca ? ` (${parca.etiket})` : ''
               const onEk = `(${adim}/${toplamAdim}) ${ad} - ${turAd}${yonEtiket}${parcaEtiket}: `
               setTopluMesaj(onEk + "Luca'da sorgulaniyor (GİB isleminin bitmesi bekleniyor)...")
               try {
-                await efaturaSorgula({
+                const sonuc = await efaturaSorgula({
                   client: clientArg, yardimciKaynak: 'sunucu',
                   yil: topluYil || new Date().getFullYear(),
                   ay: topluAy || '',
@@ -332,13 +309,22 @@ export default function FaturaSorgulama() {
                     if (metin && !durdurRef.current) setTopluMesaj(onEk + metin)
                   }
                 })
+                if (!sonuc.sorguDogrulandi) throw Object.assign(new Error('Luca tamamlanma sinyali doğrulanamadı; işlem devam ediyor olabilir.'), { code: 'LUCA_BEKLENIYOR' })
                 toplamSorgu++
               } catch (err) {
                 const msg = err.message || 'bilinmeyen hata'
-                if (msg.includes('KULLANICI_DURDURDU')) { durdur = true; break }
+                if (iptalKontrol() || msg.includes('KULLANICI_DURDURDU')) { durdur = true; break }
+                const yedek = yedekParcalari(err, parca)
+                if (yedek.length) {
+                  sorguParcalari.splice(parcaIndex, 1, ...yedek)
+                  toplamAdim += yedek.length - 1
+                  setTopluMesaj(onEk + 'Aralık reddedildi; 7 günlük aralıklarla devam ediliyor.')
+                  parcaIndex--
+                  continue
+                }
                 if (msg.includes('mevcut-sorgu-devam-ediyor')) { hatalar.push(`${ad}: Luca'da önceki sorgu hâlâ çalışıyor; kalan işlemler durduruldu.`); durdur = true; break }
                 hatalar.push(`${ad}/${turAd}${yonEtiket}${parcaEtiket}: ${msg}`)
-                if (/islem takibi suresinde tamamlanmadi/i.test(msg) || msg.includes('kurulu') || msg.includes('giris bilgisi yok') || msg.includes('Giris bilgisi yok')) durdur = true
+                if (err.code === 'LUCA_BEKLENIYOR' || lucaIslemiBelirsiz(msg) || msg.includes('kurulu') || msg.includes('giris bilgisi yok') || msg.includes('Giris bilgisi yok')) durdur = true
               }
             }
           }
@@ -347,8 +333,7 @@ export default function FaturaSorgulama() {
       const ozet = []
       if (toplamSorgu > 0) ozet.push(`${toplamSorgu} sorgu Luca'da tamamlandi — faturalar Luca listesinde hazir; indirmek icin "Luca'dan İndir"i kullanin.`)
       if (durdurRef.current) ozet.push('Sorgulama kullanıcı tarafından durduruldu — kalan müşteri/türler atlandı.')
-      if (notlar.length) ozet.push(notlar.join(' '))
-if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
+      if (hatalar.length) ozet.push('Hatalar: ' + hatalar.join(' | '))
       setTopluMesaj(['Luca sorgulama bitti', ...ozet].join(' '))
     } finally {
       setTopluSorguluyor(false)

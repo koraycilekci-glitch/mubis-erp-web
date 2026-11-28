@@ -660,6 +660,71 @@ ipcMain.handle('pencere-kucult', () => {  if (anaPencere) anaPencere.hide()
   guncelleTray()
 })
 
+// --- Otomatik guncelleme kontrolu ---
+async function guncellemeKontrol() {
+  try {
+    const r = await fetch('https://mubiserp.com/downloads/masaustu-surum.json', { signal: AbortSignal.timeout(8000) })
+    if (!r.ok) return
+    const j = await r.json()
+    const sunucuSurum = String(j.surum || '').trim()
+    const indirmeUrl = String(j.url || '').trim()
+    if (!sunucuSurum || !indirmeUrl) return
+    // Surum karsilastirmasi: 1.1.0 vs 1.1.1 gibi
+    const mevcut = app.getVersion()
+    if (sunucuSurum === mevcut) return
+    // Basit semver karsilastirma
+    const parse = (v) => v.split('.').map(n => parseInt(n) || 0)
+    const a = parse(mevcut), b = parse(sunucuSurum)
+    let yeni = false
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      const va = a[i] || 0, vb = b[i] || 0
+      if (vb > va) { yeni = true; break }
+      if (vb < va) { yeni = false; break }
+    }
+    if (!yeni) return
+    logEkle('Yeni sürüm mevcut: ' + sunucuSurum + ' (mevcut: ' + mevcut + ')')
+    const { response } = await dialog.showMessageBox(anaPencere || undefined, {
+      type: 'info',
+      title: 'Güncelleme Mevcut',
+      message: 'MUBiS Masaüstü Otomasyon için yeni sürüm mevcut: ' + sunucuSurum,
+      detail: 'Mevcut sürüm: ' + mevcut + '\nGüncelleme indirilsin mi?',
+      buttons: ['İndir ve Kur', 'Daha Sonra'],
+      defaultId: 0,
+      cancelId: 1
+    })
+    if (response !== 0) return
+    // Indirme
+    logEkle('Güncelleme indiriliyor: ' + indirmeUrl)
+    const tempDir = path.join(app.getPath('temp'), 'mubis-update')
+    fs.mkdirSync(tempDir, { recursive: true })
+    const dosyaAdi = path.basename(indirmeUrl) || 'MUBiS-Masaustu-Otomasyon-Setup.exe'
+    const hedefYol = path.join(tempDir, dosyaAdi)
+    try {
+      const resp = await fetch(indirmeUrl)
+      if (!resp.ok) throw new Error('HTTP ' + resp.status)
+      const buf = Buffer.from(await resp.arrayBuffer())
+      fs.writeFileSync(hedefYol, buf)
+      logEkle('Güncelleme indirildi: ' + hedefYol)
+      // Kurulumu baslat
+      const child = spawn(hedefYol, ['/S'], { detached: true, stdio: 'ignore' })
+      child.unref()
+      logEkle('Kurulum başlatıldı. Program kapatılıyor...')
+      cikisIstendi = true
+      app.quit()
+    } catch (e) {
+      logEkle('Güncelleme indirilemedi: ' + (e && e.message))
+      dialog.showMessageBox(anaPencere || undefined, {
+        type: 'error',
+        title: 'Güncelleme Hatası',
+        message: 'Güncelleme indirilemedi: ' + (e && e.message),
+        buttons: ['Tamam']
+      })
+    }
+  } catch (e) {
+    // Sessizce yoksay (ag hatasi olabilir)
+  }
+}
+
 // --------------------------------------------------------------------- yaşam
 
 const tekKilit = app.requestSingleInstanceLock()
@@ -677,6 +742,9 @@ if (!tekKilit) {
     pencereOlustur()
     trayOlustur()
     motoruBaslat()
+
+    // Otomatik guncelleme kontrolu (arka planda, 5 sn sonra)
+    setTimeout(() => { guncellemeKontrol().catch(() => {}) }, 5000)
 
     if (process.argv.includes('--gizli') && anaPencere) {
       anaPencere.hide()

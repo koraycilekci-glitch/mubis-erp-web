@@ -17564,6 +17564,7 @@ const ISLER = {
       }
       let akisTamam = false;
       let akisHatasi = "";
+      let sorguHataKodu = "";
       let akisBasarisizYonler = [];
       let akisSonAdim = "-";
       let yonler = [];
@@ -17587,6 +17588,10 @@ const ISLER = {
             if (e?.message === "KULLANICI_DURDURDU") throw e;
             akisOk = false;
             yonHatasi = lucaAkisHataMesaji(e);
+            if (p.sadeceSorgu && yonler.length === 1 && e?.code === "LUCA_ARALIK_REDDEDILDI") {
+              sorguHataKodu = e.code;
+              yonHatasi = e.message;
+            }
             console.log("[efatura-sorgula] yon akisi hata:", yon, "-", e.message);
             // 2.8.7: Luca SSO musteri secim sayfasi spinner'a takildi —
             // oturumu komple kapat, taze giris yap ve bu yonu BIR KEZ daha
@@ -17632,6 +17637,7 @@ const ISLER = {
       return {
         girisOk,
         akisTamam,
+        sorguHataKodu: sorguHataKodu || undefined,
         girisReddedildi,
         hata: girisHata,
         adim: akisSonAdim,
@@ -25572,6 +25578,16 @@ async function lucaGibIslemTakibiniBekle(browser, etiket) {
           const metin = String(panel.innerText || "").toLocaleLowerCase("tr").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i").replace(/\s+/g, " ");
           if (!metin.includes("islem takip")) return null;
           if (/sirket bilgilerinden tc kimlik veya vergi numarasi girilmelidir|yetki sozlesmesi bulunmamaktadir/.test(metin)) return "hata";
+          const satirlar = String(panel.innerText || "").split(/\n/).map((satir) => satir.toLocaleLowerCase("tr").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i").replace(/\s+/g, " ").trim()).filter(Boolean);
+          const aralikHatasi = satirlar.some((satir) => /tarih aralig/.test(satir) && /en fazla|en cok|azami|maksimum/.test(satir) && /gun/.test(satir));
+          if (aralikHatasi) {
+            const sonSatir = satirlar.filter((satir) => satir !== "kapat").slice(-1)[0] || "";
+            if (!/sorgu reddedildi|islem reddedildi/.test(sonSatir)) return "bekliyor";
+            const kapat = [...panel.querySelectorAll("button, input, a, [onclick]")].find((el) => el.getClientRects().length && String(el.innerText || el.textContent || el.value || "").trim().toLocaleLowerCase("tr") === "kapat");
+            if (!kapat) return "bekliyor";
+            kapat.click();
+            return "aralik-reddi";
+          }
           if (!/fatura kaydetme islemi sona erdi|islem tamamlandi|islem basariyla tamamlandi|belirtilen tarih araliginda sorgulamalar tamamlandi/.test(metin)) return "bekliyor";
           let kapat = null;
           for (const el of panel.querySelectorAll("button, input, a, [onclick]")) {
@@ -25582,6 +25598,7 @@ async function lucaGibIslemTakibiniBekle(browser, etiket) {
           return "kapatildi";
         }).catch(() => null);
         if (sonuc === "hata") throw new Error("Luca GIB sorgusunda yetki veya firma kimlik hatasi bildirdi.");
+        if (sonuc === "aralik-reddi") throw Object.assign(new Error("Luca tarih aralığını reddetti ve işlemin sonlandığı doğrulandı."), { code: "LUCA_ARALIK_REDDEDILDI" });
         if (sonuc) { goruldu = true; acik = true; }
         if (sonuc === "kapatildi") kapatildi = true;
       }

@@ -615,6 +615,26 @@ $('fisBolBtn').addEventListener('click', async () => {
   await isCalistir('fis-bol', p, { btn: $('fisBolBtn'), sonucId: 'fisSonuc', beklemeMetni: 'Bölünüyor…' })
 })
 
+// Ortak şifre doldurma: mükellef listesindeki boş GİB/SGK şifre hücrelerini
+// kullanıcıdan alınan ortak şifre ile doldurur.
+function ortakSifreDoldur(alan) {
+  if (!mukellefler.length) { alert('Önce mükellef listesini getirin.'); return }
+  const sifre = prompt('Ortak ' + (alan === 'sgk' ? 'SGK sistem' : 'GİB') + ' parolasını girin (boş hücrelere yazılacak):')
+  if (sifre === null) return
+  const sifreTrim = sifre.trim()
+  if (!sifreTrim) { alert('Parola boş olamaz.'); return }
+  let sayac = 0
+  mukellefler.forEach((m) => {
+    const hedef = alan === 'sgk' ? 'sgkSistemSifre' : 'gibParola'
+    if (!m[hedef]) { m[hedef] = sifreTrim; sayac++ }
+  })
+  eiMusteriler = mukellefler.map((m, idx) => Object.assign({}, m, { __idx: idx }))
+  try { localStorage.setItem('mubis_mukellefler', JSON.stringify(mukellefler)) } catch { /* yoksay */ }
+  mukCiz(); eiCiz()
+  topluCiz('dvs'); topluCiz('teb'); topluCiz('borc')
+  alert(sayac + ' mükellefin boş ' + (alan === 'sgk' ? 'SGK sistem' : 'GİB') + ' parolası dolduruldu.')
+}
+
 // ------------------------------------------------------------- Z RAPORU TARAMA
 let zrSonVeri = null
 $('zrTaraBtn').addEventListener('click', async () => {
@@ -780,7 +800,8 @@ $('mukGetirBtn').addEventListener('click', async () => {
   }
 })
 
-$('mukGizleBtn').addEventListener('click', () => { mukSifreGizli = !mukSifreGizli; mukCiz() })
+$('mukOrtakGibBtn').addEventListener('click', () => ortakSifreDoldur('gib'))
+$('mukOrtakSgkBtn').addEventListener('click', () => ortakSifreDoldur('sgk'))
 $('mukAra').addEventListener('input', () => mukCiz())
 
 $('mukSatirlar').addEventListener('click', (e) => {

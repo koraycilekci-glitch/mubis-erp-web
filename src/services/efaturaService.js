@@ -675,7 +675,7 @@ export async function efaturaSorgula({ client, yil, ay, sorguTip = 'efatura', yo
     throw Object.assign(new Error(isSonuc.girisReddedildi ? 'Luca girişi reddedildi. Ayarlar > Luca bağlantı bilgilerini kontrol edin.' : 'VPS’te Luca oturumu doğrulanamadı. Oturumu kontrol edip yeniden deneyin.'), { isBitti: true, code: 'LUCA_OTURUM' })
   }
   if (isSonuc.akisTamam === false || /akis ["“].+?["”] adiminda tamamlanamadi/i.test(isSonuc.not || '')) {
-    throw Object.assign(new Error(isSonuc.not || 'Luca sorgusu tamamlanamadı; belge durumu doğrulanamadı.'), { isBitti: true })
+    throw Object.assign(new Error(isSonuc.not || 'Luca sorgusu tamamlanamadı; belge durumu doğrulanamadı.'), { isBitti: true, code: isSonuc.sorguHataKodu })
   }
   const iptalItirazGerekli = !sadeceSorgu && mod === 'indir' && (/^(efatura|earsiv)$/.test(sorguTip) || sorguTip === 'esmm' && yon === 'alis')
   if (iptalItirazGerekli && isSonuc.iptalItirazDogrulandi !== true) {

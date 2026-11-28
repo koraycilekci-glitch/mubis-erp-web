@@ -3,7 +3,7 @@
 export async function onRequestGet({ env, request }) {
   return new Response(JSON.stringify({
     surum: "1.1.0",
-    url: "https://mubiserp.com/downloads/MUBiS-Masaustu-Otomasyon-Setup-1.1.0.exe",
+    url: "https://yardimci.mubiserp.com/downloads/MUBiS-Masaustu-Otomasyon-Setup-1.1.0.exe",
     notlar: "Z Raporu OCR tarama, Ortak şifre doldurma, ÖKC hasılat sorgulama"
   }), {
     status: 200,
